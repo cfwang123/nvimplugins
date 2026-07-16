@@ -144,11 +144,15 @@ def fit_cells(
     return cols, rows
 
 
-def load_and_resize(path: str, sample_w: int, sample_h: int) -> Image.Image:
+def load_image(path: str) -> Image.Image:
     img = Image.open(path).convert("RGBA")
-    img = img.resize((max(1, sample_w), max(1, sample_h)), Image.Resampling.LANCZOS)
     bg = Image.new("RGBA", img.size, (0, 0, 0, 255))
     return Image.alpha_composite(bg, img).convert("RGB")
+
+
+def load_and_resize(path: str, sample_w: int, sample_h: int) -> Image.Image:
+    img = load_image(path)
+    return img.resize((max(1, sample_w), max(1, sample_h)), Image.Resampling.LANCZOS)
 
 
 def render_braille(img: Image.Image, cols: int, rows: int, dither: float) -> List[List[Cell]]:
@@ -357,6 +361,12 @@ def main() -> int:
         default="ansi",
         help="Output format (ansi for terminal, protocol for debug)",
     )
+    ap.add_argument(
+        "--scale",
+        choices=("fit", "fill"),
+        default="fit",
+        help="fit=keep aspect; fill=stretch to cols x rows",
+    )
     args = ap.parse_args()
 
     max_cols = max(1, args.cols)
@@ -365,7 +375,10 @@ def main() -> int:
     with Image.open(args.path) as probe:
         src_w, src_h = probe.size
 
-    cols, rows = fit_cells(src_w, src_h, max_cols, max_rows)
+    if args.scale == "fill":
+        cols, rows = max_cols, max_rows
+    else:
+        cols, rows = fit_cells(src_w, src_h, max_cols, max_rows)
 
     if args.mode == "braille":
         cell_w, cell_h = 2, 4

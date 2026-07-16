@@ -4,9 +4,13 @@
 
 不把每个像素做成 highlight 组，因此不会触发 `E849: Too many highlight and syntax groups`。
 
+![imgbuf 截图](../images/imgbuf.png)
+
 ## 功能
 
 - **block / half / braille** 三种符号模式（默认 **block**，chafa 四分格）
+- **缩放模式**：等比适配（fit）↔ 拉伸铺满（fill）（`s`）
+- **底部按键提示行**（反色条，显示当前模式/缩放）
 - **自动预览**：`:e photo.png` 或从文件树打开图片
 - **剪贴板图片**：`:ImgbufClipboard`（Pillow `ImageGrab`）
 - **窗口缩放**防抖后按新尺寸重绘
@@ -46,7 +50,7 @@
 call plug#begin()
 
 " on：执行下列命令时才加载插件
-Plug 'D:/VS_Projects/AIPrototype/vim/imgbuf', {
+Plug '/path/to/vim/imgbuf', {
   \ 'on': ['Imgbuf', 'ImgbufClipboard', 'ImgbufMode', 'ImgbufRefresh'],
   \ }
 
@@ -74,7 +78,7 @@ augroup END
 
 ```vim
 call plug#begin()
-Plug 'D:/VS_Projects/AIPrototype/vim/imgbuf'
+Plug '/path/to/vim/imgbuf'
 call plug#end()
 
 " 可选
@@ -89,6 +93,9 @@ call plug#end()
 :ImgbufClipboard
 :ImgbufMode block
 :ImgbufRefresh
+:ImgbufScale           " 切换 fit/fill
+:ImgbufScale fit
+:ImgbufScale fill
 ```
 
 | 键 | 作用 |
@@ -98,6 +105,14 @@ call plug#end()
 | `1` | block（默认） |
 | `2` | half（`▀`） |
 | `3` | braille（点阵） |
+| `s` | 等比 (fit) ↔ 填充 (fill) |
+
+预览区**最底一行**为反色按键提示（含当前模式 / 缩放）。
+
+| 缩放 | 含义 |
+|------|------|
+| **fit** | 等比缩放，完整显示（可能留边） |
+| **fill** | 拉伸铺满窗口（可能变形） |
 
 ## 配置（可选）
 
@@ -107,6 +122,8 @@ call plug#end()
 require("imgbuf").setup({
   backend = "auto",   -- "auto" | "chafa" | "python"
   mode = "block",     -- "block" | "half" | "braille"
+  scale = "fit",      -- "fit" | "fill"
+  show_help = true,   -- 底部按键提示
   auto_open = true,
   -- 其余见 lua/imgbuf/init.lua 的 default_config
 })

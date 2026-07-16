@@ -5,6 +5,7 @@ local M = {}
 ---@class ImgbufConfig
 ---@field backend "auto"|"chafa"|"python"
 ---@field mode "block"|"half"|"braille"
+---@field scale "fit"|"fill" fit=等比适配窗口，fill=拉伸铺满
 ---@field dither number
 ---@field chafa_symbols string
 ---@field max_width number|nil
@@ -14,17 +15,21 @@ local M = {}
 ---@field filetypes string[]
 ---@field mappings table<string, string>
 ---@field resize_debounce_ms number
+---@field show_help boolean 底部按键提示行
 
 local default_config = {
   backend = "auto",
   -- block = chafa 1/4 格（▘▝▖▗▀▄▌▐█）
   mode = "block",
+  -- fit = 等比缩放（完整可见）；fill = 拉伸铺满窗口
+  scale = "fit",
   dither = 0.35,
   chafa_symbols = "block",
   max_width = nil,
   max_height = nil,
   python = "python",
   auto_open = true,
+  show_help = true,
   filetypes = { "png", "jpg", "jpeg", "gif", "webp", "bmp", "tif", "tiff" },
   resize_debounce_ms = 100,
   mappings = {
@@ -33,6 +38,7 @@ local default_config = {
     ["1"] = "mode_block",
     ["2"] = "mode_half",
     ["3"] = "mode_braille",
+    s = "toggle_scale",
   },
 }
 
@@ -239,10 +245,66 @@ local function win_cell_size(win)
   return cols, rows, win
 end
 
----Build command argv (list form for termopen).
-local function build_cmd(path, cols, rows, mode)
+local function norm_scale(scale)
+  if scale == "fill" or scale == "stretch" then
+    return "fill"
+  end
+  return "fit"
+end
+
+---Bottom help / status text (display width capped to cols).
+---@param cols number
+---@param mode string
+---@param scale string
+---@return string
+local function help_line_text(cols, mode, scale)
+  local scale_zh = scale == "fill" and "填充" or "等比"
+  local mode_zh = ({ block = "方块", half = "半块", braille = "点阵" })[mode] or mode
+  local hint = string.format(
+    " q关闭  r刷新  1方块  2半块  3点阵  s缩放[%s]  │ %s · %s ",
+    scale_zh,
+    mode_zh,
+    scale_zh
+  )
+  cols = math.max(8, cols or 40)
+  local w = vim.fn.strwidth(hint)
+  if w < cols then
+    hint = hint .. string.rep(" ", cols - w)
+  else
+    while vim.fn.strwidth(hint) > cols and #hint > 0 do
+      hint = vim.fn.strcharpart(hint, 0, vim.fn.strchars(hint) - 1)
+    end
+    local pad = cols - vim.fn.strwidth(hint)
+    if pad > 0 then
+      hint = hint .. string.rep(" ", pad)
+    end
+  end
+  return hint
+end
+
+---Write inverted help row into the terminal channel (after image).
+local function send_help_line(term_chan, cols, mode, scale)
+  if not term_chan or term_chan <= 0 then
+    return
+  end
+  local hint = help_line_text(cols, mode, scale)
+  -- reverse video bar
+  local line = "\r\n\27[0m\27[7m" .. hint .. "\27[0m"
+  pcall(vim.api.nvim_chan_send, term_chan, line)
+end
+
+---Build command argv (list form for jobstart).
+---@param path string
+---@param cols number
+---@param rows number
+---@param mode string
+---@param scale "fit"|"fill"
+---@return string[] cmd
+---@return string backend
+local function build_cmd(path, cols, rows, mode, scale)
   local backend = resolve_backend()
   mode = mode or config.mode
+  scale = norm_scale(scale or config.scale)
 
   if backend == "chafa" then
     local symbols = config.chafa_symbols or "block"
@@ -253,7 +315,7 @@ local function build_cmd(path, cols, rows, mode)
     elseif mode == "block" then
       symbols = "block"
     end
-    return {
+    local cmd = {
       "chafa",
       "-f",
       "symbols",
@@ -265,8 +327,16 @@ local function build_cmd(path, cols, rows, mode)
       "off",
       "--polite",
       "on",
-      path,
-    }, backend
+    }
+    if scale == "fill" then
+      -- ignore aspect ratio, fill the -s box
+      table.insert(cmd, "--stretch")
+    else
+      table.insert(cmd, "--scale")
+      table.insert(cmd, "max")
+    end
+    table.insert(cmd, path)
+    return cmd, backend
   end
 
   local script = render_script()
@@ -282,6 +352,8 @@ local function build_cmd(path, cols, rows, mode)
     tostring(rows),
     "--mode",
     mode,
+    "--scale",
+    scale,
     "--dither",
     tostring(config.dither or 0.35),
     "--format",
@@ -420,6 +492,9 @@ local function map_actions(buf)
     mode_braille = function()
       M.set_mode(buf, "braille")
     end,
+    toggle_scale = function()
+      M.toggle_scale(buf)
+    end,
   }
 
   for lhs, action in pairs(config.mappings or {}) do
@@ -542,7 +617,7 @@ end
 ---Start / restart terminal job drawing the image.
 ---Always replaces the target content window buffer — never creates a split.
 ---@param path string
----@param opts? { mode?: string, win?: integer, replace_buf?: integer, close_win?: integer }
+---@param opts? { mode?: string, scale?: string, win?: integer, replace_buf?: integer, close_win?: integer }
 ---@return integer|nil buf
 function M.open(path, opts)
   M.ensure_setup()
@@ -558,14 +633,24 @@ function M.open(path, opts)
   local orphan = opts.close_win
 
   local cols, rows, win = win_cell_size(win)
-  local mode = opts.mode or config.mode
-  local cmd, backend = build_cmd(path, cols, rows, mode)
+  -- reserve last row for key-help bar
+  local help_on = config.show_help ~= false
+  local img_rows = help_on and math.max(3, rows - 1) or rows
 
   -- Fresh terminal buffer each time (term buffer cannot be cleanly re-termopen'd)
   local old_buf = opts.replace_buf
   if not old_buf or not vim.api.nvim_buf_is_valid(old_buf) then
     old_buf = vim.api.nvim_win_get_buf(win)
   end
+
+  -- Carry view state across buffer rebuild (refresh / resize / scale)
+  local prev = (old_buf and state_by_buf[old_buf]) or {}
+  local b_mode = old_buf and vim.api.nvim_buf_is_valid(old_buf) and vim.b[old_buf].imgbuf_mode or nil
+  local b_scale = old_buf and vim.api.nvim_buf_is_valid(old_buf) and vim.b[old_buf].imgbuf_scale or nil
+  local mode = opts.mode or prev.mode or b_mode or config.mode
+  local scale = norm_scale(opts.scale or prev.scale or b_scale or config.scale)
+
+  local cmd, backend = build_cmd(path, cols, img_rows, mode, scale)
 
   -- Stop previous terminal job so nvim won't refuse :edit / force a split (E948)
   if old_buf and vim.api.nvim_buf_is_valid(old_buf) then
@@ -621,6 +706,7 @@ function M.open(path, opts)
   state_by_buf[buf] = {
     path = path,
     mode = mode,
+    scale = scale,
     backend = backend,
     last_cols = cols,
     last_rows = rows,
@@ -629,46 +715,134 @@ function M.open(path, opts)
   win_preview[win] = buf
   vim.b[buf].imgbuf_path = path
   vim.b[buf].imgbuf_mode = mode
+  vim.b[buf].imgbuf_scale = scale
   vim.b[buf].imgbuf_backend = backend
 
-  local job_opts = {
-    cwd = vim.fn.fnamemodify(path, ":h"),
-    on_exit = function()
-      vim.schedule(function()
-        if not vim.api.nvim_buf_is_valid(buf) then
-          return
-        end
-        pcall(vim.cmd, "stopinsert")
-        apply_term_options(buf, win)
-        lock_view(win, buf)
-      end)
-    end,
-  }
-
-  -- termopen must run with target buffer as current in that window
-  local job_id
-  local ok, err = pcall(function()
+  -- Use nvim_open_term + jobstart (not termopen):
+  -- termopen closes the channel when chafa/python exits; TermRequest handlers then
+  -- call nvim_chan_send → "Can't send data to closed stream".
+  -- open_term keeps the display channel open after the renderer finishes.
+  local term_chan
+  local open_ok, open_err = pcall(function()
     vim.api.nvim_win_call(win, function()
-      job_id = vim.fn.termopen(cmd, job_opts)
+      term_chan = vim.api.nvim_open_term(buf, {
+        -- ignore key input into the synthetic terminal
+        on_input = function() end,
+      })
     end)
   end)
 
-  if not ok or not job_id or job_id <= 0 then
+  if not open_ok or not term_chan or term_chan <= 0 then
     vim.notify(
-      "imgbuf: failed to start terminal: " .. tostring(err or job_id),
+      "imgbuf: failed to open terminal: " .. tostring(open_err or term_chan),
       vim.log.levels.ERROR
     )
     pcall(function()
       vim.bo[buf].buftype = "nofile"
       vim.bo[buf].modifiable = true
       vim.api.nvim_buf_set_lines(buf, 0, -1, false, {
-        "imgbuf: failed to start preview",
-        "cmd: " .. table.concat(cmd, " "),
-        "err: " .. tostring(err or job_id),
-        "",
-        "Tips: pip install Pillow  或  安装 chafa 到 PATH",
+        "imgbuf: failed to open terminal buffer",
+        "err: " .. tostring(open_err or term_chan),
       })
       vim.bo[buf].modifiable = false
+    end)
+    return buf
+  end
+
+  vim.b[buf].imgbuf_term_chan = term_chan
+
+  -- Ignore OSC/DCS TermRequest on this buffer (static image; no shell integration)
+  vim.api.nvim_create_autocmd("TermRequest", {
+    buffer = buf,
+    callback = function()
+      -- no-op: do not attempt replies on preview terminals
+    end,
+  })
+
+  local function send_to_term(data)
+    if not term_chan or term_chan <= 0 then
+      return
+    end
+    if not vim.api.nvim_buf_is_valid(buf) then
+      return
+    end
+    if type(data) ~= "table" or #data == 0 then
+      return
+    end
+    -- jobstart splits on NL; rejoin. pcall avoids rare closed-stream races.
+    pcall(vim.api.nvim_chan_send, term_chan, table.concat(data, "\n"))
+  end
+
+  -- Merge into current env (jobstart `env` replaces the whole environment if set)
+  local job_env = vim.fn.environ()
+  job_env.TERM = "xterm-256color"
+  job_env.COLORTERM = "truecolor"
+  job_env.FORCE_COLOR = "1"
+
+  local job_id = vim.fn.jobstart(cmd, {
+    cwd = vim.fn.fnamemodify(path, ":h"),
+    -- no pty: size/mode already passed via argv; avoids extra OSC from slave side
+    env = job_env,
+    stdout_buffered = true,
+    stderr_buffered = true,
+    on_stdout = function(_, data, _)
+      send_to_term(data)
+    end,
+    on_stderr = function(_, data, _)
+      -- chafa sometimes writes progress to stderr; ignore noise
+      if not data then
+        return
+      end
+      local msg = table.concat(data, "\n")
+      if msg:match("%S") and not msg:match("^%s*$") then
+        -- keep silent unless useful for debug; avoid spamming UI
+      end
+    end,
+    on_exit = function(_, code, _)
+      vim.schedule(function()
+        if not vim.api.nvim_buf_is_valid(buf) then
+          return
+        end
+        vim.b[buf].terminal_job_id = 0
+        pcall(vim.cmd, "stopinsert")
+        apply_term_options(buf, win)
+        lock_view(win, buf)
+        if code ~= 0 and code ~= nil then
+          -- if renderer failed and buffer looks empty, show a hint once
+          local lines = vim.api.nvim_buf_get_lines(buf, 0, 3, false)
+          local empty = true
+          for _, ln in ipairs(lines) do
+            if ln and ln:match("%S") then
+              empty = false
+              break
+            end
+          end
+          if empty then
+            pcall(vim.api.nvim_chan_send, term_chan, string.format(
+              "\r\nimgbuf: renderer exited with code %s\r\ncmd: %s\r\n",
+              tostring(code),
+              table.concat(cmd, " ")
+            ))
+          end
+        end
+        -- bottom key-hint bar (reserved row)
+        if help_on then
+          send_help_line(term_chan, cols, mode, scale)
+        end
+        lock_view(win, buf)
+      end)
+    end,
+  })
+
+  if not job_id or job_id <= 0 then
+    vim.notify(
+      "imgbuf: failed to start renderer: " .. tostring(job_id),
+      vim.log.levels.ERROR
+    )
+    pcall(function()
+      vim.api.nvim_chan_send(term_chan, "imgbuf: failed to start preview process\r\n")
+      vim.api.nvim_chan_send(term_chan, "cmd: " .. table.concat(cmd, " ") .. "\r\n")
+      vim.api.nvim_chan_send(term_chan, "Tips: pip install Pillow  or  install chafa\r\n")
     end)
     return buf
   end
@@ -679,18 +853,6 @@ function M.open(path, opts)
     lock_view(win, buf)
   end)
 
-  -- After process exits, keep buffer easy to abandon (NERDTree `o` on text files)
-  vim.api.nvim_create_autocmd("TermClose", {
-    buffer = buf,
-    once = true,
-    callback = function()
-      pcall(function()
-        vim.bo[buf].bufhidden = "wipe"
-        vim.b[buf].terminal_job_id = 0
-      end)
-    end,
-  })
-
   return buf
 end
 
@@ -699,6 +861,7 @@ function M.refresh(buf)
   local st = state_by_buf[buf]
   local path = st and st.path or vim.b[buf].imgbuf_path
   local mode = (st and st.mode) or vim.b[buf].imgbuf_mode or config.mode
+  local scale = (st and st.scale) or vim.b[buf].imgbuf_scale or config.scale
   if not path then
     return
   end
@@ -713,6 +876,7 @@ function M.refresh(buf)
 
   M.open(path, {
     mode = mode,
+    scale = scale,
     win = win,
     replace_buf = buf,
   })
@@ -730,6 +894,32 @@ function M.set_mode(buf, mode)
   if map[mode] then
     config.chafa_symbols = map[mode]
   end
+  M.refresh(buf)
+end
+
+---Toggle fit (keep aspect) ↔ fill (stretch to window).
+---@param buf? integer
+function M.toggle_scale(buf)
+  buf = buf or vim.api.nvim_get_current_buf()
+  local st = state_by_buf[buf]
+  if not st then
+    return
+  end
+  st.scale = norm_scale(st.scale) == "fit" and "fill" or "fit"
+  vim.b[buf].imgbuf_scale = st.scale
+  M.refresh(buf)
+end
+
+---@param buf? integer
+---@param scale "fit"|"fill"
+function M.set_scale(buf, scale)
+  buf = buf or vim.api.nvim_get_current_buf()
+  local st = state_by_buf[buf]
+  if not st then
+    return
+  end
+  st.scale = norm_scale(scale)
+  vim.b[buf].imgbuf_scale = st.scale
   M.refresh(buf)
 end
 
@@ -1034,6 +1224,28 @@ function M.setup(user)
   vim.api.nvim_create_user_command("ImgbufRefresh", function()
     M.refresh()
   end, { desc = "Refresh imgbuf preview" })
+
+  vim.api.nvim_create_user_command("ImgbufScale", function(opts)
+    local arg = vim.trim(opts.args or ""):lower()
+    if arg == "" or arg == "toggle" then
+      M.toggle_scale()
+      return
+    end
+    if arg ~= "fit" and arg ~= "fill" and arg ~= "stretch" then
+      vim.notify("imgbuf: scale 为 fit | fill | toggle", vim.log.levels.ERROR)
+      return
+    end
+    if arg == "stretch" then
+      arg = "fill"
+    end
+    M.set_scale(nil, arg)
+  end, {
+    nargs = "?",
+    complete = function()
+      return { "fit", "fill", "toggle" }
+    end,
+    desc = "等比(fit) / 填充(fill) / 切换",
+  })
 
   if config.auto_open then
     setup_auto_open()

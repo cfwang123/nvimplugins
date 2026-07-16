@@ -4,7 +4,7 @@ local M = {}
 local player = require("music.player")
 
 ---@class MusicConfig
----@field backend "auto"|"mpv"|"ffplay"
+---@field backend "python"|"auto"
 ---@field volume number
 ---@field loop boolean
 ---@field auto_next boolean
@@ -15,12 +15,10 @@ local player = require("music.player")
 ---@field bar_width number|nil
 ---@field viz_height number
 ---@field viz boolean
----@field mpv_path string
----@field ffplay_path string
----@field ffprobe_path string
+---@field python string Python 可执行文件（默认 python）
 
 local default_config = {
-  backend = "auto",
+  backend = "python",
   volume = 70,
   loop = false,
   auto_next = true,
@@ -44,9 +42,7 @@ local default_config = {
   bar_width = nil,
   viz_height = 8,
   viz = true,
-  mpv_path = "mpv",
-  ffplay_path = "ffplay",
-  ffprobe_path = "ffprobe",
+  python = "python",
 }
 
 local config = vim.deepcopy(default_config)
@@ -1113,9 +1109,7 @@ function M.setup(user)
     backend = config.backend,
     volume = config.volume,
     loop = config.loop,
-    mpv_path = config.mpv_path,
-    ffplay_path = config.ffplay_path,
-    ffprobe_path = config.ffprobe_path,
+    python = config.python,
   })
   player.on_ended(on_ended)
   player.on_status(function()
@@ -1154,7 +1148,7 @@ function M.setup(user)
     end,
   })
 
-  -- leave Neovim: stop managed job + kill ALL ffplay processes
+  -- leave Neovim: quit python daemon
   local leave_aug = vim.api.nvim_create_augroup("MusicLeave", { clear = true })
   vim.api.nvim_create_autocmd({ "VimLeavePre", "VimLeave" }, {
     group = leave_aug,

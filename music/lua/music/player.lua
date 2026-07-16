@@ -1,31 +1,27 @@
----@mod music.player Audio backends (mpv preferred, ffplay fallback)
+---@mod music.player Python daemon backend (progress / volume / seek)
+--- One long-lived `scripts/player.py` process; JSON-lines over stdin/stdout.
+--- Not ffplay/mpv fire-and-forget — full control of position and volume.
 local M = {}
 
 local default_cfg = {
-  backend = "auto", ---@type "auto"|"mpv"|"ffplay"
+  backend = "python", ---@type "python"|"auto"
   volume = 70,
   loop = false,
-  mpv_path = "mpv",
-  ffplay_path = "ffplay",
-  ffprobe_path = "ffprobe",
-  ipc_name = "nvim-music-mpv",
+  python = "python",
 }
 
 local cfg = vim.deepcopy(default_cfg)
 
 ---@class MusicPlayerState
----@field backend "mpv"|"ffplay"|nil
+---@field backend string|nil
 ---@field status "idle"|"playing"|"paused"|"stopped"
 ---@field path string|nil
 ---@field title string|nil
 ---@field volume number
 ---@field loop boolean
----@field position number seconds
+---@field position number
 ---@field duration number|nil
 ---@field job_id number|nil
----@field mpv_socket string|nil
----@field started_at number|nil monotonic for ffplay estimate
----@field base_pos number position at start/resume for ffplay
 
 local state = {
   backend = nil,
@@ -37,9 +33,6 @@ local state = {
   position = 0,
   duration = nil,
   job_id = nil,
-  mpv_socket = nil,
-  started_at = nil,
-  base_pos = 0,
 }
 
 ---@type fun()|nil
@@ -47,13 +40,9 @@ local on_ended_cb = nil
 ---@type fun()|nil
 local on_status_cb = nil
 
-local function is_win()
-  return vim.fn.has("win32") == 1 or vim.fn.has("win64") == 1
-end
-
-local function executable(name)
-  return name and name ~= "" and vim.fn.executable(name) == 1
-end
+--- Serialize outgoing requests; avoid interleaved stdin writes
+local send_queue = {}
+local sending = false
 
 local function basename(path)
   return vim.fn.fnamemodify(path, ":t")
@@ -71,292 +60,173 @@ local function fire_ended()
   end
 end
 
-local function now_sec()
-  return vim.uv.hrtime() / 1e9
+local function plugin_root()
+  local src = debug.getinfo(1, "S").source:sub(2)
+  return vim.fn.fnamemodify(src, ":h:h:h")
 end
 
-local function mpv_socket_path()
-  if is_win() then
-    return "\\\\.\\pipe\\" .. cfg.ipc_name
-  end
-  local dir = vim.fn.stdpath("cache")
-  vim.fn.mkdir(dir, "p")
-  return dir .. "/music-mpv.sock"
+local function player_script()
+  return plugin_root() .. "/scripts/player.py"
 end
 
----@return "mpv"|"ffplay"|nil, string|nil
-function M.resolve_backend()
-  if cfg.backend == "mpv" then
-    if executable(cfg.mpv_path) then
-      return "mpv", nil
-    end
-    return nil, "backend=mpv 但未找到 mpv"
-  end
-  if cfg.backend == "ffplay" then
-    if executable(cfg.ffplay_path) then
-      return "ffplay", nil
-    end
-    return nil, "backend=ffplay 但未找到 ffplay"
-  end
-  if executable(cfg.mpv_path) then
-    return "mpv", nil
-  end
-  if executable(cfg.ffplay_path) then
-    return "ffplay", nil
-  end
-  return nil, "未找到播放器：请安装 mpv（推荐）或 ffplay"
-end
-
----@param path string
----@return number|nil
-function M.probe_duration(path)
-  if not path or path == "" or not executable(cfg.ffprobe_path) then
-    return nil
-  end
-  local out = vim.fn.system({
-    cfg.ffprobe_path,
-    "-v",
-    "error",
-    "-show_entries",
-    "format=duration",
-    "-of",
-    "default=noprint_wrappers=1:nokey=1",
-    path,
-  })
-  if vim.v.shell_error ~= 0 then
-    return nil
-  end
-  local n = tonumber((out or ""):match("([%d%.]+)"))
-  if n and n > 0 then
-    return n
-  end
-  return nil
-end
-
----Kill a process tree (Windows needs /T; jobstop alone often leaves ffplay alive).
----@param pid number|nil
-local function kill_pid_tree(pid)
-  if not pid or pid <= 0 then
+local function apply_payload(msg)
+  if type(msg) ~= "table" then
     return
   end
-  if is_win() then
-    vim.fn.system({ "taskkill", "/PID", tostring(pid), "/T", "/F" })
-  else
-    pcall(vim.fn.system, { "kill", "-TERM", "--", "-" .. tostring(pid) })
-    pcall(vim.fn.system, { "kill", "-KILL", tostring(pid) })
+  if msg.ok == false then
+    if msg.error then
+      vim.schedule(function()
+        vim.notify("music: " .. tostring(msg.error), vim.log.levels.ERROR)
+      end)
+    end
+    return
+  end
+
+  if msg.backend then
+    state.backend = msg.backend
+  end
+  if msg.path ~= nil then
+    state.path = msg.path
+    if msg.path and msg.path ~= "" then
+      state.title = basename(msg.path)
+    end
+  end
+  if msg.status then
+    state.status = msg.status
+  end
+  if type(msg.position) == "number" then
+    state.position = msg.position
+  end
+  if type(msg.duration) == "number" then
+    state.duration = msg.duration
+  elseif msg.duration == nil and msg.event == "status" then
+    -- keep previous
+  end
+  if type(msg.volume) == "number" then
+    state.volume = msg.volume
+  end
+  if msg.loop ~= nil then
+    state.loop = not not msg.loop
+  end
+
+  if msg.event == "ended" then
+    state.status = "stopped"
+    fire_status()
+    fire_ended()
+    return
+  end
+
+  if msg.event == "status" or msg.event == "ready" or msg.event == "pong" then
+    fire_status()
+  end
+end
+
+local function on_stdout(_, data, _)
+  if type(data) ~= "table" then
+    return
+  end
+  for _, line in ipairs(data) do
+    if line and line ~= "" then
+      local ok, msg = pcall(vim.json.decode, line)
+      if ok and type(msg) == "table" then
+        apply_payload(msg)
+      end
+    end
   end
 end
 
 local function kill_job()
   if state.job_id and state.job_id > 0 then
-    local pid = nil
-    pcall(function()
-      pid = vim.fn.jobpid(state.job_id)
-    end)
     pcall(vim.fn.jobstop, state.job_id)
-    -- jobstop is sometimes soft; force-kill the tree
-    kill_pid_tree(pid)
   end
   state.job_id = nil
 end
 
----Kill every ffplay process on the machine (used on Neovim exit / emergency silence).
-function M.kill_all_ffplay()
-  if is_win() then
-    -- /T kills child tree; ignore "not found"
-    vim.fn.system("taskkill /IM ffplay.exe /F /T >nul 2>&1")
-  else
-    vim.fn.system("pkill -x ffplay >/dev/null 2>&1; killall -q ffplay >/dev/null 2>&1; true")
-  end
-end
-
----Send JSON IPC command to mpv.
----@param command table
----@return boolean
----@return string|nil
-local function mpv_cmd(command)
-  if not state.mpv_socket then
-    return false, "no socket"
-  end
-  local payload = vim.json.encode({ command = command }) .. "\n"
-  if is_win() then
-    local ps = string.format(
-      [[$n='%s'; $p=New-Object System.IO.Pipes.NamedPipeClientStream('.', $n, [System.IO.Pipes.PipeDirection]::InOut, [System.IO.Pipes.PipeOptions]::None, [System.Security.Principal.TokenImpersonationLevel]::Impersonation); try { $p.Connect(600); $w=New-Object System.IO.StreamWriter($p); $w.AutoFlush=$true; $r=New-Object System.IO.StreamReader($p); $w.Write(%s); $line=$r.ReadLine(); $w.Dispose(); $r.Dispose(); $p.Dispose(); Write-Output $line } catch { exit 1 }]],
-      cfg.ipc_name,
-      vim.fn.json_encode(payload)
-    )
-    local out = vim.fn.system({ "powershell", "-NoProfile", "-Command", ps })
-    if vim.v.shell_error ~= 0 then
-      return false, out
-    end
-    return true, vim.trim(out or "")
+local function ensure_daemon()
+  if state.job_id and state.job_id > 0 then
+    return true, nil
   end
 
-  if executable("socat") then
-    local out = vim.fn.system({
-      "sh",
-      "-c",
-      string.format("printf %%s %s | socat - %s", vim.fn.shellescape(payload), vim.fn.shellescape(state.mpv_socket)),
-    })
-    if vim.v.shell_error ~= 0 then
-      return false, out
-    end
-    return true, vim.trim(out or "")
+  local script = player_script()
+  if vim.fn.filereadable(script) ~= 1 then
+    return false, "missing " .. script
   end
 
-  local py = [[
-import socket,sys
-s=socket.socket(socket.AF_UNIX)
-s.settimeout(1.0)
-s.connect(sys.argv[1])
-s.sendall(sys.argv[2].encode())
-data=s.recv(8192).decode(errors='replace')
-print(data.splitlines()[0] if data else '', end='')
-s.close()
-]]
-  local out = vim.fn.system({ "python", "-c", py, state.mpv_socket, payload })
-  if vim.v.shell_error ~= 0 then
-    return false, out
-  end
-  return true, vim.trim(out or "")
-end
-
-local function mpv_get_property(name)
-  local ok, resp = mpv_cmd({ "get_property", name })
-  if not ok or not resp or resp == "" then
-    return nil
-  end
-  local decoded = nil
-  pcall(function()
-    decoded = vim.json.decode(resp)
-  end)
-  if type(decoded) == "table" and decoded.error == "success" then
-    return decoded.data
-  end
-  return nil
-end
-
-local function stop_backend_silent()
-  if state.backend == "mpv" and state.mpv_socket then
-    pcall(mpv_cmd, { "quit" })
-  end
-  kill_job()
-  if state.mpv_socket and not is_win() then
-    pcall(vim.fn.delete, state.mpv_socket)
-  end
-  state.mpv_socket = nil
-  state.started_at = nil
-end
-
----Stop managed player and force-kill leftover ffplay (Neovim exit).
-function M.shutdown()
-  state.status = "stopped"
-  stop_backend_silent()
-  M.kill_all_ffplay()
-  fire_status()
-end
-
----@param path string
----@param start_pos number|nil
-local function start_mpv(path, start_pos)
-  stop_backend_silent()
-  local sock = mpv_socket_path()
-  state.mpv_socket = sock
-  state.backend = "mpv"
-  start_pos = start_pos or 0
-
-  local args = {
-    cfg.mpv_path,
-    "--no-video",
-    "--force-window=no",
-    "--idle=once",
-    "--really-quiet",
-    "--input-ipc-server=" .. sock,
-    "--volume=" .. tostring(state.volume),
-    "--start=" .. string.format("%.3f", start_pos),
-    path,
-  }
-  if state.loop then
-    table.insert(args, #args, "--loop-file=inf")
-  end
-
-  local job = vim.fn.jobstart(args, {
-    detach = false,
+  local py = cfg.python or "python"
+  local job = vim.fn.jobstart({ py, "-X", "utf8", "-u", script }, {
+    cwd = plugin_root(),
+    stdin = "pipe",
+    stdout_buffered = false,
+    stderr_buffered = false,
+    on_stdout = on_stdout,
+    on_stderr = function(_, data, _)
+      if type(data) ~= "table" then
+        return
+      end
+      local msg = table.concat(data, "\n")
+      -- ignore pygame/setuptools noise
+      if msg:match("UserWarning") or msg:match("pkg_resources") or msg:match("Hello from the pygame") then
+        return
+      end
+      if msg:match("%S") then
+        vim.schedule(function()
+          vim.notify("music(python): " .. msg:gsub("%s+$", ""), vim.log.levels.WARN)
+        end)
+      end
+    end,
     on_exit = function()
       state.job_id = nil
       if state.status == "playing" or state.status == "paused" then
         state.status = "stopped"
-        state.position = state.duration or state.position or 0
         fire_status()
-        fire_ended()
       end
     end,
   })
-  if job <= 0 then
-    state.mpv_socket = nil
-    state.backend = nil
-    return false, "无法启动 mpv"
+
+  if not job or job <= 0 then
+    return false, "无法启动 Python 播放进程（检查 python / pygame）"
   end
   state.job_id = job
-  state.status = "playing"
-  state.path = path
-  state.title = basename(path)
-  state.duration = M.probe_duration(path)
-  state.position = start_pos
-  fire_status()
+  state.backend = "python"
   return true, nil
 end
 
----@param path string
----@param start_pos number|nil
-local function start_ffplay(path, start_pos)
-  stop_backend_silent()
-  state.backend = "ffplay"
-  start_pos = start_pos or 0
-
-  -- Keep args conservative: very old ffplay rejects -volume / -loop and exits.
-  local args = {
-    cfg.ffplay_path,
-    "-nodisp",
-    "-autoexit",
-    "-loglevel",
-    "quiet",
-  }
-  if start_pos > 0.05 then
-    table.insert(args, "-ss")
-    table.insert(args, string.format("%.3f", start_pos))
+local function flush_send()
+  if sending then
+    return
   end
-  table.insert(args, path)
-
-  local job = vim.fn.jobstart(args, {
-    detach = false,
-    on_exit = function()
-      state.job_id = nil
-      if state.status == "playing" then
-        state.status = "stopped"
-        if state.duration then
-          state.position = state.duration
-        end
-        fire_status()
-        if not state.loop then
-          fire_ended()
-        end
-      end
-    end,
-  })
-  if job <= 0 then
-    state.backend = nil
-    return false, "无法启动 ffplay"
+  if not state.job_id or state.job_id <= 0 then
+    send_queue = {}
+    return
   end
-  state.job_id = job
-  state.status = "playing"
-  state.path = path
-  state.title = basename(path)
-  state.duration = M.probe_duration(path)
-  state.position = start_pos
-  state.base_pos = start_pos
-  state.started_at = now_sec()
-  fire_status()
+  local item = table.remove(send_queue, 1)
+  if not item then
+    return
+  end
+  sending = true
+  local ok = pcall(vim.fn.chansend, state.job_id, item)
+  sending = false
+  if not ok then
+    -- channel dead
+    state.job_id = nil
+    send_queue = {}
+    return
+  end
+  -- schedule next
+  if #send_queue > 0 then
+    vim.schedule(flush_send)
+  end
+end
+
+---@param obj table
+local function send(obj)
+  local ok_d, err = ensure_daemon()
+  if not ok_d then
+    return false, err
+  end
+  local payload = vim.json.encode(obj) .. "\n"
+  table.insert(send_queue, payload)
+  flush_send()
   return true, nil
 end
 
@@ -383,6 +253,15 @@ function M.on_status(cb)
   on_status_cb = cb
 end
 
+---@return string|nil
+function M.resolve_backend()
+  return "python"
+end
+
+function M.backend_name()
+  return state.backend or "python"
+end
+
 ---@param path string
 ---@param start_pos number|nil
 ---@return boolean, string|nil
@@ -394,21 +273,27 @@ function M.play(path, start_pos)
   if vim.fn.filereadable(path) ~= 1 then
     return false, "文件不存在: " .. path
   end
-  local backend, err = M.resolve_backend()
-  if not backend then
+  state.path = path
+  state.title = basename(path)
+  local ok, err = send({
+    cmd = "play",
+    path = path,
+    start = start_pos or 0,
+    volume = state.volume,
+    loop = state.loop,
+  })
+  if not ok then
     return false, err
   end
-  start_pos = start_pos or 0
-  if backend == "mpv" then
-    return start_mpv(path, start_pos)
-  end
-  return start_ffplay(path, start_pos)
+  state.status = "playing"
+  state.position = start_pos or 0
+  fire_status()
+  return true, nil
 end
 
 function M.stop()
-  -- mark stopped first so on_exit won't treat it as natural end / auto-next
   state.status = "stopped"
-  stop_backend_silent()
+  send({ cmd = "stop" })
   fire_status()
 end
 
@@ -416,45 +301,27 @@ function M.pause()
   if state.status ~= "playing" then
     return false, "当前未在播放"
   end
-  if state.backend == "mpv" then
-    M.poll()
-    local ok = mpv_cmd({ "set_property", "pause", true })
-    if ok then
-      state.status = "paused"
-      fire_status()
-      return true, nil
-    end
-    return false, "mpv 暂停失败"
+  local ok, err = send({ cmd = "pause" })
+  if ok then
+    state.status = "paused"
+    fire_status()
   end
-  -- ffplay: kill process, keep position estimate
-  M.poll()
-  local pos = state.position or 0
-  kill_job()
-  state.status = "paused"
-  state.position = pos
-  state.started_at = nil
-  state.base_pos = pos
-  fire_status()
-  return true, nil
+  return ok, err
 end
 
 function M.resume()
   if state.status == "playing" then
     return true, nil
   end
-  if not state.path then
-    return false, "没有曲目"
+  if state.path and (state.status == "stopped" or state.status == "idle") then
+    return M.play(state.path, state.position or 0)
   end
-  if state.status == "paused" and state.backend == "mpv" and state.job_id and state.job_id > 0 then
-    local ok = mpv_cmd({ "set_property", "pause", false })
-    if ok then
-      state.status = "playing"
-      fire_status()
-      return true, nil
-    end
+  local ok, err = send({ cmd = "resume" })
+  if ok then
+    state.status = "playing"
+    fire_status()
   end
-  local pos = state.position or 0
-  return M.play(state.path, pos)
+  return ok, err
 end
 
 function M.toggle()
@@ -468,9 +335,7 @@ end
 function M.set_volume(vol)
   vol = math.max(0, math.min(100, math.floor(vol + 0.5)))
   state.volume = vol
-  if state.backend == "mpv" and (state.status == "playing" or state.status == "paused") then
-    mpv_cmd({ "set_property", "volume", vol })
-  end
+  send({ cmd = "volume", volume = vol })
   fire_status()
   return vol
 end
@@ -489,66 +354,31 @@ function M.set_loop(on)
   else
     state.loop = not not on
   end
-  if state.backend == "mpv" and (state.status == "playing" or state.status == "paused") then
-    mpv_cmd({ "set_property", "loop-file", state.loop and "inf" or "no" })
-  end
+  send({ cmd = "loop", loop = state.loop })
   fire_status()
   return state.loop
 end
 
----Seek to absolute seconds.
----@param seconds number
+---@param seconds number absolute
 function M.seek_abs(seconds)
   seconds = math.max(0, seconds)
   if state.duration and seconds > state.duration then
     seconds = state.duration
   end
-  if not state.path then
-    return false, "没有曲目"
-  end
-  if state.backend == "mpv" and (state.status == "playing" or state.status == "paused") then
-    local ok = mpv_cmd({ "seek", seconds, "absolute" })
-    if ok then
-      state.position = seconds
-      fire_status()
-      return true, nil
-    end
-  end
-  -- ffplay or dead mpv: restart from position
-  local was_paused = state.status == "paused"
-  local ok, err = M.play(state.path, seconds)
-  if not ok then
-    return false, err
-  end
-  if was_paused then
-    M.pause()
-  end
-  return true, nil
+  state.position = seconds
+  local ok, err = send({ cmd = "seek", position = seconds })
+  fire_status()
+  return ok, err
 end
 
 ---@param delta number
 function M.seek(delta)
-  M.poll()
   return M.seek_abs((state.position or 0) + delta)
 end
 
+---Ask daemon for fresh status (position/duration).
 function M.poll()
-  if state.backend == "mpv" and (state.status == "playing" or state.status == "paused") then
-    local pos = mpv_get_property("time-pos")
-    local dur = mpv_get_property("duration")
-    if type(pos) == "number" then
-      state.position = pos
-    end
-    if type(dur) == "number" and dur > 0 then
-      state.duration = dur
-    end
-  elseif state.backend == "ffplay" and state.status == "playing" and state.started_at then
-    local elapsed = now_sec() - state.started_at
-    state.position = (state.base_pos or 0) + elapsed
-    if state.duration and state.position > state.duration then
-      state.position = state.duration
-    end
-  end
+  send({ cmd = "status" })
   return state
 end
 
@@ -556,9 +386,24 @@ function M.is_active()
   return state.status == "playing" or state.status == "paused"
 end
 
-function M.backend_name()
-  local b = M.resolve_backend()
-  return b
+---Stop daemon process (hide buffer / leave nvim).
+function M.shutdown()
+  state.status = "stopped"
+  if state.job_id and state.job_id > 0 then
+    pcall(vim.fn.chansend, state.job_id, vim.json.encode({ cmd = "quit" }) .. "\n")
+    vim.defer_fn(function()
+      kill_job()
+    end, 150)
+  else
+    kill_job()
+  end
+  send_queue = {}
+  fire_status()
+end
+
+---Compat name used by older code paths
+function M.kill_all_ffplay()
+  -- no-op: python backend does not spawn ffplay
 end
 
 return M

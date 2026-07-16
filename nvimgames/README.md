@@ -12,6 +12,16 @@ Neovim 小游戏合集，目前包含：
 
 也可：`:NvimGames mine` / `sokoban` / `game24` / `tetris`（或 `1`–`4`）直接进对应游戏。
 
+## 截图
+
+| 扫雷 | 推箱子 |
+|:----:|:------:|
+| ![扫雷](../images/mine.png) | ![推箱子](../images/sokoban.png) |
+
+| 24点 | 俄罗斯方块 |
+|:----:|:----------:|
+| ![24点](../images/twentyfour.png) | ![俄罗斯方块](../images/tetris.png) |
+
 ## 依赖
 
 - Neovim 0.9+（推箱子需要 `vim.json`）
@@ -27,7 +37,7 @@ Neovim 小游戏合集，目前包含：
 ```vim
 call plug#begin()
 
-Plug 'D:/VS_Projects/AIPrototype/vim/nvimgames', {
+Plug '/path/to/vim/nvimgames', {
   \ 'on': ['Mine', 'Sokoban', 'Game24', 'Tetris', 'NvimGames'],
   \ }
 
@@ -44,7 +54,7 @@ lua require('nvimgames').setup()
 
 ```vim
 call plug#begin()
-Plug 'D:/VS_Projects/AIPrototype/vim/nvimgames'
+Plug '/path/to/vim/nvimgames'
 call plug#end()
 
 lua require('nvimgames').setup()

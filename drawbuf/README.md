@@ -2,6 +2,8 @@
 
 在 Neovim 里用 **Unicode 色块** 画画：鼠标拖拽、直线/矩形/椭圆预览、前景/背景色、可点击中文状态栏、彩色演示图案。
 
+![drawbuf 截图](../images/drawbuf.png)
+
 ## 功能一览
 
 | 能力 | 说明 |
@@ -34,7 +36,7 @@
 call plug#begin()
 
 " on：执行 :Draw 时才加载
-Plug 'D:/VS_Projects/AIPrototype/vim/drawbuf', {
+Plug '/path/to/vim/drawbuf', {
   \ 'on': ['Draw'],
   \ }
 
@@ -52,7 +54,7 @@ call plug#end()
 
 ```vim
 call plug#begin()
-Plug 'D:/VS_Projects/AIPrototype/vim/drawbuf'
+Plug '/path/to/vim/drawbuf'
 call plug#end()
 
 " 可选
@@ -75,7 +77,9 @@ call plug#end()
 | `[字符:█ ▾]` | float 选择色块 |
 | `[前景:██ ▾]` / `[背景:██ ▾]` | float 选色（可见色块）；点外部关闭 |
 | `[演示 ▾]` | 加载预制彩色图案 |
-| `[保存]` `[退出]` `[撤销]` `[?]` | 对应操作 |
+| `[保存]` | 保存 `.draw` |
+| `[清空]` | 清空画布（可撤销；`C` 键同效） |
+| `[撤销]` `[退出]` `[?]` | 撤销 / 退出 / 帮助 |
 
 ### 内置演示
 
@@ -101,6 +105,7 @@ call plug#end()
 | `a`/`d`/`L`/`R`/`O`/`f` | 铅笔/橡皮/直线/矩形/椭圆/填充 |
 | `[]` `,` `.` `<>` | 字符 / 前景 / 背景 |
 | `u` / `Ctrl-r` | 撤销 / 重做 |
+| `C` | 清空画布 |
 | `s` / `q` | 保存 / 退出 |
 
 ## 配置（可选）

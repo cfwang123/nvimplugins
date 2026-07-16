@@ -527,9 +527,11 @@ local function build_status(st)
   add_gap(1)
   add_text("[保存]", "DrawbufStatusBtn", "save")
   add_gap(1)
-  add_text("[退出]", "DrawbufStatusBtn", "quit")
+  add_text("[清空]", "DrawbufStatusBtn", "clear")
   add_gap(1)
   add_text("[撤销]", "DrawbufStatusBtn", "undo")
+  add_gap(1)
+  add_text("[退出]", "DrawbufStatusBtn", "quit")
   add_gap(1)
   add_text("[?]", "DrawbufStatusBtn", "help")
 
@@ -1842,9 +1844,9 @@ local function show_help()
       "drawbuf 操作说明:",
       "  铅笔：鼠标拖拽绘制；右键擦除；p 连续绘制",
       "  直线/矩形/椭圆：按下起点→拖动预览→松开确认；Esc 取消",
-      "  底部状态栏：工具 / 字符 / 前景 / 背景 / 演示",
+      "  底部状态栏：工具 / 字符 / 前景 / 背景 / 演示 / 保存 / 清空 / 撤销 / 退出",
       "  色块：100% █ + 1/2 + 1/4；选色 float 真彩色",
-      "  hjkl 移动  u 撤销  s 保存  q 退出",
+      "  hjkl 移动  u 撤销  C 清空  s 保存  q 退出",
     }, "\n"),
     vim.log.levels.INFO
   )
@@ -1880,6 +1882,12 @@ local function on_status_click(st, buf, display_col)
   elseif id == "save" then
     save(st)
     refresh(buf)
+  elseif id == "clear" then
+    local ans = vim.fn.confirm("清空整个画布？", "&是\n&否", 2)
+    if ans == 1 then
+      clear_canvas(st)
+      refresh(buf)
+    end
   elseif id == "quit" then
     if st.dirty then
       local ans = vim.fn.confirm("画布未保存，关闭？", "&是\n&否", 2)

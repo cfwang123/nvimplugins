@@ -13,6 +13,16 @@
 | **[nvimgames](nvimgames/)** | 小游戏合集：扫雷 / 推箱子 / 24点 / 方块 | [nvimgames/README.md](nvimgames/README.md) |
 | **[music](music/)** | 打开音频文件 → buffer 播放器（进度条 / 可视化） | [music/README.md](music/README.md) |
 
+## 截图
+
+| imgbuf | drawbuf | 扫雷 |
+|:------:|:-------:|:----:|
+| ![imgbuf](images/imgbuf.png) | ![drawbuf](images/drawbuf.png) | ![扫雷](images/mine.png) |
+
+| 推箱子 | 24点 | 俄罗斯方块 |
+|:------:|:----:|:----------:|
+| ![推箱子](images/sokoban.png) | ![24点](images/twentyfour.png) | ![俄罗斯方块](images/tetris.png) |
+
 ## 依赖摘要
 
 | 插件 | Neovim | 其他 |
@@ -20,7 +30,7 @@
 | imgbuf | 0.9+ | chafa **或** Python3 + Pillow |
 | drawbuf | 0.9+ | `termguicolors`；建议 `mouse=a` |
 | nvimgames | 0.9+ | `termguicolors`；扫雷建议 `mouse=a`；推箱子自带 `data/levels.json` |
-| music | 0.9+ | **mpv**（推荐）或 **ffplay**（ffmpeg） |
+| music | 0.9+ | Python3 + **pygame**（或 just_playback） |
 
 ## 快速安装（示例）
 
@@ -28,10 +38,10 @@
 
 ```vim
 call plug#begin()
-Plug 'D:/VS_Projects/AIPrototype/vim/imgbuf'
-Plug 'D:/VS_Projects/AIPrototype/vim/drawbuf'
-Plug 'D:/VS_Projects/AIPrototype/vim/nvimgames'
-Plug 'D:/VS_Projects/AIPrototype/vim/music'
+Plug '/path/to/vim/imgbuf'
+Plug '/path/to/vim/drawbuf'
+Plug '/path/to/vim/nvimgames'
+Plug '/path/to/vim/music'
 call plug#end()
 ```
 
