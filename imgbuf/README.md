@@ -1,6 +1,6 @@
 # imgbuf.nvim
 
-在 Neovim **terminal** 里预览图片：chafa 风格 **1/4 格字符**（`▘▝▖▗▀▄▌▐█`）+ 真彩色 ANSI。
+在 Neovim 里预览图片：默认 **字符画 + 高清叠层**（WezTerm/Kitty/Ghostty 上自动检测；其它终端仅字符画）。
 
 不把每个像素做成 highlight 组，因此不会触发 `E849: Too many highlight and syntax groups`。
 
@@ -8,34 +8,25 @@
 
 ## 功能
 
-- **block / half / braille** 三种符号模式（默认 **block**，chafa 四分格）
-- **缩放模式**：等比适配（fit）↔ 拉伸铺满（fill）（`s`）
-- **底部按键提示行**（反色条，显示当前模式/缩放）
-- **自动预览**：`:e photo.png` 或从文件树打开图片
-- **剪贴板图片**：`:ImgbufClipboard`（Pillow `ImageGrab`）
-- **窗口缩放**防抖后按新尺寸重绘
-- **预览只读**：不会把字符画写回原图
-- **禁止滚动**：锁视图，屏蔽 j/k、滚轮等
-- **文件树友好**（NERDTree / NvimTree / neo-tree 等）
-  - `o` 打开图片 → **覆盖**右侧编辑区，不额外 vsplit
-  - 右侧是预览时，`o` 打开**文本** → 覆盖预览，收回误开的分屏
+- **block / half / braille** 三种符号模式（默认 **block**）
+- **缩放**：默认**拉伸铺满**；`s` 切换为窗口内**等比**（可再按 `s` 回拉伸）
+- **底部按键提示**
+- **自动预览**：`:e photo.png` / 文件树打开
+- **剪贴板**：`:ImgbufClipboard`
+- **窗口缩放**防抖重绘、只读、禁止滚动
+- **文件树友好**（NERDTree / NvimTree / neo-tree）
+- **高清默认开启**（`hd = "always"`）：终端支持时自动叠像素图（WezTerm/Kitty/Ghostty + Pillow）；否则仅字符画
 
 ## 依赖
 
 | 组件 | 要求 |
 |------|------|
 | Neovim | 0.9+（推荐 0.10+） |
-| 渲染后端 | 二选一（`backend = "auto"`） |
+| 字符画 | chafa **或** Python 3 + Pillow |
+| 高清叠层 | WezTerm / Kitty / Ghostty + **Pillow**（`hd=always` 默认） |
 
-**后端 A — chafa（推荐）**
-
-- 安装 [chafa](https://hpjansson.org/chafa/) 到 `PATH`
-- Windows 示例：`scoop install chafa`
-
-**后端 B — Python 回退**
-
-- Python 3
-- `pip install Pillow`
+**chafa（推荐）**：`scoop install chafa`  
+**高清/字符画 Python**：`pip install Pillow`
 
 ## 安装（vim-plug）
 
@@ -70,17 +61,16 @@ call plug#end()
 |----|------|
 | `q` | 关闭 |
 | `r` | 刷新 |
-| `1` | block（默认） |
+| `1` | block 字符画 |
 | `2` | half（`▀`） |
 | `3` | braille（点阵） |
-| `s` | 等比 (fit) ↔ 填充 (fill) |
-
-预览区**最底一行**为反色按键提示（含当前模式 / 缩放）。
+| `s` | 拉伸 (fill) ↔ 等比适配窗口 (fit) |
+| `o` | 用系统默认程序打开原图 |
 
 | 缩放 | 含义 |
 |------|------|
-| **fit** | 等比缩放，完整显示（可能留边） |
-| **fill** | 拉伸铺满窗口（可能变形） |
+| **fill**（默认） | 拉伸铺满窗口（可能变形） |
+| **fit** | 等比缩放到窗口内并**居中**；高清叠层与字符画对齐重叠 |
 
 ## 配置（可选）
 
@@ -90,21 +80,23 @@ call plug#end()
 require("imgbuf").setup({
   backend = "auto",   -- "auto" | "chafa" | "python"
   mode = "block",     -- "block" | "half" | "braille"
-  scale = "fit",      -- "fit" | "fill"
-  show_help = true,   -- 底部按键提示
+  scale = "fill",     -- "fill" 拉伸 | "fit" 等比（s 切换）
+  hd = "always",      -- 默认：检测终端支持则叠高清；"never" 关闭
+  -- hd_tmux = true,  -- tmux 内也尝试
+  show_help = true,
   auto_open = true,
-  -- 其余见 lua/imgbuf/init.lua 的 default_config
 })
 ```
+
+默认 **`hd = "always"`**：在 WezTerm / Kitty / Ghostty 等支持图形协议的终端上，字符画之上自动叠像素图（需 `pip install Pillow`）。不支持或检测失败时只显示字符画。设 `hd = "never"` 可关掉高清。
 
 可多次调用；后一次以默认值为底再合并你传入的字段。
 
 ## 原理
 
-1. 在编辑区（避开文件树）开 **terminal buffer**
-2. 运行 `chafa` 或 `scripts/render.py --format ansi`
-3. 终端解析 ANSI 真彩色
-4. 对 terminal「不可用」导致的 vsplit 做收回，避免挡文本编辑
+1. 在编辑区开 **terminal buffer**，字符画（chafa / render.py）
+2. 若 `hd` 开启且终端支持：宿主 TTY 叠 iTerm2/Kitty 像素图
+3. 文件树友好：收回误开的 vsplit
 
 ## 目录
 
@@ -112,9 +104,10 @@ require("imgbuf").setup({
 imgbuf/
   plugin/imgbuf.lua
   lua/imgbuf/init.lua
+  lua/imgbuf/graphics.lua
   scripts/render.py
+  scripts/gfx_prepare.py
   README.md
-  .gitignore
 ```
 
 ## 故障排除

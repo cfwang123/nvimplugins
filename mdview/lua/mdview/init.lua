@@ -1,0 +1,2140 @@
+---@mod mdview
+local config = require("mdview.config")
+local parse = require("mdview.parse")
+local render = require("mdview.render")
+local window = require("mdview.window")
+local sync = require("mdview.sync")
+local highlight = require("mdview.highlight")
+local image_mod = require("mdview.image")
+local anchor = require("mdview.anchor")
+
+local M = {}
+
+--- source_buf -> state（折叠/跳转等 per-file）
+local states = {}
+
+--- tabpage -> { preview_win, preview_buf, source_buf, source_win, mode }
+--- 每个 tab 最多一个 mdview 预览窗
+local tab_sessions = {}
+
+--- tabpage -> 跨文件跳转栈（md 链接跳转，供 <C-o> 回上一篇）
+--- { path, source_line, preview_line, mode }
+local file_nav_by_tab = {}
+
+local follow_installed = false
+
+-- 前向声明：do_render 内会调用 attach_maps
+local attach_maps
+
+local function get_state(source_buf)
+  return states[source_buf]
+end
+
+local function ensure_state(source_buf)
+  local st = states[source_buf]
+  if st then
+    return st
+  end
+  st = {
+    source_buf = source_buf,
+    preview_buf = nil,
+    source_win = nil,
+    preview_win = nil,
+    mode = nil, -- "single" | "side"
+    result = nil,
+    expanded_codes = {},
+    expanded_details = {},
+    jump_list = {}, ---@type {preview_line:number, source_line:number}[]
+    show_help = nil, -- nil → 跟 config.show_help
+    debounce = nil,
+    au_group = nil,
+    syncing = false,
+  }
+  states[source_buf] = st
+  return st
+end
+
+local function is_markdown_buf(buf)
+  if not buf or buf == 0 or not vim.api.nvim_buf_is_valid(buf) then
+    return false
+  end
+  if window.is_preview_buf(buf) then
+    return false
+  end
+  if vim.b[buf].mdview_toc_float or vim.b[buf].mdview_image_float or vim.b[buf].mdview_help_float then
+    return false
+  end
+  local ft = vim.bo[buf].filetype or ""
+  if ft == "markdown" or ft == "md" then
+    return true
+  end
+  local name = vim.api.nvim_buf_get_name(buf)
+  return name:match("%.md$") ~= nil or name:match("%.markdown$") ~= nil
+end
+
+local function tabpage()
+  return vim.api.nvim_get_current_tabpage()
+end
+
+local function get_file_nav_stack()
+  local t = tabpage()
+  if not file_nav_by_tab[t] then
+    file_nav_by_tab[t] = {}
+  end
+  return file_nav_by_tab[t]
+end
+
+local function get_tab_session(tab)
+  return tab_sessions[tab or tabpage()]
+end
+
+local function set_tab_session(tab, sess)
+  tab_sessions[tab or tabpage()] = sess
+end
+
+---卸载源 buffer 上的预览关联（保留 per-file 折叠状态）
+local function detach_source_preview(st)
+  if not st then
+    return
+  end
+  if st.preview_buf and vim.api.nvim_buf_is_valid(st.preview_buf) then
+    pcall(function()
+      require("mdview.graphics").clear_buf(st.preview_buf)
+    end)
+  end
+  if st.debounce then
+    pcall(function()
+      st.debounce:stop()
+    end)
+    st.debounce = nil
+  end
+  if st.au_group then
+    pcall(vim.api.nvim_del_augroup_by_id, st.au_group)
+    st.au_group = nil
+  end
+  st.preview_win = nil
+  st.preview_buf = nil
+  st.mode = nil
+end
+
+---已注册的全局快捷键 lhs，便于 setup 重入时先卸再挂
+local applied_global_keys = {}
+
+---按 config.keys 注册全局快捷键
+---@param cfg table|nil
+function M._apply_global_keys(cfg)
+  cfg = cfg or config.get()
+  for _, lhs in ipairs(applied_global_keys) do
+    pcall(vim.keymap.del, "n", lhs)
+  end
+  applied_global_keys = {}
+
+  local keys = cfg.keys
+  if keys == false or keys == nil then
+    return
+  end
+
+  ---@param lhs string|false|nil
+  ---@param rhs function
+  ---@param desc string
+  local function map(lhs, rhs, desc)
+    if lhs == false or lhs == nil or lhs == "" then
+      return
+    end
+    if type(lhs) ~= "string" then
+      return
+    end
+    vim.keymap.set("n", lhs, rhs, { silent = true, desc = desc })
+    applied_global_keys[#applied_global_keys + 1] = lhs
+  end
+
+  map(keys.view, function()
+    M.toggle_view()
+  end, "mdview: MdView（单窗预览）")
+
+  map(keys.side, function()
+    M.toggle_side()
+  end, "mdview: MdSideView（侧边预览）")
+end
+
+---给已打开的预览 buffer 重绑快捷键（插件热更新后）
+local function rebind_all_preview_maps()
+  for _, st in pairs(states) do
+    if st and st.preview_buf and vim.api.nvim_buf_is_valid(st.preview_buf) then
+      -- 强制下一版本重绑
+      pcall(function()
+        vim.b[st.preview_buf].mdview_maps_ver = nil
+      end)
+      attach_maps(st.preview_buf)
+    end
+  end
+  for _, sess in pairs(tab_sessions) do
+    if sess and sess.preview_buf and vim.api.nvim_buf_is_valid(sess.preview_buf) then
+      pcall(function()
+        vim.b[sess.preview_buf].mdview_maps_ver = nil
+      end)
+      attach_maps(sess.preview_buf)
+    end
+  end
+end
+
+function M.setup(user)
+  local cfg = config.setup(user)
+  highlight.setup(cfg.highlights)
+  M._ensure_tab_follow()
+  M._apply_global_keys(cfg)
+  rebind_all_preview_maps()
+  return cfg
+end
+
+function M.ensure_setup()
+  local cfg = config.ensure_setup()
+  highlight.ensure()
+  M._ensure_tab_follow()
+  M._apply_global_keys(cfg)
+  rebind_all_preview_maps()
+  return cfg
+end
+
+local function preview_width(st)
+  if st.preview_win and vim.api.nvim_win_is_valid(st.preview_win) then
+    return vim.api.nvim_win_get_width(st.preview_win)
+  end
+  return vim.api.nvim_win_get_width(0)
+end
+
+local function do_render(st)
+  if not vim.api.nvim_buf_is_valid(st.source_buf) then
+    return
+  end
+  if not st.preview_buf or not vim.api.nvim_buf_is_valid(st.preview_buf) then
+    return
+  end
+  local cfg = config.get()
+  local cols = preview_width(st)
+  local blocks = parse.parse_buf(st.source_buf, cfg)
+  local md_path = vim.api.nvim_buf_get_name(st.source_buf)
+  local result = render.render(blocks, {
+    cfg = cfg,
+    width = cols,
+    expanded_codes = st.expanded_codes,
+    expanded_details = st.expanded_details,
+    md_path = md_path,
+  })
+  st.result = result
+  st.blocks = blocks
+  st.headings = anchor.collect_headings(blocks, result.rev_map)
+  -- 正文标题预览行（勿用 TOC 占位的映射）
+  for _, h in ipairs(st.headings) do
+    h.preview_line = (result.heading_preview and result.heading_preview[h.source_start])
+      or result.rev_map[h.source_start]
+      or h.preview_line
+  end
+  -- 帮助改为 ? float，不再在底部占行
+  render.apply(st.preview_buf, result, {
+    show_help = false,
+    cols = cols,
+  })
+  st._last_preview_w = cols
+
+  -- 预览内只用 █ 缩略；高清仅 float / 手动 gh
+  pcall(function()
+    require("mdview.graphics").clear_buf(st.preview_buf)
+  end)
+
+  -- 刷新键位（预览 buffer 复用时也能挂上新快捷键如 gh）
+  attach_maps(st.preview_buf)
+
+  -- 禁止水平滚动（内容已按 cols 软折行）
+  if st.preview_win and vim.api.nvim_win_is_valid(st.preview_win) then
+    pcall(function()
+      vim.wo[st.preview_win].wrap = false
+      vim.wo[st.preview_win].sidescrolloff = 0
+      vim.wo[st.preview_win].list = false
+    end)
+  end
+end
+
+function M.refresh(source_buf)
+  source_buf = source_buf or M._current_source()
+  if not source_buf then
+    return
+  end
+  local st = get_state(source_buf)
+  if not st then
+    return
+  end
+  do_render(st)
+  if st.mode == "side" then
+    sync.sync_from_source(st)
+  end
+end
+
+function M._current_source()
+  local buf = vim.api.nvim_get_current_buf()
+  if window.is_preview_buf(buf) then
+    return vim.b[buf].mdview_source
+  end
+  -- 是否有关联
+  if states[buf] then
+    return buf
+  end
+  -- markdown 文件
+  local ft = vim.bo[buf].filetype
+  if ft == "markdown" or ft == "md" then
+    return buf
+  end
+  local name = vim.api.nvim_buf_get_name(buf)
+  if name:match("%.md$") or name:match("%.markdown$") then
+    return buf
+  end
+  return buf
+end
+
+---从预览 buffer 解析当前 state（动态，便于 tab 内切换源文件）
+local function st_from_preview(pbuf)
+  if not pbuf or not vim.api.nvim_buf_is_valid(pbuf) then
+    return nil
+  end
+  local src = vim.b[pbuf].mdview_source
+  if not src then
+    return nil
+  end
+  local st = get_state(src)
+  if not st then
+    -- 预览仍在但 state 被卸掉：补一份，避免链接跳转退化成普通 edit
+    st = ensure_state(src)
+  end
+  st.preview_buf = pbuf
+  local sess = get_tab_session()
+  if sess then
+    if sess.preview_win and vim.api.nvim_win_is_valid(sess.preview_win) then
+      st.preview_win = sess.preview_win
+    end
+    if sess.preview_buf and vim.api.nvim_buf_is_valid(sess.preview_buf) then
+      st.preview_buf = sess.preview_buf
+    end
+    if sess.source_win and vim.api.nvim_win_is_valid(sess.source_win) then
+      st.source_win = sess.source_win
+    end
+    -- 关键 session 恢复 mode（detach 后常为 nil，导致 md 链接无法进预览）
+    if sess.mode == "side" or sess.mode == "single" then
+      st.mode = sess.mode
+    end
+  end
+  if not st.mode or (st.mode ~= "side" and st.mode ~= "single") then
+    -- 根据窗口布局推断
+    local pwin = st.preview_win
+    if (not pwin or not vim.api.nvim_win_is_valid(pwin)) and pbuf then
+      for _, w in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
+        if vim.api.nvim_win_get_buf(w) == pbuf then
+          pwin = w
+          st.preview_win = w
+          break
+        end
+      end
+    end
+    if pwin and vim.api.nvim_win_is_valid(pwin) then
+      local src_win = st.source_win
+      if src_win and vim.api.nvim_win_is_valid(src_win) and src_win ~= pwin then
+        st.mode = "side"
+      else
+        -- 另有窗显示源 → side，否则 single
+        local other_src = false
+        for _, w in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
+          if w ~= pwin and src and vim.api.nvim_win_get_buf(w) == src then
+            other_src = true
+            st.source_win = w
+            break
+          end
+        end
+        st.mode = other_src and "side" or "single"
+      end
+    else
+      st.mode = "single"
+    end
+  end
+  return st
+end
+
+---预览 buffer 键位版本：升级插件后靠重绑生效（buffer 常被复用）
+local PREVIEW_MAPS_VER = 5
+
+attach_maps = function(preview_buf)
+  if not preview_buf or not vim.api.nvim_buf_is_valid(preview_buf) then
+    return
+  end
+  -- 版本一致才跳过；否则强制重绑（修复旧会话没有 gh 等新键）
+  if vim.b[preview_buf].mdview_maps_ver == PREVIEW_MAPS_VER then
+    return
+  end
+  vim.b[preview_buf].mdview_maps = true
+  vim.b[preview_buf].mdview_maps_ver = PREVIEW_MAPS_VER
+  local opts = { buffer = preview_buf, silent = true, nowait = true, noremap = true }
+
+  local function with_st(fn)
+    return function(...)
+      local st = st_from_preview(preview_buf)
+      if not st then
+        -- 兜底：从 b.mdview_source 建 state
+        local src = vim.b[preview_buf].mdview_source
+        if src and vim.api.nvim_buf_is_valid(src) then
+          st = ensure_state(src)
+          st.preview_buf = preview_buf
+          local w = vim.fn.bufwinid(preview_buf)
+          if w ~= -1 then
+            st.preview_win = w
+          end
+          if not st.mode then
+            st.mode = "side"
+          end
+        end
+      end
+      if st then
+        return fn(st, ...)
+      end
+      vim.notify("mdview: preview state missing（试 :MdViewRefresh）", vim.log.levels.WARN)
+    end
+  end
+
+  vim.keymap.set("n", "q", with_st(function(st)
+    M.close_for(st.source_buf)
+  end), vim.tbl_extend("force", opts, { desc = "mdview: close" }))
+
+  vim.keymap.set("n", "r", with_st(function(st)
+    M.refresh(st.source_buf)
+  end), vim.tbl_extend("force", opts, { desc = "mdview: refresh" }))
+
+  vim.keymap.set("n", "<CR>", with_st(function(st)
+    M._activate_at_cursor(st)
+  end), vim.tbl_extend("force", opts, { desc = "mdview: activate" }))
+
+  vim.keymap.set("n", "gi", with_st(function(st)
+    M._open_image_at_cursor(st)
+  end), vim.tbl_extend("force", opts, { desc = "mdview: image float" }))
+
+  -- gh：临时显示当前页高清叠层（覆盖默认 select-mode gh）
+  vim.keymap.set("n", "gh", with_st(function(st)
+    M._toggle_page_hd(st)
+  end), vim.tbl_extend("force", opts, { desc = "mdview: page HD overlay" }))
+
+  -- o：光标在图片上时用系统程序打开原图
+  vim.keymap.set("n", "o", with_st(function(st)
+    M._open_image_system_at_cursor(st)
+  end), vim.tbl_extend("force", opts, { desc = "mdview: system open image" }))
+
+  -- c：代码块内一键复制（预览只读，不占用改写语义）；yc 兼容保留
+  vim.keymap.set("n", "c", with_st(function(st)
+    M._yank_code_at_cursor(st)
+  end), vim.tbl_extend("force", opts, { desc = "mdview: copy code block" }))
+
+  vim.keymap.set("n", "yc", with_st(function(st)
+    M._yank_code_at_cursor(st)
+  end), vim.tbl_extend("force", opts, { desc = "mdview: yank code" }))
+
+  vim.keymap.set("n", "gs", with_st(function(st)
+    M._goto_source(st)
+  end), vim.tbl_extend("force", opts, { desc = "mdview: goto source" }))
+
+  vim.keymap.set("n", "go", with_st(function(st)
+    if st.preview_win and vim.api.nvim_win_is_valid(st.preview_win) then
+      vim.api.nvim_set_current_win(st.preview_win)
+    end
+    pcall(vim.api.nvim_win_set_cursor, 0, { 1, 0 })
+  end), vim.tbl_extend("force", opts, { desc = "mdview: goto TOC top" }))
+
+  vim.keymap.set("n", "t", with_st(function(st)
+    local toc = require("mdview.toc")
+    toc.toggle_float(st, function(entry)
+      M._jump_both(st, entry.source_start, entry.preview_line, true)
+    end)
+  end), vim.tbl_extend("force", opts, { desc = "mdview: outline" }))
+
+  vim.keymap.set("n", "<C-o>", with_st(function(st)
+    M._jump_back(st)
+  end), vim.tbl_extend("force", opts, { desc = "mdview: jump back" }))
+
+  vim.keymap.set("n", "?", function()
+    require("mdview.help").toggle_float()
+  end, vim.tbl_extend("force", opts, { desc = "mdview: help" }))
+
+  local function on_mouse_click()
+    vim.schedule(function()
+      if not vim.api.nvim_buf_is_valid(preview_buf) then
+        return
+      end
+      if vim.api.nvim_get_current_buf() ~= preview_buf then
+        return
+      end
+      local st = st_from_preview(preview_buf)
+      if st then
+        M._activate_at_cursor(st)
+      end
+    end)
+  end
+  vim.keymap.set("n", "<LeftRelease>", on_mouse_click, opts)
+  vim.keymap.set("n", "<2-LeftMouse>", on_mouse_click, opts)
+end
+
+---预览需要鼠标点击时确保 mouse 含 a/n
+local mouse_saved = nil
+function M.ensure_mouse()
+  local m = vim.o.mouse or ""
+  if not m:find("a") and not m:find("n") then
+    if mouse_saved == nil then
+      mouse_saved = m
+    end
+    vim.o.mouse = "a"
+  end
+end
+
+local function attach_autocmds(st)
+  if st.au_group then
+    pcall(vim.api.nvim_del_augroup_by_id, st.au_group)
+  end
+  local g = vim.api.nvim_create_augroup("mdview_" .. st.source_buf, { clear = true })
+  st.au_group = g
+  local cfg = config.get()
+
+  vim.api.nvim_create_autocmd({ "TextChanged", "TextChangedI" }, {
+    group = g,
+    buffer = st.source_buf,
+    callback = function()
+      if st.debounce then
+        st.debounce:stop()
+      end
+      st.debounce = vim.defer_fn(function()
+        do_render(st)
+        if st.mode == "side" then
+          sync.sync_from_source(st)
+        end
+      end, cfg.debounce_ms or 150)
+    end,
+  })
+
+  vim.api.nvim_create_autocmd("InsertLeave", {
+    group = g,
+    buffer = st.source_buf,
+    callback = function()
+      do_render(st)
+      if st.mode == "side" then
+        sync.sync_from_source(st)
+      end
+    end,
+  })
+
+  vim.api.nvim_create_autocmd({ "CursorMoved", "CursorMovedI" }, {
+    group = g,
+    buffer = st.source_buf,
+    callback = function()
+      if st.mode ~= "side" or st.syncing then
+        return
+      end
+      st.syncing = true
+      vim.schedule(function()
+        sync.sync_from_source(st)
+        st.syncing = false
+      end)
+    end,
+  })
+
+  vim.api.nvim_create_autocmd("BufWipeout", {
+    group = g,
+    buffer = st.source_buf,
+    callback = function()
+      M.close_for(st.source_buf, true)
+    end,
+  })
+
+  -- 预览窗宽度变化 → 按新宽度重排（避免水平滚动）
+  vim.api.nvim_create_autocmd("WinResized", {
+    group = g,
+    callback = function()
+      local pwin = st.preview_win
+      if (not pwin or not vim.api.nvim_win_is_valid(pwin)) and st.preview_buf then
+        for _, w in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
+          if vim.api.nvim_win_get_buf(w) == st.preview_buf then
+            pwin = w
+            st.preview_win = w
+            break
+          end
+        end
+      end
+      if not pwin or not vim.api.nvim_win_is_valid(pwin) then
+        return
+      end
+      -- 仅当预览窗在本次 resized 列表中，或宽度确实变了
+      local resized = vim.v.event and vim.v.event.windows or {}
+      local hit = false
+      for _, w in ipairs(resized) do
+        if w == pwin then
+          hit = true
+          break
+        end
+      end
+      local wnow = vim.api.nvim_win_get_width(pwin)
+      if not hit and st._last_preview_w == wnow then
+        return
+      end
+      if st._resize_timer then
+        pcall(function()
+          st._resize_timer:stop()
+        end)
+      end
+      st._resize_timer = vim.defer_fn(function()
+        st._resize_timer = nil
+        if not get_state(st.source_buf) then
+          return
+        end
+        if not vim.api.nvim_win_is_valid(pwin) then
+          return
+        end
+        local w2 = vim.api.nvim_win_get_width(pwin)
+        if st._last_preview_w == w2 then
+          return
+        end
+        do_render(st)
+      end, 60)
+    end,
+  })
+
+  if st.preview_buf then
+    -- 焦点进入预览：去掉源码对应块高亮
+    vim.api.nvim_create_autocmd({ "BufEnter", "WinEnter" }, {
+      group = g,
+      buffer = st.preview_buf,
+      callback = function()
+        -- 仅当焦点真在预览时清（源窗 set_cursor 到预览时不误清）
+        if vim.api.nvim_get_current_buf() ~= st.preview_buf then
+          return
+        end
+        sync.clear_block_highlight(st)
+      end,
+    })
+    vim.api.nvim_create_autocmd("CursorMoved", {
+      group = g,
+      buffer = st.preview_buf,
+      callback = function()
+        -- 仅预览持有焦点时处理；源窗 sync 改预览光标不应清掉高亮
+        if vim.api.nvim_get_current_buf() ~= st.preview_buf then
+          return
+        end
+        sync.clear_block_highlight(st)
+        if st.mode ~= "side" or st.syncing or not config.get().sync_reverse then
+          return
+        end
+        local row = vim.api.nvim_win_get_cursor(0)[1]
+        st.syncing = true
+        vim.schedule(function()
+          sync.sync_from_preview(st, row)
+          st.syncing = false
+        end)
+      end,
+    })
+  end
+end
+
+local HIT_PRIORITY = {
+  link = 100,
+  code_copy = 95, -- 顶栏 [Copy] 优先于整块折叠
+  image_inline = 90,
+  image = 80,
+  toc = 70,
+  -- 代码块优先于 details，便于块内任意位置回车折叠
+  code_fold = 65,
+  code_block = 60,
+  details = 50,
+}
+
+function M._hit_at(st, row, col)
+  if not st.result then
+    return nil
+  end
+  col = col or 0
+  local best, best_pri = nil, -1
+  for _, h in ipairs(st.result.hits or {}) do
+    local a = h.line
+    local b = h.line_end or h.line
+    if row >= a and row <= b then
+      -- 有列范围则必须点在区间内（链接/行内图）
+      if h.col ~= nil and h.end_col ~= nil then
+        if col < h.col or col >= h.end_col then
+          goto continue
+        end
+      end
+      local pri = HIT_PRIORITY[h.kind] or 0
+      if pri > best_pri then
+        best = h
+        best_pri = pri
+      end
+    end
+    ::continue::
+  end
+  return best
+end
+
+---钳制列到该行合法字节列（0-based）
+---@param buf integer
+---@param line number 1-based
+---@param col number|nil 0-based
+---@return number
+local function clamp_col(buf, line, col)
+  col = col or 0
+  if col < 0 then
+    col = 0
+  end
+  if not buf or not vim.api.nvim_buf_is_valid(buf) then
+    return col
+  end
+  local lines = vim.api.nvim_buf_get_lines(buf, line - 1, line, false)
+  local text = lines[1] or ""
+  local maxc = #text
+  if col > maxc then
+    col = maxc
+  end
+  return col
+end
+
+---记录跳转前位置，供 <C-o> 返回（含列）
+---@param st table
+local function push_jump(st)
+  st.jump_list = st.jump_list or {}
+  local preview_line, source_line = 1, 1
+  local preview_col, source_col = 0, 0
+
+  local pwin = st.preview_win
+  if pwin and vim.api.nvim_win_is_valid(pwin) then
+    local ok, cur = pcall(vim.api.nvim_win_get_cursor, pwin)
+    if ok and cur then
+      preview_line, preview_col = cur[1], cur[2] or 0
+    end
+  elseif st.preview_buf and vim.api.nvim_get_current_buf() == st.preview_buf then
+    local ok, cur = pcall(vim.api.nvim_win_get_cursor, 0)
+    if ok and cur then
+      preview_line, preview_col = cur[1], cur[2] or 0
+    end
+  end
+
+  local swin = st.source_win
+  if swin and vim.api.nvim_win_is_valid(swin) then
+    local ok, cur = pcall(vim.api.nvim_win_get_cursor, swin)
+    if ok and cur then
+      source_line, source_col = cur[1], cur[2] or 0
+    end
+  elseif st.result and st.result.source_map and st.result.source_map[preview_line] then
+    source_line = st.result.source_map[preview_line]
+  end
+
+  st.jump_list[#st.jump_list + 1] = {
+    preview_line = preview_line,
+    source_line = source_line,
+    preview_col = preview_col,
+    source_col = source_col,
+  }
+  while #st.jump_list > 50 do
+    table.remove(st.jump_list, 1)
+  end
+end
+
+---记录「跳到另一 md 文件」前的位置（跨文件 <C-o>，含列）
+---@param st table
+local function push_file_nav(st)
+  if not st or not st.source_buf or not vim.api.nvim_buf_is_valid(st.source_buf) then
+    return
+  end
+  local path = vim.api.nvim_buf_get_name(st.source_buf)
+  if not path or path == "" then
+    return
+  end
+  path = vim.fn.fnamemodify(path, ":p")
+
+  local preview_line, source_line = 1, 1
+  local preview_col, source_col = 0, 0
+  local pwin = st.preview_win
+  if pwin and vim.api.nvim_win_is_valid(pwin) then
+    local ok, cur = pcall(vim.api.nvim_win_get_cursor, pwin)
+    if ok and cur then
+      preview_line, preview_col = cur[1], cur[2] or 0
+    end
+  elseif st.preview_buf and vim.api.nvim_get_current_buf() == st.preview_buf then
+    local ok, cur = pcall(vim.api.nvim_win_get_cursor, 0)
+    if ok and cur then
+      preview_line, preview_col = cur[1], cur[2] or 0
+    end
+  end
+  local swin = st.source_win
+  if swin and vim.api.nvim_win_is_valid(swin) then
+    local ok, cur = pcall(vim.api.nvim_win_get_cursor, swin)
+    if ok and cur then
+      source_line, source_col = cur[1], cur[2] or 0
+    end
+  elseif st.result and st.result.source_map and st.result.source_map[preview_line] then
+    source_line = st.result.source_map[preview_line]
+  end
+
+  local stack = get_file_nav_stack()
+  stack[#stack + 1] = {
+    path = path,
+    source_line = source_line,
+    preview_line = preview_line,
+    source_col = source_col,
+    preview_col = preview_col,
+    mode = st.mode,
+  }
+  while #stack > 30 do
+    table.remove(stack, 1)
+  end
+end
+
+---源码 + 预览双窗跳到指定源行（TOC / 标题锚点共用）
+---@param st table
+---@param source_line number
+---@param preview_line number|nil 显式预览目标（优先于 rev_map）
+---@param record_jump boolean|nil 是否压入跳转栈（默认 true）
+---@param cols? { source_col?: number, preview_col?: number } 0-based 列
+function M._jump_both(st, source_line, preview_line, record_jump, cols)
+  if not source_line or source_line < 1 then
+    return
+  end
+  if record_jump ~= false then
+    push_jump(st)
+  end
+  st.syncing = true
+  cols = cols or {}
+  local source_col = cols.source_col or 0
+  local preview_col = cols.preview_col or 0
+
+  local max_src = vim.api.nvim_buf_is_valid(st.source_buf) and vim.api.nvim_buf_line_count(st.source_buf) or 1
+  local src = math.max(1, math.min(source_line, max_src))
+
+  -- 预览行：显式参数 > heading_preview > rev_map
+  local prev_line = preview_line
+  if not prev_line and st.result then
+    if st.result.heading_preview then
+      prev_line = st.result.heading_preview[src]
+    end
+    if not prev_line and st.result.rev_map then
+      prev_line = st.result.rev_map[src]
+      if not prev_line then
+        for r = src, 1, -1 do
+          if st.result.rev_map[r] then
+            prev_line = st.result.rev_map[r]
+            break
+          end
+        end
+      end
+    end
+  end
+  prev_line = prev_line or 1
+
+  -- 源窗
+  local swin = st.source_win
+  if (not swin or not vim.api.nvim_win_is_valid(swin)) then
+    for _, w in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
+      if vim.api.nvim_win_get_buf(w) == st.source_buf then
+        swin = w
+        st.source_win = w
+        break
+      end
+    end
+  end
+  if swin and vim.api.nvim_win_is_valid(swin) then
+    local sc = clamp_col(st.source_buf, src, source_col)
+    pcall(vim.api.nvim_win_set_cursor, swin, { src, sc })
+    pcall(vim.fn.win_execute, swin, "normal! zz")
+  end
+
+  -- 预览窗（侧边或单窗）
+  local pwin = st.preview_win
+  if (not pwin or not vim.api.nvim_win_is_valid(pwin)) and st.preview_buf then
+    for _, w in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
+      if vim.api.nvim_win_get_buf(w) == st.preview_buf then
+        pwin = w
+        st.preview_win = w
+        break
+      end
+    end
+  end
+  if pwin and vim.api.nvim_win_is_valid(pwin) and st.preview_buf and vim.api.nvim_buf_is_valid(st.preview_buf) then
+    local max_p = vim.api.nvim_buf_line_count(st.preview_buf)
+    prev_line = math.max(1, math.min(prev_line, max_p))
+    local pc = clamp_col(st.preview_buf, prev_line, preview_col)
+    pcall(vim.api.nvim_win_set_cursor, pwin, { prev_line, pc })
+    pcall(vim.fn.win_execute, pwin, "normal! zz")
+    if config.get().sync_cursor_block then
+      sync.highlight_block(st, src)
+    else
+      sync.clear_block_highlight(st)
+    end
+  end
+
+  vim.schedule(function()
+    st.syncing = false
+  end)
+end
+
+---恢复跨文件导航条目（不压栈）
+---@param entry table
+local function restore_file_nav(entry)
+  if not entry or not entry.path then
+    return
+  end
+  if vim.fn.filereadable(entry.path) == 0 then
+    vim.notify("mdview: previous file gone: " .. tostring(entry.path), vim.log.levels.WARN)
+    return
+  end
+  -- 用当前预览态作上下文打开旧文件
+  local cur = st_from_preview(vim.api.nvim_get_current_buf())
+  if not cur then
+    local src = M._current_source()
+    cur = src and get_state(src) or nil
+  end
+  if not cur then
+    -- 无会话时：直接 edit + 尽量开侧栏/单窗
+    vim.cmd.edit(vim.fn.fnameescape(entry.path))
+    return
+  end
+  M._open_md_file(cur, entry.path, nil, { no_push = true })
+  -- 打开后定位到离开时的行
+  vim.schedule(function()
+    local buf = nil
+    for _, b in ipairs(vim.api.nvim_list_bufs()) do
+      if vim.api.nvim_buf_is_valid(b) and vim.api.nvim_buf_get_name(b) == entry.path then
+        buf = b
+        break
+      end
+    end
+    -- 路径规范化后再比
+    if not buf then
+      local want = vim.fn.fnamemodify(entry.path, ":p")
+      for _, b in ipairs(vim.api.nvim_list_bufs()) do
+        if vim.api.nvim_buf_is_valid(b) then
+          local n = vim.fn.fnamemodify(vim.api.nvim_buf_get_name(b), ":p")
+          if n == want then
+            buf = b
+            break
+          end
+        end
+      end
+    end
+    local new_st = buf and get_state(buf) or nil
+    if not new_st then
+      local sess = get_tab_session()
+      if sess and sess.source_buf then
+        new_st = get_state(sess.source_buf)
+      end
+    end
+    if new_st then
+      M._jump_both(new_st, entry.source_line or 1, entry.preview_line, false, {
+        source_col = entry.source_col or 0,
+        preview_col = entry.preview_col or 0,
+      })
+      if new_st.preview_win and vim.api.nvim_win_is_valid(new_st.preview_win) then
+        pcall(vim.api.nvim_set_current_win, new_st.preview_win)
+      end
+    end
+  end)
+end
+
+---<C-o>：先回文内跳转；再回上一篇 md 预览
+function M._jump_back(st)
+  st.jump_list = st.jump_list or {}
+  local entry = table.remove(st.jump_list)
+  if entry then
+    -- 文内（TOC / 锚点）
+    M._jump_both(st, entry.source_line or 1, entry.preview_line, false, {
+      source_col = entry.source_col or 0,
+      preview_col = entry.preview_col or 0,
+    })
+    return
+  end
+  local stack = get_file_nav_stack()
+  local file_entry = table.remove(stack)
+  if file_entry then
+    restore_file_nav(file_entry)
+    return
+  end
+  vim.notify("mdview: jump list empty", vim.log.levels.INFO)
+end
+
+---本地 md 是否像 markdown 路径
+---@param path string
+---@return boolean
+local function path_looks_markdown(path)
+  if not path or path == "" then
+    return false
+  end
+  local lower = path:lower()
+  return lower:match("%.md$") ~= nil
+    or lower:match("%.markdown$") ~= nil
+    or lower:match("%.mdx$") ~= nil
+end
+
+---在 buffer 中按锚点找标题行（1-based）
+---@param buf number
+---@param frag string|nil
+---@return number|nil
+local function find_heading_line_in_buf(buf, frag)
+  if not frag or frag == "" or not buf or not vim.api.nvim_buf_is_valid(buf) then
+    return nil
+  end
+  local want = anchor.slugify(anchor.normalize_anchor(frag))
+  if want == "" then
+    return nil
+  end
+  local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
+  for i, line in ipairs(lines) do
+    local title = line:match("^#+%s+(.+)$")
+    if title and anchor.slugify(title) == want then
+      return i
+    end
+  end
+  return nil
+end
+
+---解析侧栏模式下的源窗口
+---@param st table
+---@return number|nil
+local function resolve_source_win(st)
+  if st.source_win and vim.api.nvim_win_is_valid(st.source_win) then
+    return st.source_win
+  end
+  local sess = get_tab_session()
+  if sess and sess.source_win and vim.api.nvim_win_is_valid(sess.source_win) then
+    return sess.source_win
+  end
+  local pwin = st.preview_win
+  for _, w in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
+    if w ~= pwin then
+      local b = vim.api.nvim_win_get_buf(w)
+      if not window.is_preview_buf(b) then
+        return w
+      end
+    end
+  end
+  return nil
+end
+
+---推断当前应使用 side / single（mode 丢失时仍能进预览）
+---@param st table
+---@return "side"|"single"
+local function resolve_view_mode(st)
+  if st and (st.mode == "side" or st.mode == "single") then
+    return st.mode
+  end
+  local sess = get_tab_session()
+  if sess and sess.preview_win and vim.api.nvim_win_is_valid(sess.preview_win) then
+    if sess.mode == "single" then
+      return "single"
+    end
+    return "side"
+  end
+  if st and st.preview_buf and vim.api.nvim_buf_is_valid(st.preview_buf) then
+    local pwin = st.preview_win
+    if pwin and vim.api.nvim_win_is_valid(pwin) then
+      local src = st.source_buf
+      for _, w in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
+        if w ~= pwin and src and vim.api.nvim_win_get_buf(w) == src then
+          return "side"
+        end
+      end
+      return "single"
+    end
+    for _, w in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
+      if vim.api.nvim_win_get_buf(w) == st.preview_buf then
+        return "single"
+      end
+    end
+  end
+  local wins = window.list_preview_wins(tabpage())
+  if #wins > 0 then
+    return "side"
+  end
+  -- 当前在预览 buffer 上
+  if window.is_preview_buf(vim.api.nvim_get_current_buf()) then
+    return "single"
+  end
+  return "single"
+end
+
+---确保侧栏 session 存在（_bind_tab_source 依赖它）
+---@param st table
+---@return table|nil sess
+local function ensure_side_session(st)
+  local tab = tabpage()
+  local sess = get_tab_session(tab)
+  if sess and sess.preview_win and vim.api.nvim_win_is_valid(sess.preview_win) then
+    sess.mode = "side"
+    set_tab_session(tab, sess)
+    return sess
+  end
+  local pwin = st and st.preview_win
+  if not pwin or not vim.api.nvim_win_is_valid(pwin) then
+    local wins = window.list_preview_wins(tab)
+    pwin = wins[1]
+  end
+  if not pwin or not vim.api.nvim_win_is_valid(pwin) then
+    return nil
+  end
+  local pbuf = vim.api.nvim_win_get_buf(pwin)
+  if not window.is_preview_buf(pbuf) then
+    if st and st.preview_buf and vim.api.nvim_buf_is_valid(st.preview_buf) then
+      pbuf = st.preview_buf
+      vim.api.nvim_win_set_buf(pwin, pbuf)
+    else
+      return nil
+    end
+  end
+  sess = {
+    preview_win = pwin,
+    preview_buf = pbuf,
+    source_buf = st and st.source_buf or nil,
+    source_win = st and st.source_win or nil,
+    mode = "side",
+  }
+  set_tab_session(tab, sess)
+  return sess
+end
+
+---单窗：打开目标 md 并显示其预览
+---@param abs string
+---@param frag string|nil
+---@param prefer_win number|nil
+---@return table|nil new_st
+local function open_md_as_single_preview(abs, frag, prefer_win)
+  local win = prefer_win
+  if not win or not vim.api.nvim_win_is_valid(win) then
+    win = vim.api.nvim_get_current_win()
+  end
+  vim.api.nvim_set_current_win(win)
+  vim.cmd.edit(vim.fn.fnameescape(abs))
+  local new_buf = vim.api.nvim_get_current_buf()
+  if not is_markdown_buf(new_buf) then
+    return nil
+  end
+  local src_line = find_heading_line_in_buf(new_buf, frag) or 1
+  pcall(vim.api.nvim_win_set_cursor, win, { src_line, 0 })
+
+  local new_st = ensure_state(new_buf)
+  new_st.source_win = win
+  new_st.mode = "single"
+  M.ensure_preview_buf(new_st)
+  attach_autocmds(new_st)
+  do_render(new_st)
+  vim.api.nvim_win_set_buf(win, new_st.preview_buf)
+  window.apply_winopts(win, config.get())
+  new_st.preview_win = win
+  return new_st
+end
+
+---点击 md 链接：打开目标文件的 md 预览（源同步），焦点在预览
+---@param st table
+---@param abs string
+---@param frag string|nil
+---@param opts? { no_push?: boolean }
+---@return boolean handled
+function M._open_md_file(st, abs, frag, opts)
+  opts = opts or {}
+  abs = vim.fn.fnamemodify(abs, ":p")
+  if vim.fn.filereadable(abs) == 0 then
+    return false
+  end
+  if not path_looks_markdown(abs) then
+    return false
+  end
+
+  -- 同一文件仅锚点跳转：不压跨文件栈
+  local function norm_p(p)
+    return (vim.fn.fnamemodify(p or "", ":p"):gsub("\\", "/"):lower())
+  end
+  local cur_path = st.source_buf and vim.api.nvim_buf_get_name(st.source_buf) or ""
+  local same_file = cur_path ~= "" and norm_p(cur_path) == norm_p(abs)
+
+  if not opts.no_push and not same_file then
+    push_file_nav(st)
+  end
+
+  local function focus_preview_and_jump(new_st, fragment)
+    if not new_st then
+      return
+    end
+    local pwin = new_st.preview_win
+    if (not pwin or not vim.api.nvim_win_is_valid(pwin)) and new_st.preview_buf then
+      for _, w in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
+        if vim.api.nvim_win_get_buf(w) == new_st.preview_buf then
+          pwin = w
+          new_st.preview_win = w
+          break
+        end
+      end
+    end
+    if fragment and fragment ~= "" then
+      local h = anchor.find_heading(new_st.headings, fragment)
+      if h then
+        M._jump_both(new_st, h.source_start, h.preview_line, false)
+      end
+    else
+      local swin = new_st.source_win
+      if swin and vim.api.nvim_win_is_valid(swin) then
+        pcall(vim.api.nvim_win_set_cursor, swin, { 1, 0 })
+      end
+      if pwin and vim.api.nvim_win_is_valid(pwin) and new_st.preview_buf then
+        pcall(vim.api.nvim_win_set_cursor, pwin, { 1, 0 })
+      end
+    end
+    if pwin and vim.api.nvim_win_is_valid(pwin) then
+      vim.api.nvim_set_current_win(pwin)
+    end
+  end
+
+  local mode = resolve_view_mode(st)
+  st.mode = mode
+
+  -- 侧栏：源窗打开 md，绑定并重渲预览，焦点在预览
+  if mode == "side" then
+    if not ensure_side_session(st) then
+      -- 无侧栏预览窗：退化为单窗预览
+      local new_st = open_md_as_single_preview(abs, frag, st.source_win or st.preview_win)
+      if new_st then
+        focus_preview_and_jump(new_st, frag)
+        return true
+      end
+      return false
+    end
+
+    local swin = resolve_source_win(st)
+    if not swin then
+      local new_st = open_md_as_single_preview(abs, frag, st.preview_win)
+      if new_st then
+        focus_preview_and_jump(new_st, frag)
+        return true
+      end
+      return false
+    end
+
+    local edit_ok = pcall(function()
+      vim.api.nvim_win_call(swin, function()
+        vim.cmd("keepalt edit " .. vim.fn.fnameescape(abs))
+      end)
+    end)
+    if not edit_ok then
+      vim.api.nvim_set_current_win(swin)
+      vim.cmd.edit(vim.fn.fnameescape(abs))
+    end
+
+    local new_buf = vim.api.nvim_win_get_buf(swin)
+    if not is_markdown_buf(new_buf) then
+      vim.api.nvim_set_current_win(swin)
+      return true
+    end
+
+    local src_line = find_heading_line_in_buf(new_buf, frag) or 1
+    pcall(vim.api.nvim_win_set_cursor, swin, { src_line, 0 })
+
+    M._bind_tab_source(tabpage(), new_buf, swin)
+    local new_st = get_state(new_buf)
+    if not new_st then
+      -- bind 失败时仍尽量单窗预览目标
+      local s2 = open_md_as_single_preview(abs, frag, st.preview_win or swin)
+      if s2 then
+        focus_preview_and_jump(s2, frag)
+      end
+      return true
+    end
+    focus_preview_and_jump(new_st, frag)
+    vim.schedule(function()
+      local s = get_state(new_buf)
+      if s and s.preview_win and vim.api.nvim_win_is_valid(s.preview_win) then
+        pcall(vim.api.nvim_set_current_win, s.preview_win)
+      end
+    end)
+    return true
+  end
+
+  -- 单窗预览：打开目标 md → 渲染预览并显示
+  local win = st.source_win
+  if not win or not vim.api.nvim_win_is_valid(win) then
+    win = st.preview_win
+  end
+  if not win or not vim.api.nvim_win_is_valid(win) then
+    win = vim.api.nvim_get_current_win()
+  end
+  local new_st = open_md_as_single_preview(abs, frag, win)
+  if not new_st then
+    return false
+  end
+  focus_preview_and_jump(new_st, frag)
+  return true
+end
+
+---打开本地非 md 文件（源窗 edit，焦点源窗）
+---@param st table
+---@param abs string
+---@return boolean
+local function open_local_other_file(st, abs)
+  abs = vim.fn.fnamemodify(abs, ":p")
+  if vim.fn.filereadable(abs) == 0 then
+    return false
+  end
+  if st.mode == "side" then
+    local swin = resolve_source_win(st)
+    if swin then
+      vim.api.nvim_set_current_win(swin)
+    end
+  end
+  vim.cmd.edit(vim.fn.fnameescape(abs))
+  return true
+end
+
+---解码路径中的 %XX（如 %20）
+---@param s string
+---@return string
+local function uri_decode(s)
+  if not s or s == "" then
+    return s
+  end
+  local ok, out = pcall(function()
+    return (s:gsub("%%(%x%x)", function(hex)
+      return string.char(tonumber(hex, 16))
+    end))
+  end)
+  if ok and type(out) == "string" then
+    return out
+  end
+  return s
+end
+
+function M._open_href(href, st)
+  if not href or href == "" then
+    return
+  end
+  href = vim.trim(href)
+
+  -- 页内锚点 [Quote](#Quote)
+  if href:sub(1, 1) == "#" then
+    local h = anchor.find_heading(st.headings, href)
+    if h then
+      M._jump_both(st, h.source_start, h.preview_line)
+    else
+      vim.notify("mdview: heading not found: " .. href, vim.log.levels.INFO)
+    end
+    return
+  end
+
+  local is_url = href:match("^[%w+.-]+://") or href:match("^mailto:")
+
+  -- 相对/本地路径（可带 #fragment）→ md 打开预览
+  if not is_url then
+    local file_part, frag = href:match("^(.-)#(.+)$")
+    if not file_part then
+      file_part, frag = href, nil
+    end
+    file_part = uri_decode(vim.trim(file_part or ""))
+    if frag then
+      frag = uri_decode(frag)
+    end
+    if file_part == "" and frag then
+      local h = anchor.find_heading(st.headings, frag)
+      if h then
+        M._jump_both(st, h.source_start, h.preview_line)
+      else
+        vim.notify("mdview: heading not found: #" .. frag, vim.log.levels.INFO)
+      end
+      return
+    end
+
+    local md_path = vim.api.nvim_buf_get_name(st.source_buf)
+    local abs = select(1, image_mod.resolve_path(file_part, md_path))
+    -- 再试：去掉 query、补 .md
+    if (not abs or vim.fn.filereadable(abs) == 0) and file_part ~= "" then
+      local bare = file_part:gsub("%?.*$", "")
+      if bare ~= file_part then
+        abs = select(1, image_mod.resolve_path(bare, md_path))
+      end
+      if (not abs or vim.fn.filereadable(abs) == 0) and not path_looks_markdown(bare) then
+        local try_md = bare .. ".md"
+        local a2 = select(1, image_mod.resolve_path(try_md, md_path))
+        if a2 and vim.fn.filereadable(a2) == 1 then
+          abs = a2
+        end
+      end
+    end
+    if abs and vim.fn.filereadable(abs) == 1 then
+      if path_looks_markdown(abs) then
+        -- 始终打开目标文件的 md 预览（非源码窗）
+        if M._open_md_file(st, abs, frag) then
+          return
+        end
+      end
+      if open_local_other_file(st, abs) then
+        return
+      end
+    end
+  end
+
+  if vim.ui and vim.ui.open then
+    local ok, err = pcall(vim.ui.open, href)
+    if ok then
+      return
+    end
+    vim.notify("mdview: open failed: " .. tostring(err), vim.log.levels.WARN)
+  end
+  if vim.fn.has("win32") == 1 then
+    vim.fn.jobstart({ "cmd", "/c", "start", "", href }, { detach = true })
+  elseif vim.fn.has("mac") == 1 then
+    vim.fn.jobstart({ "open", href }, { detach = true })
+  else
+    vim.fn.jobstart({ "xdg-open", href }, { detach = true })
+  end
+end
+
+---重渲后把光标限制在指定代码块内
+---@param st table
+---@param block_id number
+---@param rel number 相对块顶的行偏移（0-based 优先）
+local function cursor_in_code_block(st, block_id, rel)
+  if not st.result then
+    return
+  end
+  local block
+  for _, h in ipairs(st.result.hits or {}) do
+    if h.kind == "code_block" and h.block_id == block_id then
+      block = h
+      break
+    end
+  end
+  if not block then
+    return
+  end
+  local top = block.line or 1
+  local bot = block.line_end or top
+  rel = rel or 0
+  if rel < 0 then
+    rel = 0
+  end
+  local target = top + rel
+  if target > bot then
+    target = bot
+  end
+  if target < top then
+    target = top
+  end
+  local win = vim.api.nvim_get_current_win()
+  pcall(vim.api.nvim_win_set_cursor, win, { target, 0 })
+end
+
+---切换代码块折叠；成功返回 true
+---@param st table
+---@param hit table code_fold 或 code_block
+---@param cursor_row number
+local function toggle_code_fold(st, hit, cursor_row)
+  local block_id = hit.block_id
+  if not block_id then
+    return false
+  end
+  local fold_n = config.get().code_fold_lines or 10
+  local total = hit.lines and #hit.lines or hit.total_lines or 0
+  -- code_fold 命中时 lines 可能只在 code_block 上
+  if total <= 0 then
+    for _, h in ipairs(st.result and st.result.hits or {}) do
+      if h.kind == "code_block" and h.block_id == block_id then
+        total = h.lines and #h.lines or 0
+        hit = h
+        break
+      end
+    end
+  end
+  if fold_n <= 0 or total <= fold_n then
+    return false
+  end
+  local top = hit.line or cursor_row
+  local rel = cursor_row - top
+  if rel < 0 then
+    rel = 0
+  end
+  st.expanded_codes[block_id] = not st.expanded_codes[block_id]
+  do_render(st)
+  cursor_in_code_block(st, block_id, rel)
+  return true
+end
+
+function M._activate_at_cursor(st)
+  local cursor = vim.api.nvim_win_get_cursor(0)
+  local row, col = cursor[1], cursor[2]
+  local hit = M._hit_at(st, row, col)
+  if not hit then
+    return
+  end
+  if hit.kind == "toc" then
+    M._jump_both(st, hit.source_start or 1, hit.preview_target)
+  elseif hit.kind == "code_copy" then
+    M._yank_code_lines(hit.lines, hit.lang, st, hit)
+  elseif hit.kind == "code_fold" or hit.kind == "code_block" then
+    -- 光标在代码块任意位置：回车切换展开/折叠
+    if not toggle_code_fold(st, hit, row) then
+      -- 不可折叠：忽略
+    end
+  elseif hit.kind == "details" then
+    local cur = st.expanded_details[hit.block_id]
+    if cur == nil then
+      cur = hit.expanded
+    end
+    st.expanded_details[hit.block_id] = not cur
+    do_render(st)
+  elseif hit.kind == "image" then
+    image_mod.open_preview(hit.path, config.get())
+  elseif hit.kind == "image_inline" then
+    local md_path = vim.api.nvim_buf_get_name(st.source_buf)
+    local abs = select(1, image_mod.resolve_path(hit.src, md_path))
+    if abs then
+      image_mod.open_preview(abs, config.get())
+    end
+  elseif hit.kind == "link" then
+    M._open_href(hit.href, st)
+  end
+end
+
+---解析光标处图片绝对路径（块图 / 行内图 / 表格图）；不在图上则 nil
+---@param st table
+---@return string|nil
+function M._image_path_at_cursor(st)
+  local cur = vim.api.nvim_win_get_cursor(0)
+  local row, col = cur[1], cur[2]
+  local hit = M._hit_at(st, row, col)
+  local md_path = st.source_buf and vim.api.nvim_buf_get_name(st.source_buf) or ""
+
+  local function path_from_hit(h)
+    if not h then
+      return nil
+    end
+    if h.kind == "image" and h.path and h.path ~= "" then
+      return h.path
+    end
+    if h.kind == "image_inline" and h.src then
+      return select(1, image_mod.resolve_path(h.src, md_path))
+    end
+    return nil
+  end
+
+  local p = path_from_hit(hit)
+  if p then
+    return p
+  end
+
+  -- 整行块图：无列约束时任意列都算；有列约束则须落在区间内
+  for _, h in ipairs(st.result and st.result.hits or {}) do
+    if h.kind == "image" or h.kind == "image_inline" then
+      local a, b = h.line, h.line_end or h.line
+      if row >= a and row <= b then
+        if h.col == nil or h.end_col == nil or (col >= h.col and col < h.end_col) then
+          p = path_from_hit(h)
+          if p then
+            return p
+          end
+        end
+      end
+    end
+  end
+  return nil
+end
+
+function M._open_image_at_cursor(st)
+  local path = M._image_path_at_cursor(st)
+  if not path then
+    -- 兼容旧行为：找不到时取文档中第一张块图
+    for _, h in ipairs(st.result and st.result.hits or {}) do
+      if h.kind == "image" and h.path then
+        path = h.path
+        break
+      end
+    end
+  end
+  if path then
+    image_mod.open_preview(path, config.get())
+  else
+    vim.notify("mdview: no image under cursor", vim.log.levels.INFO)
+  end
+end
+
+---光标在图片上时用系统默认程序打开；否则提示
+function M._open_image_system_at_cursor(st)
+  local path = M._image_path_at_cursor(st)
+  if path then
+    image_mod.open_with_system(path)
+  else
+    vim.notify("mdview: no image under cursor", vim.log.levels.INFO)
+  end
+end
+
+---gh：临时显示当前页（窗口可见区）图片高清叠层；再按 gh 或移动光标/滚动清除
+---@param st table
+function M._toggle_page_hd(st)
+  if not st then
+    return
+  end
+  local buf = st.preview_buf
+  if not buf or not vim.api.nvim_buf_is_valid(buf) then
+    -- 当前 buffer 即预览
+    local cur = vim.api.nvim_get_current_buf()
+    if window.is_preview_buf(cur) then
+      buf = cur
+      st.preview_buf = cur
+    else
+      vim.notify("mdview: 无预览 buffer", vim.log.levels.WARN)
+      return
+    end
+  end
+
+  local ok_g, graphics = pcall(require, "mdview.graphics")
+  if not ok_g or not graphics then
+    vim.notify("mdview: 无法加载 graphics: " .. tostring(graphics), vim.log.levels.ERROR)
+    return
+  end
+  -- 已在显示 → 关闭
+  if graphics.is_active and graphics.is_active(buf) then
+    graphics.clear_buf(buf)
+    vim.notify("mdview: 已关闭页内高清", vim.log.levels.INFO)
+    return
+  end
+
+  local cfg = config.get()
+  local imgcfg = (cfg and cfg.image) or {}
+  if graphics.detect and not graphics.detect(imgcfg, "float") then
+    vim.notify("mdview: 当前终端不支持高清叠层（需 WezTerm/Kitty/Ghostty）", vim.log.levels.INFO)
+    return
+  end
+
+  local win = st.preview_win
+  if not win or not vim.api.nvim_win_is_valid(win) then
+    win = vim.fn.bufwinid(buf)
+  end
+  if not win or win == -1 or not vim.api.nvim_win_is_valid(win) then
+    win = vim.api.nvim_get_current_win()
+  end
+  st.preview_win = win
+
+  -- 无 hits 时先重渲再试
+  if not st.result or not st.result.hits or #st.result.hits == 0 then
+    do_render(st)
+  end
+  local hits = st.result and st.result.hits or {}
+
+  local ok = graphics.attach_preview({
+    buf = buf,
+    win = win,
+    hits = hits,
+    max_images = imgcfg.max_images or 20,
+    scale = imgcfg.float_scale == "fit" and "fit" or "fill",
+    python = imgcfg.python or "python",
+    visible_only = true,
+    clear_on_scroll = true, -- 滚动/改大小/焦点离开清除；移光标不关
+  })
+  if not ok then
+    vim.notify("mdview: 当前页没有可叠高清的图片（或编码失败）", vim.log.levels.INFO)
+  else
+    pcall(vim.api.nvim_echo, {
+      { "mdview: 页内高清已开 · 滚动/焦点切换/改大小或再按 gh 关闭", "MoreMsg" },
+    }, false, {})
+    -- iTerm 最多补 1 次；多次会堆叠
+    vim.defer_fn(function()
+      if graphics.is_active and graphics.is_active(buf) and graphics._repaint_buf then
+        graphics._repaint_buf(buf)
+      end
+    end, 60)
+  end
+end
+
+---复制后顶栏 [Copy] → [Copied]，3 秒恢复
+---@param st table
+---@param hit table code_copy hit
+local function flash_copy_label(st, hit)
+  local buf = st.preview_buf
+  if not buf or not vim.api.nvim_buf_is_valid(buf) or not hit or not hit.line then
+    return
+  end
+  local row = hit.line -- 1-based
+  local line = vim.api.nvim_buf_get_lines(buf, row - 1, row, false)[1]
+  if not line or not line:find("[Copy]", 1, true) then
+    return
+  end
+  local new_line = line:gsub("%[Copy%]", "[Copied]", 1)
+  vim.bo[buf].modifiable = true
+  pcall(vim.api.nvim_buf_set_lines, buf, row - 1, row, false, { new_line })
+  vim.bo[buf].modifiable = false
+
+  -- 临时高亮 [Copied]
+  local ns = vim.api.nvim_create_namespace("mdview_copy_flash")
+  local s, e = new_line:find("[Copied]", 1, true)
+  if s and e then
+    pcall(vim.api.nvim_buf_set_extmark, buf, ns, row - 1, s - 1, {
+      end_col = e,
+      hl_group = "MdViewCodeCopied",
+    })
+  end
+
+  vim.defer_fn(function()
+    if not vim.api.nvim_buf_is_valid(buf) or not st.result then
+      return
+    end
+    local orig = st.result.lines and st.result.lines[row]
+    if not orig then
+      return
+    end
+    local cur = vim.api.nvim_buf_get_lines(buf, row - 1, row, false)[1]
+    if not cur or not cur:find("[Copied]", 1, true) then
+      return
+    end
+    vim.bo[buf].modifiable = true
+    pcall(vim.api.nvim_buf_set_lines, buf, row - 1, row, false, { orig })
+    vim.bo[buf].modifiable = false
+    pcall(vim.api.nvim_buf_clear_namespace, buf, ns, 0, -1)
+    local NS = render.namespace()
+    for _, em in ipairs(st.result.extmarks or {}) do
+      if em.line == row - 1 then
+        local eopts = {}
+        if em.hl then
+          eopts.hl_group = em.hl
+          eopts.end_col = em.end_col
+        end
+        if em.line_hl then
+          eopts.line_hl_group = em.line_hl
+        end
+        pcall(vim.api.nvim_buf_set_extmark, buf, NS, em.line, em.col or 0, eopts)
+      end
+    end
+  end, 3000)
+end
+
+function M._yank_code_lines(lines, lang, st, hit)
+  if not lines or #lines == 0 then
+    vim.notify("mdview: empty code block", vim.log.levels.INFO)
+    return
+  end
+  local text = table.concat(lines, "\n")
+  vim.fn.setreg('"', text)
+  pcall(vim.fn.setreg, "+", text)
+  vim.notify(string.format("mdview: copied %d lines (%s)", #lines, lang or "text"), vim.log.levels.INFO)
+  if st and hit then
+    flash_copy_label(st, hit)
+  end
+end
+
+function M._yank_code_at_cursor(st)
+  local row = vim.api.nvim_win_get_cursor(0)[1]
+  local hit = nil
+  for _, h in ipairs(st.result and st.result.hits or {}) do
+    if h.kind == "code_block" then
+      local a, b = h.line, h.line_end or h.line
+      if row >= a and row <= b then
+        hit = h
+        break
+      end
+    end
+  end
+  if not hit or not hit.lines then
+    vim.notify("mdview: no code block under cursor", vim.log.levels.INFO)
+    return
+  end
+  -- yc：找同块的 code_copy hit 以便闪烁顶栏
+  local copy_hit = nil
+  for _, h in ipairs(st.result.hits or {}) do
+    if h.kind == "code_copy" and h.block_id == hit.block_id then
+      copy_hit = h
+      break
+    end
+  end
+  M._yank_code_lines(hit.lines, hit.lang, st, copy_hit)
+end
+
+function M._goto_source(st)
+  local row = vim.api.nvim_win_get_cursor(0)[1]
+  local src = st.result and st.result.source_map[row] or 1
+  if st.mode == "single" then
+    if vim.api.nvim_win_is_valid(st.source_win or 0) then
+      vim.api.nvim_set_current_win(st.source_win)
+    end
+    vim.api.nvim_win_set_buf(0, st.source_buf)
+    st.mode = nil
+    pcall(vim.api.nvim_win_set_cursor, 0, { src, 0 })
+  elseif st.mode == "side" then
+    if st.source_win and vim.api.nvim_win_is_valid(st.source_win) then
+      vim.api.nvim_set_current_win(st.source_win)
+      pcall(vim.api.nvim_win_set_cursor, st.source_win, { src, 0 })
+    end
+  end
+end
+
+function M.ensure_preview_buf(st)
+  if st.preview_buf and vim.api.nvim_buf_is_valid(st.preview_buf) then
+    window.bind_preview_source(st.preview_buf, st.source_buf)
+    attach_maps(st.preview_buf)
+    return st.preview_buf
+  end
+  st.preview_buf = window.create_preview_buf(st.source_buf)
+  attach_maps(st.preview_buf)
+  return st.preview_buf
+end
+
+---把 tab 内预览绑定到指定 md 源并渲染
+function M._bind_tab_source(tab, source_buf, source_win)
+  tab = tab or tabpage()
+  local sess = get_tab_session(tab)
+  if not sess or not sess.preview_win or not vim.api.nvim_win_is_valid(sess.preview_win) then
+    return
+  end
+  if not is_markdown_buf(source_buf) then
+    return
+  end
+
+  -- 卸下旧源
+  if sess.source_buf and sess.source_buf ~= source_buf then
+    local old = get_state(sess.source_buf)
+    if old then
+      detach_source_preview(old)
+    end
+  end
+
+  local st = ensure_state(source_buf)
+  if not sess.preview_buf or not vim.api.nvim_buf_is_valid(sess.preview_buf) then
+    sess.preview_buf = vim.api.nvim_win_get_buf(sess.preview_win)
+    if not window.is_preview_buf(sess.preview_buf) then
+      sess.preview_buf = window.create_preview_buf(source_buf)
+      vim.api.nvim_win_set_buf(sess.preview_win, sess.preview_buf)
+    end
+  end
+
+  st.preview_buf = sess.preview_buf
+  st.preview_win = sess.preview_win
+  st.source_win = source_win or vim.api.nvim_get_current_win()
+  st.mode = sess.mode or "side"
+  st.source_buf = source_buf
+
+  window.bind_preview_source(st.preview_buf, source_buf)
+  if vim.api.nvim_win_get_buf(sess.preview_win) ~= st.preview_buf then
+    vim.api.nvim_win_set_buf(sess.preview_win, st.preview_buf)
+  end
+
+  sess.source_buf = source_buf
+  sess.source_win = st.source_win
+  sess.preview_buf = st.preview_buf
+  set_tab_session(tab, sess)
+
+  attach_maps(st.preview_buf)
+  attach_autocmds(st)
+  do_render(st)
+  if st.mode == "side" then
+    sync.sync_from_source(st)
+  end
+end
+
+function M._ensure_tab_follow()
+  if follow_installed then
+    return
+  end
+  follow_installed = true
+  vim.api.nvim_create_autocmd({ "BufWinEnter", "WinEnter" }, {
+    group = vim.api.nvim_create_augroup("mdview_tab_follow", { clear = true }),
+    callback = function(args)
+      vim.schedule(function()
+        M._on_focus_change(args.buf)
+      end)
+    end,
+  })
+  vim.api.nvim_create_autocmd("TabClosed", {
+    group = vim.api.nvim_create_augroup("mdview_tab_closed", { clear = true }),
+    callback = function(args)
+      -- args.file is tab number as string sometimes
+      local closed = tonumber(args.file)
+      if closed then
+        tab_sessions[closed] = nil
+        file_nav_by_tab[closed] = nil
+      end
+    end,
+  })
+end
+
+function M._on_focus_change(buf)
+  if not buf or not vim.api.nvim_buf_is_valid(buf) then
+    return
+  end
+  if window.is_preview_buf(buf) then
+    return
+  end
+  if vim.b[buf].mdview_toc_float or vim.b[buf].mdview_image_float or vim.b[buf].mdview_help_float then
+    return
+  end
+
+  local tab = tabpage()
+  local sess = get_tab_session(tab)
+  if not sess then
+    return
+  end
+  if not sess.preview_win or not vim.api.nvim_win_is_valid(sess.preview_win) then
+    set_tab_session(tab, nil)
+    return
+  end
+
+  -- 非 md：忽略，预览保持上次内容
+  if not is_markdown_buf(buf) then
+    return
+  end
+
+  local win = vim.api.nvim_get_current_win()
+  if win == sess.preview_win then
+    return
+  end
+
+  if sess.source_buf == buf then
+    local st = get_state(buf)
+    if st then
+      st.source_win = win
+      sess.source_win = win
+      if st.mode == "side" then
+        sync.sync_from_source(st)
+      end
+    end
+    return
+  end
+
+  M._bind_tab_source(tab, buf, win)
+end
+
+---关闭 tab 内多余预览窗，只留一个
+local function enforce_one_preview_win(tab, keep_win)
+  local wins = window.list_preview_wins(tab)
+  for _, w in ipairs(wins) do
+    if w ~= keep_win then
+      window.close_win(w)
+    end
+  end
+end
+
+--- 单窗切换
+function M.toggle_view()
+  M.ensure_setup()
+  local buf = vim.api.nvim_get_current_buf()
+  -- 若当前在预览，回到源
+  if window.is_preview_buf(buf) then
+    local src = vim.b[buf].mdview_source
+    local st = get_state(src)
+    if st then
+      vim.api.nvim_win_set_buf(0, src)
+      local sess = get_tab_session()
+      if sess and sess.mode == "side" and sess.preview_win and vim.api.nvim_win_is_valid(sess.preview_win) then
+        st.mode = "side"
+        st.preview_win = sess.preview_win
+        st.preview_buf = sess.preview_buf
+      else
+        st.mode = nil
+      end
+      st.source_win = vim.api.nvim_get_current_win()
+    else
+      if src and vim.api.nvim_buf_is_valid(src) then
+        vim.api.nvim_win_set_buf(0, src)
+      end
+    end
+    return
+  end
+
+  local source_buf = M._current_source()
+  if not is_markdown_buf(source_buf) then
+    vim.notify("mdview: not a markdown buffer", vim.log.levels.INFO)
+    return
+  end
+  local st = ensure_state(source_buf)
+
+  if st.mode == "single" and st.preview_buf and vim.api.nvim_buf_is_valid(st.preview_buf) then
+    st.source_win = vim.api.nvim_get_current_win()
+    M.ensure_preview_buf(st)
+    do_render(st)
+    vim.api.nvim_win_set_buf(0, st.preview_buf)
+    window.apply_winopts(0, config.get())
+    return
+  end
+
+  st.source_win = vim.api.nvim_get_current_win()
+  M.ensure_preview_buf(st)
+  do_render(st)
+  attach_autocmds(st)
+  vim.api.nvim_win_set_buf(st.source_win, st.preview_buf)
+  window.apply_winopts(st.source_win, config.get())
+  M.ensure_mouse()
+  st.mode = "single"
+  st.preview_win = st.source_win
+end
+
+function M.side_open()
+  M.ensure_setup()
+  local source_buf = M._current_source()
+  if window.is_preview_buf(source_buf) then
+    source_buf = vim.b[source_buf].mdview_source or source_buf
+  end
+  if not is_markdown_buf(source_buf) then
+    vim.notify("mdview: open a markdown file first", vim.log.levels.INFO)
+    return
+  end
+
+  local tab = tabpage()
+  local curwin = vim.api.nvim_get_current_win()
+  if window.is_preview_buf(vim.api.nvim_win_get_buf(curwin)) then
+    -- 焦点在预览上：用已关联源
+    source_buf = vim.b[vim.api.nvim_win_get_buf(curwin)].mdview_source or source_buf
+    for _, w in ipairs(vim.api.nvim_tabpage_list_wins(tab)) do
+      if vim.api.nvim_win_get_buf(w) == source_buf then
+        curwin = w
+        break
+      end
+    end
+  end
+
+  local sess = get_tab_session(tab)
+  local existing = window.list_preview_wins(tab)
+
+  -- 已有预览窗：复用，只换源
+  if #existing > 0 then
+    local pwin = existing[1]
+    enforce_one_preview_win(tab, pwin)
+    local pbuf = vim.api.nvim_win_get_buf(pwin)
+    if not window.is_preview_buf(pbuf) then
+      pbuf = window.create_preview_buf(source_buf)
+      vim.api.nvim_win_set_buf(pwin, pbuf)
+    end
+    sess = {
+      preview_win = pwin,
+      preview_buf = pbuf,
+      source_buf = source_buf,
+      source_win = curwin,
+      mode = "side",
+    }
+    set_tab_session(tab, sess)
+    M._bind_tab_source(tab, source_buf, curwin)
+    M.ensure_mouse()
+    return
+  end
+
+  -- 新建侧边
+  local st = ensure_state(source_buf)
+  st.source_win = curwin
+  M.ensure_preview_buf(st)
+  do_render(st)
+  local pwin = window.open_side(st.source_win, st.preview_buf, config.get())
+  enforce_one_preview_win(tab, pwin)
+  st.preview_win = pwin
+  st.mode = "side"
+  attach_autocmds(st)
+  set_tab_session(tab, {
+    preview_win = pwin,
+    preview_buf = st.preview_buf,
+    source_buf = source_buf,
+    source_win = curwin,
+    mode = "side",
+  })
+  M.ensure_mouse()
+  sync.sync_from_source(st)
+end
+
+function M.side_close()
+  local tab = tabpage()
+  local sess = get_tab_session(tab)
+  local pwin = sess and sess.preview_win
+  if not pwin or not vim.api.nvim_win_is_valid(pwin) then
+    local wins = window.list_preview_wins(tab)
+    pwin = wins[1]
+  end
+  if pwin and vim.api.nvim_win_is_valid(pwin) then
+    local wins = vim.api.nvim_tabpage_list_wins(tab)
+    if #wins > 1 then
+      window.close_win(pwin)
+    else
+      local src = sess and sess.source_buf
+      if src and vim.api.nvim_buf_is_valid(src) then
+        vim.api.nvim_win_set_buf(pwin, src)
+      end
+    end
+  end
+  -- 卸下关联
+  if sess and sess.source_buf then
+    local st = get_state(sess.source_buf)
+    if st then
+      detach_source_preview(st)
+    end
+  end
+  set_tab_session(tab, nil)
+  -- 关掉可能残留的预览窗
+  for _, w in ipairs(window.list_preview_wins(tab)) do
+    if #vim.api.nvim_tabpage_list_wins(tab) > 1 then
+      window.close_win(w)
+    end
+  end
+end
+
+function M.toggle_side()
+  M.ensure_setup()
+  local tab = tabpage()
+  local sess = get_tab_session(tab)
+  if sess and sess.preview_win and vim.api.nvim_win_is_valid(sess.preview_win) then
+    M.side_close()
+  else
+    local wins = window.list_preview_wins(tab)
+    if #wins > 0 then
+      -- 有窗无 session：视为已开，关闭
+      M.side_close()
+    else
+      M.side_open()
+    end
+  end
+end
+
+function M.close_for(source_buf, wipe)
+  local st = get_state(source_buf)
+  local tab = tabpage()
+  local sess = get_tab_session(tab)
+
+  if st then
+    if st.debounce then
+      pcall(function()
+        st.debounce:stop()
+      end)
+    end
+    if st.au_group then
+      pcall(vim.api.nvim_del_augroup_by_id, st.au_group)
+      st.au_group = nil
+    end
+  end
+
+  -- 关 tab 预览
+  if sess and (not source_buf or sess.source_buf == source_buf or wipe) then
+    M.side_close()
+  elseif st and st.mode == "single" then
+    local win = vim.api.nvim_get_current_win()
+    if window.is_preview_buf(vim.api.nvim_win_get_buf(win)) then
+      if vim.api.nvim_buf_is_valid(st.source_buf) then
+        vim.api.nvim_win_set_buf(win, st.source_buf)
+      end
+    end
+    st.mode = nil
+  end
+
+  if wipe and st and st.preview_buf and vim.api.nvim_buf_is_valid(st.preview_buf) then
+    -- 仅当不是 tab 共享预览时删除
+    local shared = sess and sess.preview_buf == st.preview_buf
+    if not shared then
+      pcall(vim.api.nvim_buf_delete, st.preview_buf, { force = true })
+    end
+  end
+  if wipe then
+    states[source_buf] = nil
+  else
+    detach_source_preview(st)
+  end
+end
+
+function M.sync_now()
+  local source_buf = M._current_source()
+  local st = get_state(source_buf)
+  if st and st.mode == "side" then
+    sync.sync_from_source(st)
+  end
+end
+
+return M

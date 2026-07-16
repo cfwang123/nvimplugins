@@ -338,6 +338,33 @@ def emit_ansi(grid: List[List[Cell]]) -> None:
         sys.stdout.flush()
 
 
+def pad_center_grid(
+    grid: List[List[Cell]], max_cols: int, max_rows: int
+) -> List[List[Cell]]:
+    """将内容格居中放到 max_cols x max_rows 画布上（空白透明格）。"""
+    if not grid:
+        empty_cell: Cell = (" ", (0, 0, 0), (0, 0, 0))
+        return [[empty_cell for _ in range(max_cols)] for _ in range(max_rows)]
+    rows = len(grid)
+    cols = len(grid[0]) if rows else 0
+    max_cols = max(max_cols, cols)
+    max_rows = max(max_rows, rows)
+    ox = max(0, (max_cols - cols) // 2)
+    oy = max(0, (max_rows - rows) // 2)
+    empty: Cell = (" ", (0, 0, 0), (0, 0, 0))
+    out: List[List[Cell]] = []
+    for r in range(max_rows):
+        line: List[Cell] = []
+        for c in range(max_cols):
+            gr, gc = r - oy, c - ox
+            if 0 <= gr < rows and 0 <= gc < cols:
+                line.append(grid[gr][gc])
+            else:
+                line.append(empty)
+        out.append(line)
+    return out
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="Chafa-style image renderer")
     ap.add_argument("path", help="Image path")
@@ -395,6 +422,10 @@ def main() -> int:
         grid = render_block(img, cols, rows)
     else:
         grid = render_half(img, cols, rows)
+
+    # 等比：内容居中到完整窗口格网，便于与高清叠层对齐
+    if args.scale == "fit" and (cols != max_cols or rows != max_rows):
+        grid = pad_center_grid(grid, max_cols, max_rows)
 
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")

@@ -1,5 +1,5 @@
 ---@mod imgbuf Terminal-based image preview (chafa / ANSI)
---- 用 Neovim terminal 显示图片，颜色由终端 ANSI 负责，不再创建海量 highlight 组。
+--- 字符画（chafa/python）+ 默认高清叠层（hd=always，终端支持时启用）。
 local M = {}
 
 ---@class ImgbufConfig
@@ -16,13 +16,16 @@ local M = {}
 ---@field mappings table<string, string>
 ---@field resize_debounce_ms number
 ---@field show_help boolean 底部按键提示行
+---@field hd "always"|"never"|"auto" 默认 always：检测支持则叠高清
+---@field hd_tmux boolean
+---@field hd_ssh boolean
 
 local default_config = {
   backend = "auto",
   -- block = chafa 1/4 格（▘▝▖▗▀▄▌▐█）
   mode = "block",
-  -- fit = 等比缩放（完整可见）；fill = 拉伸铺满窗口
-  scale = "fit",
+  -- fill = 默认拉伸铺满；fit = 等比缩放到窗口内（s 切换）
+  scale = "fill",
   dither = 0.35,
   chafa_symbols = "block",
   max_width = nil,
@@ -30,6 +33,10 @@ local default_config = {
   python = "python",
   auto_open = true,
   show_help = true,
+  -- always=默认启用高清叠层（终端支持时）；never=仅字符画
+  hd = "always",
+  hd_tmux = false,
+  hd_ssh = false,
   filetypes = { "png", "jpg", "jpeg", "gif", "webp", "bmp", "tif", "tiff" },
   resize_debounce_ms = 100,
   mappings = {
@@ -39,6 +46,7 @@ local default_config = {
     ["2"] = "mode_half",
     ["3"] = "mode_braille",
     s = "toggle_scale",
+    o = "open_system",
   },
 }
 
@@ -256,16 +264,26 @@ end
 ---@param cols number
 ---@param mode string
 ---@param scale string
+---@param is_hd boolean|nil
 ---@return string
-local function help_line_text(cols, mode, scale)
-  local scale_zh = scale == "fill" and "填充" or "等比"
+local function help_line_text(cols, mode, scale, is_hd)
+  local scale_zh = scale == "fill" and "拉伸" or "等比"
   local mode_zh = ({ block = "方块", half = "半块", braille = "点阵" })[mode] or mode
-  local hint = string.format(
-    " q关闭  r刷新  1方块  2半块  3点阵  s缩放[%s]  │ %s · %s ",
-    scale_zh,
-    mode_zh,
-    scale_zh
-  )
+  local hint
+  if is_hd then
+    hint = string.format(
+      " q关闭  r刷新  s切换[%s]  o系统打开  │ HD · %s(s切等比/拉伸) ",
+      scale_zh,
+      scale_zh
+    )
+  else
+    hint = string.format(
+      " q关闭  r刷新  1方块  2半块  3点阵  s切换[%s]  o系统打开  │ %s · %s ",
+      scale_zh,
+      mode_zh,
+      scale_zh
+    )
+  end
   cols = math.max(8, cols or 40)
   local w = vim.fn.strwidth(hint)
   if w < cols then
@@ -287,7 +305,7 @@ local function send_help_line(term_chan, cols, mode, scale)
   if not term_chan or term_chan <= 0 then
     return
   end
-  local hint = help_line_text(cols, mode, scale)
+  local hint = help_line_text(cols, mode, scale, false)
   -- reverse video bar
   local line = "\r\n\27[0m\27[7m" .. hint .. "\27[0m"
   pcall(vim.api.nvim_chan_send, term_chan, line)
@@ -332,8 +350,12 @@ local function build_cmd(path, cols, rows, mode, scale)
       -- ignore aspect ratio, fill the -s box
       table.insert(cmd, "--stretch")
     else
+      -- 等比适配，内容在 -s 盒内居中
       table.insert(cmd, "--scale")
       table.insert(cmd, "max")
+      -- chafa 1.12+：水平/垂直居中
+      table.insert(cmd, "--align")
+      table.insert(cmd, "mid,mid")
     end
     table.insert(cmd, path)
     return cmd, backend
@@ -382,6 +404,34 @@ local function lock_view(win, buf)
   end)
 end
 
+---恢复窗口外观，避免 winhl/winblend 残留污染其它 buffer
+---@param win integer|nil
+local function restore_window_chrome(win)
+  if not win or not vim.api.nvim_win_is_valid(win) then
+    return
+  end
+  pcall(function()
+    vim.wo[win].winhl = ""
+    vim.wo[win].winblend = 0
+  end)
+end
+
+---关闭预览时清理图层 + 窗口样式
+---@param buf integer|nil
+---@param win integer|nil
+local function cleanup_preview(buf, win)
+  if buf and vim.api.nvim_buf_is_valid(buf) then
+    pcall(function()
+      require("imgbuf.graphics").clear_buf(buf)
+    end)
+    local st = state_by_buf[buf]
+    if st and st.win then
+      win = win or st.win
+    end
+  end
+  restore_window_chrome(win)
+end
+
 local function apply_term_options(buf, win)
   -- terminal buffer options
   pcall(function()
@@ -395,6 +445,9 @@ local function apply_term_options(buf, win)
 
   if win and vim.api.nvim_win_is_valid(win) then
     pcall(function()
+      -- 关键清除可能残留的 HD winhl
+      vim.wo[win].winhl = ""
+      vim.wo[win].winblend = 0
       vim.wo[win].number = false
       vim.wo[win].relativenumber = false
       vim.wo[win].signcolumn = "no"
@@ -471,31 +524,90 @@ local function map_no_scroll(buf)
   pcall(vim.keymap.set, "n", "a", "<Nop>", { buffer = buf, silent = true })
   pcall(vim.keymap.set, "n", "I", "<Nop>", { buffer = buf, silent = true })
   pcall(vim.keymap.set, "n", "A", "<Nop>", { buffer = buf, silent = true })
-  pcall(vim.keymap.set, "n", "o", "<Nop>", { buffer = buf, silent = true })
+  -- o 留给 open_system；O 仍禁止
   pcall(vim.keymap.set, "n", "O", "<Nop>", { buffer = buf, silent = true })
+end
+
+---用系统默认程序打开当前预览图片
+---@param buf integer|nil
+local function open_system(buf)
+  buf = buf or vim.api.nvim_get_current_buf()
+  local st = state_by_buf[buf]
+  local path = (st and st.path) or vim.b[buf].imgbuf_path
+  if not path or path == "" then
+    vim.notify("imgbuf: no image path", vim.log.levels.WARN)
+    return
+  end
+  path = vim.fn.fnamemodify(path, ":p")
+  if vim.fn.filereadable(path) == 0 then
+    vim.notify("imgbuf: file not found: " .. path, vim.log.levels.ERROR)
+    return
+  end
+  if vim.ui and vim.ui.open then
+    local ok, err = pcall(vim.ui.open, path)
+    if ok then
+      return
+    end
+    vim.notify("imgbuf: open failed: " .. tostring(err), vim.log.levels.WARN)
+  end
+  if vim.fn.has("win32") == 1 then
+    vim.fn.jobstart({ "cmd", "/c", "start", "", path }, { detach = true })
+  elseif vim.fn.has("mac") == 1 then
+    vim.fn.jobstart({ "open", path }, { detach = true })
+  else
+    vim.fn.jobstart({ "xdg-open", path }, { detach = true })
+  end
 end
 
 local function map_actions(buf)
   local actions = {
     close = function()
+      local st = state_by_buf[buf]
+      local win = st and st.win or vim.fn.bufwinid(buf)
+      if win == -1 then
+        win = nil
+      end
+      cleanup_preview(buf, win)
       pcall(vim.cmd, "bdelete!")
+      -- bdelete 后窗口可能还在，再清一次 winhl
+      if win and vim.api.nvim_win_is_valid(win) then
+        restore_window_chrome(win)
+      end
     end,
     refresh = function()
       M.refresh(buf)
     end,
     mode_block = function()
+      local st = state_by_buf[buf]
+      if st then
+        st.force_ansi = true
+      end
       M.set_mode(buf, "block")
     end,
     mode_half = function()
+      local st = state_by_buf[buf]
+      if st then
+        st.force_ansi = true
+      end
       M.set_mode(buf, "half")
     end,
     mode_braille = function()
+      local st = state_by_buf[buf]
+      if st then
+        st.force_ansi = true
+      end
       M.set_mode(buf, "braille")
     end,
     toggle_scale = function()
       M.toggle_scale(buf)
     end,
+    open_system = function()
+      open_system(buf)
+    end,
   }
+
+  -- 先屏蔽滚动键，再挂动作（避免 o 被 Nop 覆盖）
+  map_no_scroll(buf)
 
   for lhs, action in pairs(config.mappings or {}) do
     local fn = actions[action]
@@ -508,7 +620,6 @@ local function map_actions(buf)
       })
     end
   end
-  map_no_scroll(buf)
 end
 
 local function cancel_resize_timer(key)
@@ -617,7 +728,7 @@ end
 ---Start / restart terminal job drawing the image.
 ---Always replaces the target content window buffer — never creates a split.
 ---@param path string
----@param opts? { mode?: string, scale?: string, win?: integer, replace_buf?: integer, close_win?: integer }
+---@param opts? { mode?: string, scale?: string, win?: integer, replace_buf?: integer, close_win?: integer, force_ansi?: boolean }
 ---@return integer|nil buf
 function M.open(path, opts)
   M.ensure_setup()
@@ -649,6 +760,30 @@ function M.open(path, opts)
   local b_scale = old_buf and vim.api.nvim_buf_is_valid(old_buf) and vim.b[old_buf].imgbuf_scale or nil
   local mode = opts.mode or prev.mode or b_mode or config.mode
   local scale = norm_scale(opts.scale or prev.scale or b_scale or config.scale)
+
+  -- 字符画始终为主；hd=always 时在字符画上叠像素图（见 on_exit）
+  local force_ansi = opts.force_ansi
+  if force_ansi == nil then
+    force_ansi = prev.force_ansi
+  end
+  -- 默认 hd=always：终端支持时叠高清；never 关闭
+  local want_hd = false
+  if not force_ansi
+    and config.hd ~= "never"
+    and config.hd ~= false
+    and config.hd ~= "none"
+    and config.hd ~= "off"
+  then
+    local ok_g, graphics = pcall(require, "imgbuf.graphics")
+    want_hd = ok_g and graphics and graphics.detect(config) and true or false
+  end
+
+  -- 清旧预览图层 + 恢复窗口样式（防止 winhl 污染）
+  if old_buf and vim.api.nvim_buf_is_valid(old_buf) then
+    cleanup_preview(old_buf, win)
+  else
+    restore_window_chrome(win)
+  end
 
   local cmd, backend = build_cmd(path, cols, img_rows, mode, scale)
 
@@ -711,12 +846,16 @@ function M.open(path, opts)
     last_cols = cols,
     last_rows = rows,
     win = win,
+    hd = false,
+    want_hd = want_hd and true or false,
+    force_ansi = force_ansi and true or false,
   }
   win_preview[win] = buf
   vim.b[buf].imgbuf_path = path
   vim.b[buf].imgbuf_mode = mode
   vim.b[buf].imgbuf_scale = scale
   vim.b[buf].imgbuf_backend = backend
+  vim.b[buf].imgbuf_hd = false
 
   -- Use nvim_open_term + jobstart (not termopen):
   -- termopen closes the channel when chafa/python exits; TermRequest handlers then
@@ -826,10 +965,53 @@ function M.open(path, opts)
           end
         end
         -- bottom key-hint bar (reserved row)
+        local st = state_by_buf[buf]
+        local show_hd = st and st.want_hd
         if help_on then
+          -- 有 want_hd 时底栏标注（叠层成功与否都先标尝试）
           send_help_line(term_chan, cols, mode, scale)
+          if show_hd then
+            pcall(
+              vim.api.nvim_chan_send,
+              term_chan,
+              "\r\n\27[0m\27[7m HD overlay: trying host graphics (iTerm/Kitty) \27[0m"
+            )
+          end
         end
         lock_view(win, buf)
+
+        -- 字符画就绪后再叠高清（失败则仍显示字符画）
+        if show_hd and vim.api.nvim_win_is_valid(win) then
+          vim.defer_fn(function()
+            if not vim.api.nvim_buf_is_valid(buf) then
+              return
+            end
+            local ok_g, graphics = pcall(require, "imgbuf.graphics")
+            if not ok_g or not graphics or not graphics.attach_overlay then
+              return
+            end
+            if not graphics.detect(config) then
+              return
+            end
+            local c, r = win_cell_size(win)
+            local ok = graphics.attach_overlay({
+              path = path,
+              win = win,
+              buf = buf,
+              cols = c,
+              rows = math.max(1, r - 1),
+              scale = scale,
+              python = config.python,
+            })
+            if ok then
+              local st2 = state_by_buf[buf]
+              if st2 then
+                st2.hd = true
+              end
+              vim.b[buf].imgbuf_hd = true
+            end
+          end, 80)
+        end
       end)
     end,
   })
@@ -879,6 +1061,7 @@ function M.refresh(buf)
     scale = scale,
     win = win,
     replace_buf = buf,
+    force_ansi = st and st.force_ansi or false,
   })
 end
 
