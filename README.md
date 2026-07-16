@@ -2,7 +2,7 @@
 
 本地 **Neovim** 小插件合集：图片预览、色块绘图、小游戏、音频播放。每个子目录是一个可独立安装的插件，互不强制依赖。
 
-面向终端里「好玩、好用、少依赖」的实验与日常小工具；安装方式以 vim-plug / lazy.nvim 本地路径为主。
+面向终端里「好玩、好用、少依赖」的实验与日常小工具；安装方式以 vim-plug 等本地路径为主。
 
 ## 插件一览
 
@@ -11,7 +11,7 @@
 | **[imgbuf](imgbuf/)** | 在 terminal 里用 chafa / ANSI 预览图片 | [imgbuf/README.md](imgbuf/README.md) |
 | **[drawbuf](drawbuf/)** | 在 buffer 里用 Unicode 色块画画 | [drawbuf/README.md](drawbuf/README.md) |
 | **[nvimgames](nvimgames/)** | 小游戏合集：扫雷 / 推箱子 / 24点 / 方块 | [nvimgames/README.md](nvimgames/README.md) |
-| **[music](music/)** | 打开音频文件 → buffer 播放器（进度条 / 可视化） | [music/README.md](music/README.md) |
+| **[music](music/)** | 打开音频文件 → buffer 播放器（进度条 / 歌词 / 列表） | [music/README.md](music/README.md) |
 
 ## 截图
 
@@ -23,6 +23,10 @@
 |:------:|:----:|:----------:|
 | ![推箱子](images/sokoban.png) | ![24点](images/twentyfour.png) | ![俄罗斯方块](images/tetris.png) |
 
+| music |
+|:-----:|
+| ![music](images/music.png) |
+
 ## 依赖摘要
 
 | 插件 | Neovim | 其他 |
@@ -30,7 +34,7 @@
 | imgbuf | 0.9+ | chafa **或** Python3 + Pillow |
 | drawbuf | 0.9+ | `termguicolors`；建议 `mouse=a` |
 | nvimgames | 0.9+ | `termguicolors`；扫雷建议 `mouse=a`；推箱子自带 `data/levels.json` |
-| music | 0.9+ | Python3 + **pygame**（或 just_playback） |
+| music | 0.9+ | Python3 + **just_playback**（或 pygame 回退） |
 
 ## 快速安装（示例）
 
@@ -45,7 +49,7 @@ Plug '/path/to/vim/music'
 call plug#end()
 ```
 
-更细的懒加载、命令与快捷键见各子目录 README。
+更细的命令与快捷键见各子目录 README。
 
 ## 目录结构
 
@@ -55,6 +59,7 @@ vim/
   drawbuf/     # 色块绘图
   nvimgames/   # 小游戏
   music/       # 音频播放器
+  images/      # README 截图
   tmp/         # 本地临时文件（已 gitignore）
   README.md
   AGENTS.md

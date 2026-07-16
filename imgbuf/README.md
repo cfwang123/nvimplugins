@@ -44,38 +44,6 @@
 **无需** `require('imgbuf').setup()`：插件加载后即用默认配置。  
 需要改参数时再调用 `setup({ ... })`。
 
-### 懒加载（推荐）
-
-```vim
-call plug#begin()
-
-" on：执行下列命令时才加载插件
-Plug '/path/to/vim/imgbuf', {
-  \ 'on': ['Imgbuf', 'ImgbufClipboard', 'ImgbufMode', 'ImgbufRefresh'],
-  \ }
-
-call plug#end()
-
-" 可选：改默认参数（须在插件加载后生效；懒加载时也可写在下方 autocmd 里）
-" lua require('imgbuf').setup({ mode = 'half' })
-
-" 打开图片时也懒加载（auto_open 需要插件已加载）
-augroup ImgbufPlugLazy
-  autocmd!
-  autocmd BufReadPre *.png,*.jpg,*.jpeg,*.gif,*.webp,*.bmp,*.tif,*.tiff
-    \ call plug#load('imgbuf')
-augroup END
-```
-
-| 参数 | 含义 |
-|------|------|
-| `on` | 执行列出的 **Ex 命令** 时才加载插件 |
-
-> 图片文件常无 `filetype`，故额外用 `BufReadPre` + `plug#load('imgbuf')`。  
-> 本地路径下 vim-plug 一般以目录名 `imgbuf` 作为加载名。
-
-### 立即加载
-
 ```vim
 call plug#begin()
 Plug '/path/to/vim/imgbuf'

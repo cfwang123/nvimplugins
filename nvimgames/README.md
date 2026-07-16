@@ -32,26 +32,6 @@ Neovim 小游戏合集，目前包含：
 
 路径请改成你的本机目录。
 
-### 懒加载（推荐）
-
-```vim
-call plug#begin()
-
-Plug '/path/to/vim/nvimgames', {
-  \ 'on': ['Mine', 'Sokoban', 'Game24', 'Tetris', 'NvimGames'],
-  \ }
-
-call plug#end()
-
-lua require('nvimgames').setup()
-```
-
-| 参数 | 含义 |
-|------|------|
-| `on` | 执行列出的 **Ex 命令** 时才加载插件 |
-
-### 立即加载
-
 ```vim
 call plug#begin()
 Plug '/path/to/vim/nvimgames'

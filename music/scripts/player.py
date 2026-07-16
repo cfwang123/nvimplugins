@@ -14,10 +14,13 @@ Request (nvim → python):
 
 Response (python → nvim):
   {"ok":true,"event":"status","status":"playing|paused|stopped|idle",
-   "path":"...","position":1.2,"duration":180.0,"volume":70,"loop":false,"backend":"pygame"}
+   "path":"...","position":1.2,"duration":180.0,"volume":70,"loop":false,"backend":"just_playback"}
   {"ok":true,"event":"ended","path":"..."}
-  {"ok":true,"event":"ready","backend":"pygame"}
+  {"ok":true,"event":"ready","backend":"just_playback"}
+  {"ok":true,"event":"warn","error":"..."}  # e.g. fell back to pygame
   {"ok":false,"error":"..."}
+
+Engines: just_playback (primary) → pygame (fallback).
 """
 
 from __future__ import annotations
@@ -415,17 +418,38 @@ class PygameEngine:
 
 
 def create_engine():
+    # Primary: just_playback (accurate seek / position / volume)
     try:
         eng = JustPlaybackEngine()
         return eng
-    except Exception:
-        pass
-    try:
-        eng = PygameEngine()
-        return eng
-    except Exception as exc:
-        emit({"ok": False, "error": f"no audio backend: install pygame or just_playback ({exc})"})
-        raise SystemExit(2) from exc
+    except Exception as exc_jp:
+        # Fallback: pygame (less accurate seek)
+        try:
+            eng = PygameEngine()
+            emit(
+                {
+                    "ok": True,
+                    "event": "warn",
+                    "error": (
+                        "just_playback 不可用，已回退 pygame（seek 可能不准）。"
+                        " 请执行: pip install just_playback  ("
+                        + str(exc_jp)
+                        + ")"
+                    ),
+                }
+            )
+            return eng
+        except Exception as exc:
+            emit(
+                {
+                    "ok": False,
+                    "error": (
+                        "无可用音频引擎。请安装: pip install just_playback  "
+                        f"(just_playback: {exc_jp}; pygame: {exc})"
+                    ),
+                }
+            )
+            raise SystemExit(2) from exc
 
 
 class PlayerApp:

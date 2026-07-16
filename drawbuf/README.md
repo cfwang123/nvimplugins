@@ -30,28 +30,6 @@
 **无需** `require('drawbuf').setup()`：插件加载后即用默认配置。  
 需要改参数时再调用 `setup({ ... })`。
 
-### 懒加载（推荐）
-
-```vim
-call plug#begin()
-
-" on：执行 :Draw 时才加载
-Plug '/path/to/vim/drawbuf', {
-  \ 'on': ['Draw'],
-  \ }
-
-call plug#end()
-
-" 可选：改默认参数
-" lua require('drawbuf').setup({ canvas_bg = '11111b' })
-```
-
-| 参数 | 含义 |
-|------|------|
-| `on` | 执行列出的 **Ex 命令** 时才加载插件 |
-
-### 立即加载
-
 ```vim
 call plug#begin()
 Plug '/path/to/vim/drawbuf'

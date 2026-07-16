@@ -2,6 +2,8 @@
 local M = {}
 
 local player = require("music.player")
+local lyrics = require("music.lyrics")
+local playlist = require("music.playlist")
 
 ---@class MusicConfig
 ---@field backend "python"|"auto"
@@ -13,8 +15,9 @@ local player = require("music.player")
 ---@field extensions string[]
 ---@field poll_ms number
 ---@field bar_width number|nil
----@field viz_height number
----@field viz boolean
+---@field fit_height boolean 上下分屏时按内容自动高度
+---@field toggle_key string 显示/隐藏播放器 UI（后台继续播）
+---@field statusline_when_hidden boolean 隐藏 UI 时状态栏显示 [歌名,进度/总长]
 ---@field python string Python 可执行文件（默认 python）
 
 local default_config = {
@@ -38,10 +41,11 @@ local default_config = {
     "ape",
     "wv",
   },
-  poll_ms = 200,
+  poll_ms = 100, -- 10 frames/s：进度条与歌词跟进
   bar_width = nil,
-  viz_height = 8,
-  viz = true,
+  fit_height = true,
+  toggle_key = "<M-m>", -- Alt+M
+  statusline_when_hidden = false, -- 隐藏 UI 时显示 [歌名,1:22/3:33]
   python = "python",
 }
 
@@ -70,7 +74,9 @@ local EXT = {}
 ---@field segs table<integer, MusicSeg[]> 0-based row -> segs
 ---@field dragging boolean
 ---@field drag_action string|nil
----@field phase number
+---@field paint_lines string[]|nil last painted lines (dirty refresh)
+---@field paint_cols integer|nil last paint width
+---@field paint_segs table<integer, MusicSeg[]>|nil last segs for dirty hl
 
 ---@type table<integer, MusicBufState>
 local state_by_buf = {}
@@ -148,49 +154,429 @@ local function win_width(buf)
   return vim.o.columns
 end
 
+---Sidebar / file-tree windows must never host the player.
+local SIDEBAR_FILETYPES = {
+  nerdtree = true,
+  NerdTree = true,
+  NvimTree = true,
+  ["neo-tree"] = true,
+  CHADTree = true,
+  aerial = true,
+  ultratree = true,
+  Outline = true,
+}
+
+local function is_sidebar_win(win)
+  if not win or win == 0 or not vim.api.nvim_win_is_valid(win) then
+    return false
+  end
+  local b = vim.api.nvim_win_get_buf(win)
+  local ft = vim.bo[b].filetype or ""
+  if SIDEBAR_FILETYPES[ft] then
+    return true
+  end
+  local name = vim.api.nvim_buf_get_name(b)
+  if name:match("NERD_tree_") or name:match("NvimTree_") or name:match("neo%-tree") then
+    return true
+  end
+  return false
+end
+
+local function is_usable_content_win(win)
+  return win and win ~= 0 and vim.api.nvim_win_is_valid(win) and not is_sidebar_win(win)
+end
+
+---Existing music player window + buffer (search current tab first, then all tabs).
+---@return integer|nil win
+---@return integer|nil buf
+local function find_music_win()
+  for _, win in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
+    local b = vim.api.nvim_win_get_buf(win)
+    if vim.api.nvim_buf_is_valid(b) and vim.b[b].music_player then
+      return win, b
+    end
+  end
+  for _, tab in ipairs(vim.api.nvim_list_tabpages()) do
+    for _, win in ipairs(vim.api.nvim_tabpage_list_wins(tab)) do
+      local b = vim.api.nvim_win_get_buf(win)
+      if vim.api.nvim_buf_is_valid(b) and vim.b[b].music_player then
+        return win, b
+      end
+    end
+  end
+  if active_buf and vim.api.nvim_buf_is_valid(active_buf) and vim.b[active_buf].music_player then
+    return nil, active_buf
+  end
+  return nil, nil
+end
+
+---Global singleton: only one music window. Detach buffer from other tabs/windows.
+---@param keep_win integer|nil window that should keep showing music
+---@param buf integer music buffer
+local function ensure_singleton_window(keep_win, buf)
+  if not buf or not vim.api.nvim_buf_is_valid(buf) then
+    return
+  end
+  for _, tab in ipairs(vim.api.nvim_list_tabpages()) do
+    for _, win in ipairs(vim.api.nvim_tabpage_list_wins(tab)) do
+      if win ~= keep_win and vim.api.nvim_win_get_buf(win) == buf then
+        local n = #vim.api.nvim_tabpage_list_wins(tab)
+        if n <= 1 then
+          -- last window on that tab: leave an empty scratch so tab stays
+          local empty = vim.api.nvim_create_buf(true, true)
+          pcall(function()
+            vim.bo[empty].buftype = "nofile"
+            vim.bo[empty].bufhidden = "wipe"
+            vim.bo[empty].swapfile = false
+          end)
+          pcall(vim.api.nvim_win_set_buf, win, empty)
+        else
+          pcall(vim.api.nvim_win_close, win, true)
+        end
+      end
+    end
+  end
+end
+
+---True if `win` sits in a vertical stack (horizontal split / :split), not alone in column.
+---winlayout: "col" = stacked (top-bottom), "row" = side-by-side (vsplit).
+local function win_is_vertically_split(win)
+  if not win or not vim.api.nvim_win_is_valid(win) then
+    return false
+  end
+  local function walk(node, parent_col_multi)
+    if type(node) ~= "table" then
+      return false
+    end
+    if node[1] == "leaf" then
+      return node[2] == win and parent_col_multi
+    end
+    local kind = node[1] -- "row" | "col"
+    local children = node[2] or {}
+    local multi = #children > 1
+    -- stacked siblings only when parent is "col" with multiple children
+    local stacked_here = kind == "col" and multi
+    for _, ch in ipairs(children) do
+      if walk(ch, stacked_here) then
+        return true
+      end
+    end
+    return false
+  end
+  return walk(vim.fn.winlayout(), false)
+end
+
+---Estimate UI line count for initial split height (before paint).
+local function estimate_ui_lines()
+  -- title + status + bar + lyrics + actions
+  return 5
+end
+
+---Resize only when music window shares a vertical stack (上下分屏).
+---If the column is only music (vsplit 右侧整列 / 唯一窗口), do NOT change height.
+local function fit_music_height(buf, nlines)
+  if not config.fit_height then
+    return
+  end
+  if not buf or not vim.api.nvim_buf_is_valid(buf) then
+    return
+  end
+  nlines = math.max(3, math.min(nlines or 3, vim.o.lines - 3))
+  for _, win in ipairs(vim.api.nvim_list_wins()) do
+    if vim.api.nvim_win_get_buf(win) == buf and win_is_vertically_split(win) then
+      pcall(vim.api.nvim_win_set_height, win, nlines)
+      -- Neovim 0.12+: winfixheight is boolean
+      pcall(vim.api.nvim_set_option_value, "winfixheight", true, { win = win })
+    end
+  end
+end
+
+---Force player height to content (e.g. after list panel closed and stole space).
+local function refit_player_after_list()
+  local buf = active_buf
+  if not buf or not vim.api.nvim_buf_is_valid(buf) then
+    return
+  end
+  local st = state_by_buf[buf]
+  local nlines = estimate_ui_lines()
+  if st and st.paint_lines and #st.paint_lines > 0 then
+    nlines = #st.paint_lines
+  end
+  nlines = math.max(3, math.min(nlines, vim.o.lines - 3))
+  local music_win = nil
+  for _, win in ipairs(vim.api.nvim_list_wins()) do
+    if vim.api.nvim_win_get_buf(win) == buf then
+      music_win = music_win or win
+      pcall(vim.api.nvim_win_set_height, win, nlines)
+      pcall(vim.api.nvim_set_option_value, "winfixheight", true, { win = win })
+    end
+  end
+  -- 关闭列表后焦点回到播放器（q / f / Space 选歌等）
+  if music_win and vim.api.nvim_win_is_valid(music_win) then
+    pcall(vim.api.nvim_set_current_win, music_win)
+  end
+end
+
+---True if window hosts music player / lyrics / playlist panel.
+local function is_music_ui_win(win)
+  if not win or win == 0 or not vim.api.nvim_win_is_valid(win) then
+    return false
+  end
+  local b = vim.api.nvim_win_get_buf(win)
+  return vim.b[b].music_player == true
+    or vim.b[b].music_lyrics == true
+    or vim.b[b].music_playlist == true
+end
+
+---Return focus to a code/editor window (not music / lyrics / sidebar).
+---@param preferred integer|nil
+---@return integer|nil
+local function focus_editor_win(preferred)
+  local function ok(win)
+    return is_usable_content_win(win) and not is_music_ui_win(win)
+  end
+  if ok(preferred) then
+    pcall(vim.api.nvim_set_current_win, preferred)
+    return preferred
+  end
+  local alt = vim.fn.win_getid(vim.fn.winnr("#"))
+  if ok(alt) then
+    pcall(vim.api.nvim_set_current_win, alt)
+    return alt
+  end
+  local best, best_area = nil, -1
+  for _, win in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
+    if ok(win) then
+      local area = vim.api.nvim_win_get_width(win) * vim.api.nvim_win_get_height(win)
+      if area > best_area then
+        best_area, best = area, win
+      end
+    end
+  end
+  if best then
+    pcall(vim.api.nvim_set_current_win, best)
+  end
+  return best
+end
+
+---Open music buffer in a bottom horizontal split under the current editor pane.
+---(底部分屏；Vim 术语为 :split / belowright，不是左右 vsplit)
+---Does not steal focus: after open, returns to the previous editor window.
+---@param buf integer
+---@param height? integer
+---@return integer win
+local function open_bottom_split(buf, height)
+  height = math.max(3, math.min(height or estimate_ui_lines(), vim.o.lines - 5))
+
+  local prev = vim.api.nvim_get_current_win()
+  if is_sidebar_win(prev) or is_music_ui_win(prev) then
+    prev = nil
+  end
+
+  -- already visible in current tab → fit only, keep / restore editor focus
+  for _, win in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
+    if vim.api.nvim_win_get_buf(win) == buf then
+      if win_is_vertically_split(win) then
+        pcall(vim.api.nvim_win_set_height, win, height)
+        pcall(vim.api.nvim_set_option_value, "winfixheight", true, { win = win })
+      end
+      focus_editor_win(prev)
+      return win
+    end
+  end
+
+  -- anchor: current content window (not NERDTree / music)
+  local anchor = vim.api.nvim_get_current_win()
+  if is_sidebar_win(anchor) or is_music_ui_win(anchor) then
+    anchor = find_content_win(nil)
+    if anchor and is_music_ui_win(anchor) then
+      anchor = focus_editor_win(nil) or anchor
+    end
+  end
+  if anchor and vim.api.nvim_win_is_valid(anchor) then
+    pcall(vim.api.nvim_set_current_win, anchor)
+    if not prev and not is_music_ui_win(anchor) and not is_sidebar_win(anchor) then
+      prev = anchor
+    end
+  end
+
+  -- bottom horizontal split under current window
+  vim.cmd("belowright " .. tostring(height) .. "split")
+  local win = vim.api.nvim_get_current_win()
+  vim.api.nvim_win_set_buf(win, buf)
+  pcall(vim.api.nvim_win_set_height, win, height)
+  pcall(vim.api.nvim_set_option_value, "winfixheight", true, { win = win })
+  -- 少抢焦：分屏后回到代码窗
+  focus_editor_win(prev or anchor)
+  return win
+end
+
+local function session_path()
+  return vim.fn.stdpath("data") .. "/music-nvim-session.json"
+end
+
+---@return table|nil
+local function load_session()
+  local f = session_path()
+  if vim.fn.filereadable(f) ~= 1 then
+    return nil
+  end
+  local lines = vim.fn.readfile(f)
+  if not lines or #lines == 0 then
+    return nil
+  end
+  local ok, data = pcall(vim.json.decode, table.concat(lines, "\n"))
+  if ok and type(data) == "table" and data.path then
+    return data
+  end
+  return nil
+end
+
+---Persist last dir / file / position / volume (for Alt+M restore).
+local function save_session()
+  player.poll()
+  local pst = player.get_state()
+  local path = pst.path
+  if (not path or path == "") and active_buf and state_by_buf[active_buf] then
+    path = state_by_buf[active_buf].path
+  end
+  if not path or path == "" then
+    return
+  end
+  path = vim.fn.fnamemodify(path, ":p")
+  local data = {
+    path = path,
+    dir = vim.fn.fnamemodify(path, ":h"),
+    position = tonumber(pst.position) or 0,
+    volume = tonumber(pst.volume) or config.volume,
+    loop = not not pst.loop,
+  }
+  pcall(function()
+    vim.fn.mkdir(vim.fn.fnamemodify(session_path(), ":h"), "p")
+    vim.fn.writefile({ vim.json.encode(data) }, session_path())
+  end)
+end
+
+---Never open inside NERDTree; prefer: preferred → music win → previous (#) → current → largest.
+local function find_content_win(preferred)
+  if is_usable_content_win(preferred) then
+    return preferred
+  end
+  local mwin = find_music_win()
+  if is_usable_content_win(mwin) then
+    return mwin
+  end
+  -- NERDTree `o` targets previous window
+  local prev = vim.fn.win_getid(vim.fn.winnr("#"))
+  if is_usable_content_win(prev) then
+    return prev
+  end
+  local cur = vim.api.nvim_get_current_win()
+  if is_usable_content_win(cur) then
+    return cur
+  end
+  local best, best_area = nil, -1
+  for _, win in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
+    if is_usable_content_win(win) then
+      local area = vim.api.nvim_win_get_width(win) * vim.api.nvim_win_get_height(win)
+      if area > best_area then
+        best_area, best = area, win
+      end
+    end
+  end
+  return best or cur
+end
+
+local function close_orphan_split(orphan_win, keep_win)
+  if not orphan_win or orphan_win == keep_win then
+    return
+  end
+  if not vim.api.nvim_win_is_valid(orphan_win) or is_sidebar_win(orphan_win) then
+    return
+  end
+  local other = 0
+  for _, win in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
+    if win ~= orphan_win and is_usable_content_win(win) then
+      other = other + 1
+    end
+  end
+  if other < 1 then
+    return
+  end
+  pcall(vim.api.nvim_win_close, orphan_win, true)
+end
+
 local function ensure_hl()
   if not vim.o.termguicolors then
     vim.o.termguicolors = true
   end
-  -- Catppuccin-ish player palette
-  vim.api.nvim_set_hl(0, "MusicNormal", { fg = "#cdd6f4", bg = "#1e1e2e" })
-  vim.api.nvim_set_hl(0, "MusicHeader", { fg = "#cba6f7", bg = "#1e1e2e", bold = true })
-  vim.api.nvim_set_hl(0, "MusicTitle", { fg = "#89b4fa", bg = "#1e1e2e", bold = true })
-  vim.api.nvim_set_hl(0, "MusicPath", { fg = "#6c7086", bg = "#1e1e2e" })
-  vim.api.nvim_set_hl(0, "MusicMeta", { fg = "#a6adc8", bg = "#1e1e2e" })
-  vim.api.nvim_set_hl(0, "MusicTime", { fg = "#f9e2af", bg = "#1e1e2e", bold = true })
-  vim.api.nvim_set_hl(0, "MusicStatusPlay", { fg = "#a6e3a1", bg = "#1e1e2e", bold = true })
-  vim.api.nvim_set_hl(0, "MusicStatusPause", { fg = "#f9e2af", bg = "#1e1e2e", bold = true })
-  vim.api.nvim_set_hl(0, "MusicStatusStop", { fg = "#f38ba8", bg = "#1e1e2e", bold = true })
-  vim.api.nvim_set_hl(0, "MusicBarFill", { fg = "#89b4fa", bg = "#313244", bold = true })
-  vim.api.nvim_set_hl(0, "MusicBarEmpty", { fg = "#45475a", bg = "#313244" })
-  vim.api.nvim_set_hl(0, "MusicBarThumb", { fg = "#cba6f7", bg = "#313244", bold = true })
-  vim.api.nvim_set_hl(0, "MusicBarBracket", { fg = "#74c7ec", bg = "#1e1e2e" })
-  vim.api.nvim_set_hl(0, "MusicBtn", { fg = "#1e1e2e", bg = "#89b4fa", bold = true })
-  vim.api.nvim_set_hl(0, "MusicBtnPlay", { fg = "#1e1e2e", bg = "#a6e3a1", bold = true })
-  vim.api.nvim_set_hl(0, "MusicBtnPause", { fg = "#1e1e2e", bg = "#f9e2af", bold = true })
-  vim.api.nvim_set_hl(0, "MusicBtnWarn", { fg = "#1e1e2e", bg = "#fab387", bold = true })
-  vim.api.nvim_set_hl(0, "MusicBtnDanger", { fg = "#1e1e2e", bg = "#f38ba8", bold = true })
-  vim.api.nvim_set_hl(0, "MusicBtnMute", { fg = "#1e1e2e", bg = "#9399b2", bold = true })
-  vim.api.nvim_set_hl(0, "MusicBtnLoopOn", { fg = "#1e1e2e", bg = "#cba6f7", bold = true })
-  vim.api.nvim_set_hl(0, "MusicBtnLoopOff", { fg = "#cdd6f4", bg = "#45475a", bold = true })
-  vim.api.nvim_set_hl(0, "MusicHint", { fg = "#585b70", bg = "#1e1e2e" })
-  vim.api.nvim_set_hl(0, "MusicSep", { fg = "#313244", bg = "#1e1e2e" })
-  -- spectrum bands
-  local viz_colors = {
-    "#f38ba8",
-    "#fab387",
-    "#f9e2af",
-    "#a6e3a1",
-    "#94e2d5",
-    "#89b4fa",
-    "#b4befe",
-    "#cba6f7",
-  }
-  for i, hex in ipairs(viz_colors) do
-    vim.api.nvim_set_hl(0, "MusicViz" .. i, { fg = hex, bg = "#1e1e2e" })
-  end
+  -- Minimal: white paper + black/gray ink (no colorful chrome)
+  local bg = "#ffffff"
+  local fg = "#1a1a1a"
+  local muted = "#6b6b6b"
+  local faint = "#9a9a9a"
+  local bar_bg = "#e8e8e8"
+  local bar_fg = "#404040"
+  vim.api.nvim_set_hl(0, "MusicNormal", { fg = fg, bg = bg })
+  vim.api.nvim_set_hl(0, "MusicHeader", { fg = muted, bg = bg, bold = true })
+  vim.api.nvim_set_hl(0, "MusicTitle", { fg = fg, bg = bg, bold = true })
+  vim.api.nvim_set_hl(0, "MusicPath", { fg = faint, bg = bg })
+  vim.api.nvim_set_hl(0, "MusicMeta", { fg = muted, bg = bg })
+  vim.api.nvim_set_hl(0, "MusicTime", { fg = fg, bg = bg })
+  vim.api.nvim_set_hl(0, "MusicStatusPlay", { fg = fg, bg = bg, bold = true })
+  vim.api.nvim_set_hl(0, "MusicStatusPause", { fg = muted, bg = bg, bold = true })
+  vim.api.nvim_set_hl(0, "MusicStatusStop", { fg = muted, bg = bg })
+  vim.api.nvim_set_hl(0, "MusicBarFill", { fg = bar_fg, bg = bar_bg })
+  vim.api.nvim_set_hl(0, "MusicBarEmpty", { fg = "#c0c0c0", bg = bar_bg })
+  vim.api.nvim_set_hl(0, "MusicBarThumb", { fg = fg, bg = bar_bg, bold = true })
+  vim.api.nvim_set_hl(0, "MusicBarBracket", { fg = muted, bg = bg })
+  -- Buttons: plain gray text, no solid color blocks
+  vim.api.nvim_set_hl(0, "MusicBtn", { fg = muted, bg = bg })
+  vim.api.nvim_set_hl(0, "MusicBtnPlay", { fg = muted, bg = bg })
+  vim.api.nvim_set_hl(0, "MusicBtnPause", { fg = muted, bg = bg })
+  vim.api.nvim_set_hl(0, "MusicBtnWarn", { fg = muted, bg = bg })
+  vim.api.nvim_set_hl(0, "MusicBtnDanger", { fg = muted, bg = bg })
+  vim.api.nvim_set_hl(0, "MusicBtnMute", { fg = muted, bg = bg })
+  vim.api.nvim_set_hl(0, "MusicBtnLoopOn", { fg = fg, bg = bg })
+  vim.api.nvim_set_hl(0, "MusicBtnLoopOff", { fg = muted, bg = bg })
+  vim.api.nvim_set_hl(0, "MusicHint", { fg = faint, bg = bg })
+  vim.api.nvim_set_hl(0, "MusicSep", { fg = "#d0d0d0", bg = bg })
+  -- inline current lyrics (karaoke: sung prefix deep orange)
+  vim.api.nvim_set_hl(0, "MusicLyricSung", { fg = "#c45c12", bg = bg, bold = true })
+  vim.api.nvim_set_hl(0, "MusicLyricRest", { fg = "#8a8a8a", bg = bg })
+  -- 播放器窗口内隐藏光标（与白底同色 + blend）
+  vim.api.nvim_set_hl(0, "MusicHiddenCursor", { fg = bg, bg = bg, blend = 100 })
   hl_ready = true
+end
+
+---Hide caret while focus is on music player (guicursor is global → enter/leave swap).
+local saved_guicursor = nil
+local player_cursor_hidden = false
+
+local function hide_player_cursor()
+  if player_cursor_hidden then
+    return
+  end
+  ensure_hl()
+  saved_guicursor = vim.o.guicursor
+  -- a: all modes use invisible cursor group
+  vim.o.guicursor = "a:MusicHiddenCursor"
+  player_cursor_hidden = true
+end
+
+local function restore_player_cursor()
+  if not player_cursor_hidden then
+    return
+  end
+  if saved_guicursor and saved_guicursor ~= "" then
+    vim.o.guicursor = saved_guicursor
+  else
+    pcall(function()
+      vim.cmd("set guicursor&")
+    end)
+  end
+  saved_guicursor = nil
+  player_cursor_hidden = false
 end
 
 ---Line builder: tracks display cols (1-based) and byte ranges for highlights.
@@ -232,9 +618,19 @@ local function new_line()
     return self:add(string.rep(" ", n or 1), hl or "MusicNormal", nil)
   end
 
-  function self:btn(label, hl, action)
-    -- pad label for button look: [ label ]
-    return self:add(" " .. label .. " ", hl or "MusicBtn", action)
+  ---@param label string button text
+  ---@param key string|nil shortcut appended, e.g. 上一首PgUp / 播放Space
+  function self:btn(label, key, hl, action)
+    local text = label
+    if key and key ~= "" then
+      text = label .. key
+    end
+    return self:add(text, hl or "MusicBtn", action)
+  end
+
+  ---Non-clickable separator between actions
+  function self:sep(text)
+    return self:add(text or ", ", "MusicMeta", nil)
   end
 
   function self:text()
@@ -254,7 +650,7 @@ local function progress_segments(pos, dur, width)
     filled = math.max(0, math.min(width, filled))
   end
   if filled <= 0 then
-    return 0, true, width - 1
+    return 0, true, width - 1 -- empty almost all + thumb
   end
   if filled >= width then
     return width - 1, true, 0
@@ -262,50 +658,29 @@ local function progress_segments(pos, dur, width)
   return filled, true, width - filled - 1
 end
 
-local function viz_data(st, playing, pos, width, height)
-  height = math.max(3, height)
-  width = math.max(16, width)
-  local t = st.phase or 0
-  local n_bars = math.floor(width / 2)
-  n_bars = math.max(8, math.min(40, n_bars))
-  local energy = playing and 1.0 or 0.18
-  if pos then
-    energy = energy * (0.75 + 0.25 * math.sin(pos * 1.7))
-  end
-  local heights = {}
-  for i = 1, n_bars do
-    local u = i / n_bars
-    local h = 0.35
-      + 0.35 * math.sin(t * 2.1 + u * 9.0)
-      + 0.20 * math.sin(t * 3.7 + u * 17.0)
-      + 0.15 * math.sin(t * 5.3 + u * 4.0 + (pos or 0) * 0.4)
-    h = math.max(0.08, math.min(1.0, h * energy))
-    if not playing then
-      h = h * 0.35 + 0.06
-    end
-    heights[i] = h
-  end
-  local gap = 1
-  local used = n_bars + gap * (n_bars - 1)
-  local pad = math.max(0, math.floor((width - used) / 2))
-  return heights, n_bars, gap, pad
-end
-
 local function status_label(status)
   if status == "playing" then
-    return "▶ 播放中", "MusicStatusPlay"
+    return "播放中", "MusicStatusPlay"
   elseif status == "paused" then
-    return "⏸ 已暂停", "MusicStatusPause"
+    return "已暂停", "MusicStatusPause"
   elseif status == "stopped" then
-    return "⏹ 已停止", "MusicStatusStop"
+    return "已停止", "MusicStatusStop"
   end
-  return "○ 就绪", "MusicMeta"
+  return "就绪", "MusicMeta"
+end
+
+local function norm_path(p)
+  if not p or p == "" then
+    return ""
+  end
+  return vim.fn.fnamemodify(p, ":p"):gsub("\\", "/"):lower()
 end
 
 local function track_status(st, pst)
   local status = pst.status or "idle"
   local pos = pst.position or 0
-  if pst.path and vim.fn.fnamemodify(pst.path, ":p") ~= vim.fn.fnamemodify(st.path, ":p") then
+  if pst.path and st.path and norm_path(pst.path) ~= norm_path(st.path) then
+    -- different track still loading in daemon
     status = "idle"
     pos = 0
   end
@@ -323,8 +698,6 @@ local function build_ui(buf, st)
   local bar_w = config.bar_width or math.min(content_w - 4, math.max(24, w - 10))
 
   local title = vim.fn.fnamemodify(st.path, ":t")
-  local dir = vim.fn.fnamemodify(st.path, ":h")
-  local backend = pst.backend or player.backend_name() or "?"
   local status, pos, dur = track_status(st, pst)
   local playing = status == "playing"
   local slabel, shl = status_label(status)
@@ -349,154 +722,233 @@ local function build_ui(buf, st)
     end
   end
 
-  -- header
-  do
+  local function push_progress()
     local L = new_line()
-    L:gap(2):add("♫  MUSIC", "MusicHeader"):gap(2):add("· buffer player", "MusicPath")
-    push(L)
-  end
-  push(new_line():gap(2):add(string.rep("━", math.min(content_w, 42)), "MusicSep"))
-
-  -- title / path
-  push(new_line():gap(2):add("♪  " .. title, "MusicTitle"))
-  push(new_line():gap(2):add(dir, "MusicPath"))
-  push(new_line())
-
-  -- status meta
-  do
-    local L = new_line()
-    L:gap(2)
-      :add(slabel, shl)
-      :gap(3)
-      :add(string.format("音量 %d%%", pst.volume or config.volume), "MusicMeta")
-      :gap(3)
-      :add("后端 " .. tostring(backend), "MusicMeta")
-      :gap(3)
-      :add(string.format("%d / %d", st.index, #st.siblings), "MusicMeta")
-    push(L)
-  end
-  push(new_line())
-
-  -- time
-  do
-    local L = new_line()
-    L:gap(2)
-      :add(fmt_time(pos), "MusicTime")
-      :add("  /  ", "MusicMeta")
-      :add(fmt_time(dur), "MusicTime")
-    push(L)
-  end
-
-  -- progress bar (clickable)
-  do
-    local L = new_line()
-    L:gap(2):add("▕", "MusicBarBracket")
+    L:gap(1):add("|", "MusicBarBracket")
     local fill_n, has_thumb, empty_n = progress_segments(pos, dur, bar_w)
     local bar_d0 = L.disp + 1
     if fill_n > 0 then
-      L:add(string.rep("█", fill_n), "MusicBarFill", "seek", { bar_d0 = bar_d0, bar_w = bar_w })
+      L:add(string.rep("#", fill_n), "MusicBarFill", "seek", { bar_d0 = bar_d0, bar_w = bar_w })
     end
     if has_thumb then
-      L:add("●", "MusicBarThumb", "seek", { bar_d0 = bar_d0, bar_w = bar_w })
+      L:add("|", "MusicBarThumb", "seek", { bar_d0 = bar_d0, bar_w = bar_w })
     end
     if empty_n > 0 then
-      L:add(string.rep("─", empty_n), "MusicBarEmpty", "seek", { bar_d0 = bar_d0, bar_w = bar_w })
+      L:add(string.rep("-", empty_n), "MusicBarEmpty", "seek", { bar_d0 = bar_d0, bar_w = bar_w })
     end
-    -- also whole bar as one seek region is covered by segments
-    L:add("▏", "MusicBarBracket")
+    L:add("|", "MusicBarBracket")
     push(L)
   end
-  push(new_line())
 
-  -- visualization
-  if config.viz then
-    if playing then
-      st.phase = (st.phase or 0) + 0.18
-    end
-    local heights, n_bars, gap, pad = viz_data(st, playing, pos, content_w, config.viz_height)
-    local blocks = { " ", "▁", "▂", "▃", "▄", "▅", "▆", "▇", "█" }
-    for row = 1, config.viz_height do
+  ---Current lyric line(s) with karaoke progress (CN+EN same timestamp → 2 lines).
+  local function push_current_lyrics()
+    local texts, progress = lyrics.get_current_display(pos)
+    if not texts or #texts == 0 then
       local L = new_line()
-      L:gap(2)
-      if pad > 0 then
-        L:gap(pad)
+      L:gap(1):add("(无歌词)", "MusicLyricRest")
+      push(L)
+      return
+    end
+    for _, text in ipairs(texts) do
+      local sung, rest = lyrics.split_progress(text, progress)
+      local L = new_line()
+      L:gap(1)
+      if sung ~= "" then
+        L:add(sung, "MusicLyricSung")
       end
-      local threshold = (config.viz_height - row + 0.5) / config.viz_height
-      for i = 1, n_bars do
-        local h = heights[i]
-        local ch = " "
-        if h >= threshold then
-          if h >= threshold + 0.45 / config.viz_height then
-            ch = "█"
-          else
-            local frac = (h - (config.viz_height - row) / config.viz_height) * config.viz_height
-            local bi = math.min(#blocks, math.max(2, math.floor(frac * (#blocks - 1)) + 1))
-            ch = blocks[bi] or "▄"
-          end
-        elseif row == config.viz_height then
-          ch = "▁"
-        end
-        local hl = "MusicViz" .. (((i - 1) % 8) + 1)
-        L:add(ch, hl)
-        if i < n_bars and gap > 0 then
-          L:gap(gap)
-        end
+      if rest ~= "" then
+        L:add(rest, "MusicLyricRest")
+      end
+      if sung == "" and rest == "" then
+        L:add(" ", "MusicLyricRest")
       end
       push(L)
     end
-    push(new_line())
   end
 
-  push(new_line():gap(2):add(string.rep("─", math.min(content_w, 48)), "MusicSep"))
-
-  -- primary controls
-  do
+  -- 操作行：上一首PgUp, 暂停Space, ... 列表f, q关闭（无方括号，逗号分隔，可点击）
+  local function push_primary_btns()
     local L = new_line()
-    L:gap(2)
-    L:btn("⏮ 上一首", "MusicBtn", "prev")
     L:gap(1)
+    L:btn("上一首", "PgUp", "MusicBtn", "prev")
+    L:sep(", ")
     if playing then
-      L:btn("⏸ 暂停", "MusicBtnPause", "toggle")
+      L:btn("暂停", "Space", "MusicBtn", "toggle")
     else
-      L:btn("▶ 播放", "MusicBtnPlay", "toggle")
+      L:btn("播放", "Space", "MusicBtn", "toggle")
     end
-    L:gap(1)
-    L:btn("⏭ 下一首", "MusicBtn", "next")
-    L:gap(1)
-    L:btn("⏹ 停止", "MusicBtnDanger", "stop")
+    L:sep(", ")
+    L:btn("下一首", "PgDn", "MusicBtn", "next")
+    L:sep(", ")
+    L:btn("停止", "x", "MusicBtn", "stop")
+    L:sep(", ")
+    if pst.loop then
+      L:btn("循环:开", "L", "MusicBtnLoopOn", "loop")
+    else
+      L:btn("循环:关", "L", "MusicBtnLoopOff", "loop")
+    end
+    L:sep(", ")
+    L:btn("重播", "r", "MusicBtn", "restart")
+    L:sep(", ")
+    L:btn("歌词", "g", "MusicBtn", "lyrics")
+    L:sep(", ")
+    L:btn("列表", "f", "MusicBtn", "playlist")
+    L:sep(", ")
+    L:btn("关闭", "q", "MusicBtn", "close")
     push(L)
   end
-  push(new_line())
 
-  -- secondary controls
+  -- 唯一布局：标题 + 状态时间 + 进度条 + 歌词 + 操作行
   do
     local L = new_line()
-    L:gap(2)
-    L:btn("⏪ -5s", "MusicBtnWarn", "seek_back")
-    L:gap(1)
-    L:btn("⏩ +5s", "MusicBtnWarn", "seek_fwd")
-    L:gap(1)
-    L:btn("🔉 -", "MusicBtnMute", "vol_down")
-    L:gap(1)
-    L:btn("🔊 +", "MusicBtnMute", "vol_up")
-    L:gap(1)
-    if pst.loop then
-      L:btn("🔁 循环·开", "MusicBtnLoopOn", "loop")
-    else
-      L:btn("🔁 循环·关", "MusicBtnLoopOff", "loop")
-    end
-    L:gap(1)
-    L:btn("↻ 重播", "MusicBtn", "restart")
-    L:gap(1)
-    L:btn("✕ 关闭", "MusicBtnDanger", "close")
+    L:gap(1):add("MUSIC", "MusicHeader"):gap(2):add(title, "MusicTitle")
     push(L)
   end
-  push(new_line())
-  push(new_line():gap(2):add("提示: 点击按钮 · 拖动进度条跳转 · Space 播放/暂停", "MusicHint"))
+  do
+    local L = new_line()
+    L:gap(1)
+      :add(slabel, shl)
+      :gap(2)
+      :add(fmt_time(pos), "MusicTime")
+      :add("/", "MusicMeta")
+      :add(fmt_time(dur), "MusicTime")
+      :gap(2)
+      :add(string.format("音量%d%%", pst.volume or config.volume), "MusicMeta")
+      :gap(2)
+      :add(string.format("%d/%d", st.index, #st.siblings), "MusicMeta")
+    push(L)
+  end
+  push_progress()
+  push_current_lyrics()
+  push_primary_btns()
 
   st.hits = all_hits
   st.segs = segs_by_row
   return lines, segs_by_row, all_hits
+end
+
+---Pad line to display width with spaces (for full-line bg via highlight, no winhl).
+local function pad_display(line, cols)
+  cols = math.max(1, cols or 1)
+  local w = vim.fn.strwidth(line)
+  if w < cols then
+    return line .. string.rep(" ", cols - w)
+  end
+  return line
+end
+
+local function segs_equal(a, b)
+  if a == b then
+    return true
+  end
+  if type(a) ~= "table" or type(b) ~= "table" or #a ~= #b then
+    return false
+  end
+  for i = 1, #a do
+    local x, y = a[i], b[i]
+    if not x or not y or x.hl ~= y.hl or x.b0 ~= y.b0 or x.b1 ~= y.b1 then
+      return false
+    end
+  end
+  return true
+end
+
+local function apply_row_highlights(buf, row0, segs)
+  pcall(vim.api.nvim_buf_clear_namespace, buf, ns, row0, row0 + 1)
+  pcall(vim.api.nvim_buf_add_highlight, buf, ns, "MusicNormal", row0, 0, -1)
+  if not segs then
+    return
+  end
+  for _, seg in ipairs(segs) do
+    if seg.hl and seg.b1 > seg.b0 then
+      pcall(vim.api.nvim_buf_add_highlight, buf, ns, seg.hl, row0, seg.b0, seg.b1)
+    end
+  end
+end
+
+local function lock_music_view(buf)
+  for _, win in ipairs(vim.api.nvim_list_wins()) do
+    if vim.api.nvim_win_get_buf(win) == buf then
+      pcall(vim.api.nvim_set_option_value, "winhl", "", { win = win })
+      pcall(function()
+        vim.api.nvim_win_call(win, function()
+          vim.fn.winrestview({
+            lnum = 1,
+            col = 0,
+            topline = 1,
+            leftcol = 0,
+            curswant = 0,
+          })
+        end)
+      end)
+    end
+  end
+end
+
+---Statusline helpers (M.statusline assigned after any_music_displayed exists).
+local refresh_statusline_var
+local ensure_statusline_hook
+
+---Redraw UI only (no IPC). Dirty: only rewrite changed rows / re-hl.
+---Background via buffer namespace highlights only — never winhl.
+---@param buf integer
+---@param opts? { force?: boolean }
+local function paint(buf, opts)
+  local st = state_by_buf[buf]
+  if not st or not vim.api.nvim_buf_is_valid(buf) then
+    return
+  end
+  opts = opts or {}
+  local force = opts.force == true
+
+  local cols = win_width(buf)
+  local lines, segs_by_row = build_ui(buf, st)
+  for i, ln in ipairs(lines) do
+    lines[i] = pad_display(ln, cols)
+  end
+
+  local old_lines = st.paint_lines
+  local old_segs = st.paint_segs
+  local n = #lines
+  local full = force
+    or not old_lines
+    or not old_segs
+    or #old_lines ~= n
+    or st.paint_cols ~= cols
+
+  local bo = vim.bo[buf]
+  bo.readonly = false
+  bo.modifiable = true
+
+  if full then
+    vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
+    bo.modifiable = false
+    bo.modified = false
+    vim.api.nvim_buf_clear_namespace(buf, ns, 0, -1)
+    for row0 = 0, n - 1 do
+      apply_row_highlights(buf, row0, segs_by_row[row0])
+    end
+    fit_music_height(buf, n)
+    lock_music_view(buf)
+  else
+    for i = 1, n do
+      local row0 = i - 1
+      local text_changed = old_lines[i] ~= lines[i]
+      local hl_changed = not segs_equal(old_segs[row0], segs_by_row[row0])
+      if text_changed then
+        vim.api.nvim_buf_set_lines(buf, row0, row0 + 1, false, { lines[i] })
+        apply_row_highlights(buf, row0, segs_by_row[row0])
+      elseif hl_changed then
+        apply_row_highlights(buf, row0, segs_by_row[row0])
+      end
+    end
+    bo.modifiable = false
+    bo.modified = false
+  end
+
+  st.paint_lines = lines
+  st.paint_cols = cols
+  st.paint_segs = segs_by_row
 end
 
 local function render(buf)
@@ -505,29 +957,7 @@ local function render(buf)
     return
   end
   player.poll()
-  local lines, segs_by_row = build_ui(buf, st)
-  local bo = vim.bo[buf]
-  bo.readonly = false
-  bo.modifiable = true
-  vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
-  bo.modifiable = false
-  bo.modified = false
-
-  vim.api.nvim_buf_clear_namespace(buf, ns, 0, -1)
-  for row0, segs in pairs(segs_by_row) do
-    for _, seg in ipairs(segs) do
-      if seg.hl and seg.b1 > seg.b0 then
-        pcall(vim.api.nvim_buf_add_highlight, buf, ns, seg.hl, row0, seg.b0, seg.b1)
-      end
-    end
-  end
-
-  -- window colors
-  for _, win in ipairs(vim.api.nvim_list_wins()) do
-    if vim.api.nvim_win_get_buf(win) == buf then
-      vim.wo[win].winhl = "Normal:MusicNormal,EndOfBuffer:MusicNormal,SignColumn:MusicNormal"
-    end
-  end
+  paint(buf, { force = true })
 end
 
 local function stop_poll()
@@ -540,30 +970,13 @@ local function stop_poll()
   end
 end
 
-local function start_poll()
-  stop_poll()
-  if config.poll_ms <= 0 then
-    return
-  end
-  poll_timer = vim.uv.new_timer()
-  if not poll_timer then
-    return
-  end
-  poll_timer:start(
-    config.poll_ms,
-    config.poll_ms,
-    vim.schedule_wrap(function()
-      if not active_buf or not vim.api.nvim_buf_is_valid(active_buf) then
-        stop_poll()
-        return
-      end
-      render(active_buf)
-    end)
-  )
-end
+---Need background timer when UI visible or statusline-when-hidden is on.
+---(is_buf_displayed / any_music_displayed defined later; start_poll assigned after them.)
+local should_poll
+local start_poll
 
 local function hit_at(st, row, col)
-  -- row 1-based, col 1-based display
+  -- row 1-based, col 1-based **display** column (strwidth-based)
   if not st.hits then
     return nil
   end
@@ -573,6 +986,31 @@ local function hit_at(st, row, col)
     end
   end
   return nil
+end
+
+---Mouse → (line, display_col). Correct for sign/number gutter (same as drawbuf).
+---@param buf integer
+---@return integer|nil row 1-based
+---@return integer|nil vcol 1-based display col in buffer text
+local function mouse_display_pos(buf)
+  local mouse = vim.fn.getmousepos()
+  local win = vim.fn.bufwinid(buf)
+  if win == -1 or mouse.winid == 0 or mouse.winid ~= win then
+    return nil, nil
+  end
+  local info = vim.fn.getwininfo(win)[1] or {}
+  local textoff = info.textoff or 0
+  local leftcol = info.leftcol or 0
+  local wpos = vim.api.nvim_win_get_position(win)
+  -- screencol is 1-based screen cell; subtract win left + gutter
+  local vcol = mouse.screencol - wpos[2] - textoff + leftcol
+  if vcol < 1 then
+    vcol = mouse.wincol - textoff + leftcol
+  end
+  if vcol < 1 then
+    vcol = mouse.column
+  end
+  return mouse.line, vcol
 end
 
 local function do_toggle(buf, st)
@@ -653,8 +1091,104 @@ local function run_action(buf, st, action, hit, col)
     render(buf)
   elseif action == "close" then
     M.close(buf)
+  elseif action == "lyrics" then
+    M.toggle_lyrics()
+  elseif action == "playlist" then
+    M.toggle_playlist()
   elseif action == "seek" then
     seek_from_hit(buf, st, hit, col)
+  end
+end
+
+---Music player window for current buffer (if any).
+local function music_win_of(buf)
+  buf = buf or active_buf
+  if not buf then
+    return nil
+  end
+  for _, win in ipairs(vim.api.nvim_list_wins()) do
+    if vim.api.nvim_win_get_buf(win) == buf then
+      return win
+    end
+  end
+  return nil
+end
+
+function M.toggle_lyrics()
+  M.ensure_setup()
+  local prev = vim.api.nvim_get_current_win()
+  if is_music_ui_win(prev) or is_sidebar_win(prev) then
+    prev = nil
+  end
+  local buf = active_buf
+  local st = buf and state_by_buf[buf]
+  local path = st and st.path or (player.get_state().path)
+  local mwin = music_win_of(buf)
+  lyrics.toggle(mwin, path)
+  -- after opening lyrics above, re-fit music height if needed
+  if buf and vim.api.nvim_buf_is_valid(buf) then
+    paint(buf, { force = true })
+  end
+  -- 少抢焦：歌词窗打开后回到代码窗
+  focus_editor_win(prev)
+end
+
+---Sync playlist panel with current player state (files / playing / cursor).
+local function sync_playlist(st)
+  if not st then
+    return
+  end
+  playlist.set_files(st.siblings or {}, st.path, st.index)
+end
+
+---Tab: cycle focus player ↔ list (only when list is open).
+local function focus_tab_cycle()
+  local mwin = music_win_of(active_buf)
+  local lwin = playlist.get_win()
+  if not lwin or not mwin then
+    return
+  end
+  local cur = vim.api.nvim_get_current_win()
+  if cur == lwin then
+    pcall(vim.api.nvim_set_current_win, mwin)
+  else
+    pcall(vim.api.nvim_set_current_win, lwin)
+  end
+end
+
+---Show / hide sibling file list. Opening focuses the list for navigation.
+function M.toggle_playlist()
+  M.ensure_setup()
+  local buf = active_buf
+  local st = buf and state_by_buf[buf]
+  if not st then
+    vim.notify("music: 没有播放中的曲目", vim.log.levels.INFO)
+    return
+  end
+  local mwin = music_win_of(buf)
+  if playlist.is_open() then
+    playlist.close_panel() -- on_close → refit player height
+    if mwin and vim.api.nvim_win_is_valid(mwin) then
+      pcall(vim.api.nvim_set_current_win, mwin)
+    end
+    return
+  end
+  playlist.set_on_play(function(path)
+    local b = active_buf
+    if b and vim.api.nvim_buf_is_valid(b) then
+      play_path_in_buf(b, path, { auto_play = true })
+    end
+  end)
+  playlist.set_on_close(refit_player_after_list)
+  playlist.toggle(mwin, st.siblings, st.path, st.index)
+  playlist.set_tab_handler(focus_tab_cycle)
+  -- 打开列表后焦点在列表，便于立刻 ↑↓ 选择
+  local lwin = playlist.get_win()
+  if lwin then
+    pcall(vim.api.nvim_set_current_win, lwin)
+  end
+  if buf and vim.api.nvim_buf_is_valid(buf) then
+    paint(buf, { force = true })
   end
 end
 
@@ -663,12 +1197,14 @@ local function mouse_handle(buf, mode)
   if not st then
     return
   end
-  local pos = vim.fn.getmousepos()
-  if pos.winid == 0 or vim.api.nvim_win_get_buf(pos.winid) ~= buf then
+  local row, col = mouse_display_pos(buf)
+  if not row or not col then
+    if mode == "release" then
+      st.dragging = false
+      st.drag_action = nil
+    end
     return
   end
-  local row = pos.line
-  local col = pos.column -- 1-based
   local hit = hit_at(st, row, col)
   if not hit then
     if mode == "release" then
@@ -689,9 +1225,8 @@ local function mouse_handle(buf, mode)
       run_action(buf, st, hit.action, hit, col)
     end
   elseif mode == "drag" then
-    if st.dragging and (st.drag_action == "seek" or hit.action == "seek") then
-      local h = hit.action == "seek" and hit or hit_at(st, row, col)
-      -- prefer any seek hit on this row
+    if st.dragging and st.drag_action == "seek" then
+      local h = hit
       if not h or h.action ~= "seek" then
         for _, x in ipairs(st.hits or {}) do
           if x.row == row and x.action == "seek" then
@@ -732,7 +1267,6 @@ play_path_in_buf = function(buf, path, opts)
       segs = {},
       dragging = false,
       drag_action = nil,
-      phase = 0,
     }
     state_by_buf[buf] = st
   else
@@ -741,6 +1275,11 @@ play_path_in_buf = function(buf, path, opts)
     st.index = index
   end
 
+  -- track/layout change → next paint is full
+  st.paint_lines = nil
+  st.paint_segs = nil
+  st.paint_cols = nil
+
   pcall(vim.api.nvim_buf_set_name, buf, path)
   vim.b[buf].music_player = true
   active_buf = buf
@@ -748,16 +1287,24 @@ play_path_in_buf = function(buf, path, opts)
   render(buf)
   start_poll()
 
+  local start_pos = tonumber(opts.start_pos) or 0
   if opts.auto_play ~= false and config.auto_play then
-    local ok, err = player.play(path, 0)
+    local ok, err = player.play(path, start_pos)
     if not ok then
       vim.notify("music: " .. tostring(err), vim.log.levels.ERROR)
     end
+  elseif start_pos > 0 and opts.seek_only then
+    player.play(path, start_pos)
+    player.pause()
   end
+  -- reload lyrics for new track (keep panel if open)
+  lyrics.on_track(path, start_pos)
+  sync_playlist(st)
   render(buf)
+  save_session()
 end
 
----True if buffer is shown in any window.
+---True if buffer is shown in any window (current tab).
 local function is_buf_displayed(buf)
   if not buf or not vim.api.nvim_buf_is_valid(buf) then
     return false
@@ -770,7 +1317,7 @@ local function is_buf_displayed(buf)
   return false
 end
 
----Any music player buffer currently visible?
+---Any music player buffer currently visible in current tab?
 local function any_music_displayed()
   for buf, _ in pairs(state_by_buf) do
     if is_buf_displayed(buf) then
@@ -785,16 +1332,132 @@ local function any_music_displayed()
   return false
 end
 
----When player buffer is not shown in any window, stop audio.
-local function silence_if_hidden()
+---Statusline text when UI is hidden: `[歌名,1:22/3:33]` or empty.
+---@return string
+function M.statusline()
+  if not config.statusline_when_hidden then
+    return ""
+  end
+  if any_music_displayed() then
+    return ""
+  end
+  local pst = player.get_state()
+  local path = pst.path
+  if (not path or path == "") and active_buf and state_by_buf[active_buf] then
+    path = state_by_buf[active_buf].path
+  end
+  if not path or path == "" then
+    return ""
+  end
+  local name = vim.fn.fnamemodify(path, ":t:r")
+  if name == "" then
+    name = vim.fn.fnamemodify(path, ":t")
+  end
+  return string.format("[%s,%s/%s]", name, fmt_time(pst.position or 0), fmt_time(pst.duration))
+end
+
+refresh_statusline_var = function()
+  if not config.statusline_when_hidden then
+    if vim.g.music_statusline and vim.g.music_statusline ~= "" then
+      vim.g.music_statusline = ""
+      pcall(vim.cmd, "redrawstatus")
+    end
+    return
+  end
+  local text = M.statusline()
+  if vim.g.music_statusline ~= text then
+    vim.g.music_statusline = text
+    pcall(vim.cmd, "redrawstatus")
+  end
+end
+
+ensure_statusline_hook = function()
+  if not config.statusline_when_hidden then
+    return
+  end
+  if vim.g.music_statusline_hooked then
+    return
+  end
+  vim.g.music_statusline_hooked = true
+  vim.g.music_statusline = vim.g.music_statusline or ""
+  local stl = vim.o.statusline
+  if stl == "" then
+    -- replace built-in default with equivalent + music segment
+    vim.o.statusline = "%<%f %h%m%r%=%{g:music_statusline} %-14.(%l,%c%V%) %P"
+  elseif not stl:find("music_statusline", 1, true) then
+    vim.o.statusline = stl .. "%{g:music_statusline}"
+  end
+end
+
+should_poll = function()
+  if config.poll_ms <= 0 then
+    return false
+  end
+  if active_buf and vim.api.nvim_buf_is_valid(active_buf) and is_buf_displayed(active_buf) then
+    return true
+  end
+  if config.statusline_when_hidden then
+    local pst = player.get_state()
+    if pst.path and (pst.status == "playing" or pst.status == "paused" or pst.status == "stopped") then
+      return true
+    end
+    if active_buf and vim.api.nvim_buf_is_valid(active_buf) and state_by_buf[active_buf] then
+      return true
+    end
+  end
+  return false
+end
+
+start_poll = function()
+  stop_poll()
+  if not should_poll() then
+    return
+  end
+  poll_timer = vim.uv.new_timer()
+  if not poll_timer then
+    return
+  end
+  poll_timer:start(
+    config.poll_ms,
+    config.poll_ms,
+    vim.schedule_wrap(function()
+      if not should_poll() then
+        stop_poll()
+        refresh_statusline_var()
+        return
+      end
+      player.poll()
+      local ui_visible = active_buf
+        and vim.api.nvim_buf_is_valid(active_buf)
+        and is_buf_displayed(active_buf)
+      if ui_visible then
+        paint(active_buf) -- dirty refresh
+        local pst = player.get_state()
+        if pst.path then
+          lyrics.on_track(pst.path, pst.position or 0)
+        else
+          lyrics.follow(pst.position or 0)
+        end
+      end
+      refresh_statusline_var()
+    end)
+  )
+end
+
+---UI hidden: keep playing in background (do NOT stop audio).
+local function on_ui_hidden()
   if any_music_displayed() then
     return
   end
-  local st = player.get_state()
-  if player.is_active() or (st.job_id and st.job_id > 0) then
-    player.stop()
+  save_session()
+  if config.statusline_when_hidden then
+    -- keep timer for statusline position updates
+    start_poll()
+    refresh_statusline_var()
+  else
+    stop_poll()
+    refresh_statusline_var()
   end
-  stop_poll()
 end
 
 local function on_ended()
@@ -821,9 +1484,71 @@ local function on_ended()
   else
     render(buf)
   end
+  save_session()
+end
+
+local function map_no_scroll(buf)
+  local nop_keys = {
+    "j",
+    "k",
+    "h",
+    "l",
+    -- Up/Down rebound for volume after nops
+    "<C-d>",
+    "<C-u>",
+    "<C-f>",
+    "<C-b>",
+    "<C-e>",
+    "<C-y>",
+    "<PageUp>",
+    "<PageDown>",
+    "gg",
+    "G",
+    "0",
+    "$",
+    "w",
+    "b",
+    "e",
+    "zt",
+    "zz",
+    "zb",
+    "H",
+    "M",
+    "L",
+    "+",
+    "-",
+    "<CR>",
+  }
+  for _, lhs in ipairs(nop_keys) do
+    pcall(vim.keymap.set, "n", lhs, "<Nop>", {
+      buffer = buf,
+      silent = true,
+      nowait = true,
+      desc = "music: no scroll",
+    })
+  end
+  pcall(vim.keymap.set, "n", "<ScrollWheelLeft>", "<Nop>", { buffer = buf, silent = true, nowait = true })
+  pcall(vim.keymap.set, "n", "<ScrollWheelRight>", "<Nop>", { buffer = buf, silent = true, nowait = true })
+  pcall(vim.keymap.set, "n", "i", "<Nop>", { buffer = buf, silent = true })
+  pcall(vim.keymap.set, "n", "a", "<Nop>", { buffer = buf, silent = true })
+  pcall(vim.keymap.set, "n", "I", "<Nop>", { buffer = buf, silent = true })
+  pcall(vim.keymap.set, "n", "A", "<Nop>", { buffer = buf, silent = true })
+  pcall(vim.keymap.set, "n", "o", "<Nop>", { buffer = buf, silent = true })
+  pcall(vim.keymap.set, "n", "O", "<Nop>", { buffer = buf, silent = true })
+  -- 禁止 Visual 模式（v / V / 块选 / 重选）
+  for _, lhs in ipairs({ "v", "V", "<C-v>", "gv", "<C-q>" }) do
+    pcall(vim.keymap.set, "n", lhs, "<Nop>", {
+      buffer = buf,
+      silent = true,
+      nowait = true,
+      desc = "music: no visual",
+    })
+  end
 end
 
 local function bind(buf)
+  map_no_scroll(buf)
+
   local map = function(lhs, rhs, desc)
     vim.keymap.set("n", lhs, rhs, { buffer = buf, silent = true, nowait = true, desc = desc })
   end
@@ -849,71 +1574,181 @@ local function bind(buf)
   map("p", with_st(function(st)
     do_toggle(buf, st)
   end), "music: toggle")
-  map("n", function()
-    goto_sibling(buf, 1)
-  end, "music: next")
-  map("N", function()
+  map("<PageUp>", function()
     goto_sibling(buf, -1)
   end, "music: prev")
-  map(">", function()
+  map("<PageDown>", function()
     goto_sibling(buf, 1)
   end, "music: next")
-  map("<", function()
-    goto_sibling(buf, -1)
-  end, "music: prev")
+  map("x", function()
+    player.stop()
+    paint(buf)
+  end, "music: stop")
+  -- rebind after Nop
   map("l", function()
     player.seek(5)
-    render(buf)
+    paint(buf)
   end, "music: +5s")
   map("h", function()
     player.seek(-5)
-    render(buf)
+    paint(buf)
   end, "music: -5s")
   map("<Right>", function()
     player.seek(5)
-    render(buf)
+    paint(buf)
   end, "music: +5s")
   map("<Left>", function()
     player.seek(-5)
-    render(buf)
+    paint(buf)
   end, "music: -5s")
   map("+", function()
     player.volume_up(5)
-    render(buf)
+    paint(buf)
   end, "music: vol+")
   map("=", function()
     player.volume_up(5)
-    render(buf)
+    paint(buf)
   end, "music: vol+")
   map("-", function()
     player.volume_down(5)
-    render(buf)
+    paint(buf)
+  end, "music: vol-")
+  -- Up/Down arrows → volume
+  map("<Up>", function()
+    player.volume_up(5)
+    paint(buf)
+  end, "music: vol+")
+  map("<Down>", function()
+    player.volume_down(5)
+    paint(buf)
   end, "music: vol-")
   map("r", with_st(function(st)
     player.play(st.path, 0)
-    render(buf)
+    paint(buf)
   end), "music: restart")
   map("L", function()
     local on = player.set_loop()
     vim.notify("music: 单曲循环 " .. (on and "开" or "关"), vim.log.levels.INFO)
-    render(buf)
+    paint(buf)
   end, "music: loop")
+  map("g", function()
+    M.toggle_lyrics()
+  end, "music: toggle lyrics")
+  map("f", function()
+    M.toggle_playlist()
+  end, "music: toggle playlist")
+  map("<Tab>", function()
+    if playlist.is_open() then
+      focus_tab_cycle()
+    end
+  end, "music: focus list/player")
+
+  -- mouse wheel → volume
+  local function wheel_vol(delta)
+    return function()
+      if delta > 0 then
+        player.volume_up(5)
+      else
+        player.volume_down(5)
+      end
+      paint(buf)
+    end
+  end
+  ---Only handle mouse when click/scroll is ON this music window.
+  ---Otherwise focus/click other windows would be swallowed (buffer-local <LeftMouse>).
+  local function mouse_on_self()
+    local m = vim.fn.getmousepos()
+    local mywin = vim.fn.bufwinid(buf)
+    return mywin ~= -1 and m.winid ~= 0 and m.winid == mywin
+  end
+
+  local function focus_clicked_win()
+    local m = vim.fn.getmousepos()
+    if m.winid ~= 0 and vim.api.nvim_win_is_valid(m.winid) then
+      pcall(vim.api.nvim_set_current_win, m.winid)
+      local col = math.max(0, (m.column or 1) - 1)
+      local line = math.max(1, m.line or 1)
+      pcall(vim.api.nvim_win_set_cursor, m.winid, { line, col })
+    end
+  end
+
+  map("<ScrollWheelUp>", function()
+    if not mouse_on_self() then
+      focus_clicked_win()
+      return
+    end
+    wheel_vol(1)()
+  end, "music: vol+")
+  map("<ScrollWheelDown>", function()
+    if not mouse_on_self() then
+      focus_clicked_win()
+      return
+    end
+    wheel_vol(-1)()
+  end, "music: vol-")
+  map("<S-ScrollWheelUp>", function()
+    if mouse_on_self() then
+      wheel_vol(1)()
+    else
+      focus_clicked_win()
+    end
+  end, "music: vol+")
+  map("<S-ScrollWheelDown>", function()
+    if mouse_on_self() then
+      wheel_vol(-1)()
+    else
+      focus_clicked_win()
+    end
+  end, "music: vol-")
 
   map("<LeftMouse>", function()
+    if not mouse_on_self() then
+      -- click another window (e.g. NERDTree / code): switch focus, don't eat event
+      focus_clicked_win()
+      return
+    end
     mouse_handle(buf, "down")
   end, "music: click")
   map("<LeftDrag>", function()
+    if not mouse_on_self() then
+      return
+    end
     mouse_handle(buf, "drag")
   end, "music: drag")
   map("<LeftRelease>", function()
+    if not mouse_on_self() then
+      return
+    end
     mouse_handle(buf, "release")
   end, "music: release")
+
+  -- 右键禁止选中文字（默认 mouse 会进入 Visual）
+  local function map_right_nop(lhs)
+    vim.keymap.set({ "n", "v", "x", "s", "i" }, lhs, function()
+      if not mouse_on_self() then
+        focus_clicked_win()
+        return
+      end
+      -- 吞掉右键；若已在 Visual 则退出
+      local mode = vim.fn.mode()
+      if mode == "v" or mode == "V" or mode == "\22" then
+        local esc = vim.api.nvim_replace_termcodes("<Esc>", true, false, true)
+        vim.api.nvim_feedkeys(esc, "n", false)
+      end
+    end, { buffer = buf, silent = true, nowait = true, desc = "music: no right-select" })
+  end
+  map_right_nop("<RightMouse>")
+  map_right_nop("<RightDrag>")
+  map_right_nop("<RightRelease>")
+  map_right_nop("<2-RightMouse>")
 end
 
 local function apply_buf_opts(buf)
   local bo = vim.bo[buf]
   bo.buftype = "nofile"
-  bo.bufhidden = "wipe"
+  -- hide (not wipe): Alt+M can hide UI while buffer + audio keep running
+  bo.bufhidden = "hide"
+  bo.buflisted = false
   bo.swapfile = false
   bo.modifiable = false
   bo.readonly = false
@@ -927,11 +1762,18 @@ local function apply_buf_opts(buf)
       wo.number = false
       wo.relativenumber = false
       wo.signcolumn = "no"
+      wo.foldcolumn = "0"
       wo.cursorline = false
+      wo.cursorcolumn = false
       wo.wrap = false
       wo.list = false
       wo.foldenable = false
-      wo.winhl = "Normal:MusicNormal,EndOfBuffer:MusicNormal,SignColumn:MusicNormal"
+      wo.scrolloff = 0
+      wo.sidescrolloff = 0
+      wo.scrollbind = false
+      wo.statuscolumn = ""
+      -- never set winhl (leaks dark bg to other buffers in same window)
+      pcall(vim.api.nvim_set_option_value, "winhl", "", { win = win })
       if vim.o.mouse == "" then
         vim.o.mouse = "a"
       end
@@ -939,8 +1781,100 @@ local function apply_buf_opts(buf)
   end
 end
 
+---Attach once-per-buffer autocmds for player lifecycle.
+local function attach_player_autocmds(buf)
+  if vim.b[buf].music_autocmds then
+    return
+  end
+  vim.b[buf].music_autocmds = true
+
+  -- 焦点在播放器时隐藏光标，离开后恢复
+  vim.api.nvim_create_autocmd({ "BufEnter", "WinEnter" }, {
+    buffer = buf,
+    callback = function()
+      hide_player_cursor()
+    end,
+  })
+  vim.api.nvim_create_autocmd({ "BufLeave", "WinLeave" }, {
+    buffer = buf,
+    callback = function()
+      restore_player_cursor()
+    end,
+  })
+  -- 若仍进入 Visual（鼠标等），立即退回 Normal
+  vim.api.nvim_create_autocmd("ModeChanged", {
+    buffer = buf,
+    callback = function()
+      local mode = vim.fn.mode()
+      if mode == "v" or mode == "V" or mode == "\22" or mode == "s" or mode == "S" then
+        vim.schedule(function()
+          if vim.api.nvim_get_current_buf() ~= buf then
+            return
+          end
+          local m = vim.fn.mode()
+          if m == "v" or m == "V" or m == "\22" or m == "s" or m == "S" then
+            local esc = vim.api.nvim_replace_termcodes("<Esc>", true, false, true)
+            vim.api.nvim_feedkeys(esc, "n", false)
+          end
+        end)
+      end
+    end,
+  })
+
+  vim.api.nvim_create_autocmd("BufWipeout", {
+    buffer = buf,
+    once = true,
+    callback = function()
+      restore_player_cursor()
+      for _, win in ipairs(vim.api.nvim_list_wins()) do
+        if vim.api.nvim_win_get_buf(win) == buf then
+          pcall(vim.api.nvim_set_option_value, "winhl", "", { win = win })
+        end
+      end
+      save_session()
+      state_by_buf[buf] = nil
+      if active_buf == buf then
+        active_buf = nil
+        stop_poll()
+        player.stop()
+      end
+    end,
+  })
+
+  vim.api.nvim_create_autocmd({ "BufWinLeave", "BufHidden" }, {
+    buffer = buf,
+    callback = function()
+      for _, win in ipairs(vim.api.nvim_list_wins()) do
+        local b = vim.api.nvim_win_get_buf(win)
+        if not (vim.api.nvim_buf_is_valid(b) and vim.b[b].music_player) then
+          local wh = ""
+          pcall(function()
+            wh = vim.api.nvim_get_option_value("winhl", { win = win }) or ""
+          end)
+          if wh:find("MusicNormal", 1, true) then
+            pcall(vim.api.nvim_set_option_value, "winhl", "", { win = win })
+          end
+        end
+      end
+      -- hide UI only — keep audio
+      vim.schedule(on_ui_hidden)
+    end,
+  })
+
+  vim.api.nvim_create_autocmd({ "VimResized", "ColorScheme" }, {
+    buffer = buf,
+    callback = function()
+      hl_ready = false
+      ensure_hl()
+      if vim.api.nvim_buf_is_valid(buf) then
+        render(buf)
+      end
+    end,
+  })
+end
+
 ---@param path string
----@param opts? { win?: integer, replace_buf?: integer, auto_play?: boolean }
+---@param opts? { win?: integer, replace_buf?: integer, auto_play?: boolean, close_win?: integer, bottom_split?: boolean, start_pos?: number }
 ---@return integer|nil buf
 function M.open(path, opts)
   M.ensure_setup()
@@ -955,64 +1889,100 @@ function M.open(path, opts)
     vim.notify("music: 不是支持的音频: " .. path, vim.log.levels.WARN)
   end
 
-  local win = opts.win
-  if not win or not vim.api.nvim_win_is_valid(win) then
-    win = vim.api.nvim_get_current_win()
+  local existing_win, existing_buf = find_music_win()
+  local close_win = opts.close_win
+  local cur_tab = vim.api.nvim_get_current_tabpage()
+  local bottom = opts.bottom_split == true
+
+  -- Singleton buffer: reuse if exists
+  if existing_buf and vim.api.nvim_buf_is_valid(existing_buf) and vim.b[existing_buf].music_player then
+    local win
+    if bottom then
+      ensure_singleton_window(nil, existing_buf)
+      win = open_bottom_split(existing_buf, estimate_ui_lines())
+      ensure_singleton_window(win, existing_buf)
+    else
+      -- Prefer covering existing player / content pane (NERDTree `o`)
+      win = find_content_win(opts.win or existing_win)
+      if not is_usable_content_win(existing_win) or vim.api.nvim_win_get_tabpage(existing_win) ~= cur_tab then
+        win = find_content_win(opts.win)
+      elseif is_usable_content_win(existing_win) then
+        win = existing_win
+      end
+      ensure_singleton_window(win, existing_buf)
+      vim.api.nvim_win_set_buf(win, existing_buf)
+    end
+    apply_buf_opts(existing_buf)
+    local ph = opts.replace_buf
+    if ph and ph ~= existing_buf and vim.api.nvim_buf_is_valid(ph) then
+      local ph_win = vim.fn.bufwinid(ph)
+      if ph_win ~= -1 and ph_win ~= win then
+        close_win = close_win or ph_win
+      end
+      pcall(vim.api.nvim_buf_delete, ph, { force = true })
+    end
+    if close_win then
+      close_orphan_split(close_win, win)
+    end
+    play_path_in_buf(existing_buf, path, {
+      auto_play = opts.auto_play,
+      start_pos = opts.start_pos,
+    })
+    -- 底栏分屏不抢焦；整窗打开时聚焦播放器
+    if not bottom then
+      pcall(vim.api.nvim_set_current_win, win)
+    end
+    return existing_buf
   end
 
   local buf = opts.replace_buf
-  if not buf or not vim.api.nvim_buf_is_valid(buf) then
+  if not buf or not vim.api.nvim_buf_is_valid(buf) or vim.b[buf].music_player then
     buf = vim.api.nvim_create_buf(true, true)
   end
 
-  vim.api.nvim_win_set_buf(win, buf)
+  local win
+  if bottom then
+    ensure_singleton_window(nil, buf)
+    win = open_bottom_split(buf, estimate_ui_lines())
+    ensure_singleton_window(win, buf)
+  else
+    win = find_content_win(opts.win or existing_win)
+    ensure_singleton_window(win, buf)
+    vim.api.nvim_win_set_buf(win, buf)
+  end
+
   ensure_hl()
   apply_buf_opts(buf)
   bind(buf)
+  attach_player_autocmds(buf)
 
-  vim.api.nvim_create_autocmd("BufWipeout", {
-    buffer = buf,
-    once = true,
-    callback = function()
-      state_by_buf[buf] = nil
-      if active_buf == buf then
-        active_buf = nil
-        stop_poll()
-        player.stop()
-      end
-      -- no music buffer left visible → ensure silence
-      vim.schedule(silence_if_hidden)
-    end,
+  if close_win then
+    close_orphan_split(close_win, win)
+  end
+
+  play_path_in_buf(buf, path, {
+    auto_play = opts.auto_play,
+    start_pos = opts.start_pos,
   })
-
-  -- leave window / hide buffer → stop sound while not displayed
-  vim.api.nvim_create_autocmd({ "BufWinLeave", "BufHidden" }, {
-    buffer = buf,
-    callback = function()
-      vim.schedule(silence_if_hidden)
-    end,
-  })
-
-  vim.api.nvim_create_autocmd({ "VimResized", "ColorScheme" }, {
-    buffer = buf,
-    callback = function()
-      hl_ready = false
-      ensure_hl()
-      if vim.api.nvim_buf_is_valid(buf) then
-        render(buf)
-      end
-    end,
-  })
-
-  play_path_in_buf(buf, path, { auto_play = opts.auto_play })
+  if not bottom then
+    pcall(vim.api.nvim_set_current_win, win)
+  end
   return buf
 end
 
 function M.close(buf)
   buf = buf or active_buf
+  save_session()
+  lyrics.close_panel()
+  playlist.close_panel()
   if not buf or not vim.api.nvim_buf_is_valid(buf) then
     player.stop()
     return
+  end
+  for _, win in ipairs(vim.api.nvim_list_wins()) do
+    if vim.api.nvim_win_get_buf(win) == buf then
+      pcall(vim.api.nvim_set_option_value, "winhl", "", { win = win })
+    end
   end
   player.stop()
   state_by_buf[buf] = nil
@@ -1021,6 +1991,92 @@ function M.close(buf)
     stop_poll()
   end
   pcall(vim.api.nvim_buf_delete, buf, { force = true })
+end
+
+---Hide player windows; audio keeps playing in background.
+function M.hide_ui()
+  M.ensure_setup()
+  save_session()
+  lyrics.close_panel()
+  playlist.close_panel()
+  local buf = active_buf
+  if not buf or not vim.api.nvim_buf_is_valid(buf) then
+    return
+  end
+  -- close every window showing music (all tabs)
+  for _, tab in ipairs(vim.api.nvim_list_tabpages()) do
+    for _, win in ipairs(vim.api.nvim_tabpage_list_wins(tab)) do
+      if vim.api.nvim_win_get_buf(win) == buf then
+        local n = #vim.api.nvim_tabpage_list_wins(tab)
+        if n <= 1 then
+          local empty = vim.api.nvim_create_buf(true, true)
+          pcall(function()
+            vim.bo[empty].buftype = "nofile"
+            vim.bo[empty].bufhidden = "wipe"
+            vim.bo[empty].swapfile = false
+          end)
+          pcall(vim.api.nvim_win_set_buf, win, empty)
+        else
+          pcall(vim.api.nvim_win_close, win, true)
+        end
+      end
+    end
+  end
+  -- buffer kept (bufhidden=hide); player keeps running
+  if config.statusline_when_hidden then
+    start_poll()
+    refresh_statusline_var()
+  else
+    stop_poll()
+    refresh_statusline_var()
+  end
+end
+
+---Show player UI in a bottom split under current buffer; restore session if needed.
+function M.show_ui()
+  M.ensure_setup()
+  local buf = active_buf
+  if buf and vim.api.nvim_buf_is_valid(buf) and vim.b[buf].music_player then
+    -- close other tabs' music windows, then bottom-split here
+    ensure_singleton_window(nil, buf)
+    local win = open_bottom_split(buf, estimate_ui_lines())
+    apply_buf_opts(buf)
+    ensure_singleton_window(win, buf)
+    -- open_bottom_split 已回焦代码窗，不抢焦点
+    start_poll()
+    paint(buf, { force = true })
+    refresh_statusline_var()
+    return buf
+  end
+
+  -- no live buffer: restore from session into bottom split
+  local sess = load_session()
+  if sess and sess.path and vim.fn.filereadable(sess.path) == 1 then
+    if type(sess.volume) == "number" then
+      player.set_volume(sess.volume)
+    end
+    if sess.loop ~= nil then
+      player.set_loop(sess.loop)
+    end
+    return M.open(sess.path, {
+      auto_play = true,
+      start_pos = tonumber(sess.position) or 0,
+      bottom_split = true,
+    })
+  end
+
+  vim.notify("music: 没有可恢复的播放记录（先打开音频文件）", vim.log.levels.INFO)
+  return nil
+end
+
+---Alt+M: show / hide player UI (hide = background play).
+function M.toggle_ui()
+  M.ensure_setup()
+  if any_music_displayed() then
+    M.hide_ui()
+  else
+    M.show_ui()
+  end
 end
 
 function M.toggle()
@@ -1051,6 +2107,24 @@ function M.stop()
   end
 end
 
+---NERDTree `o` / :e audio → content pane (reuse existing player if any).
+local function resolve_auto_open_wins(placeholder_buf)
+  local hint = -1
+  if placeholder_buf and vim.api.nvim_buf_is_valid(placeholder_buf) then
+    hint = vim.fn.bufwinid(placeholder_buf)
+  end
+  local existing_win = find_music_win()
+  local target = find_content_win(existing_win)
+  local close_win = nil
+  if hint ~= -1 and hint ~= target and is_usable_content_win(hint) then
+    -- opened as extra split; put player on main pane and drop the split
+    close_win = hint
+  elseif is_usable_content_win(hint) and not existing_win then
+    target = hint
+  end
+  return target, close_win
+end
+
 local function setup_auto_open()
   local pat = {}
   for _, ext in ipairs(config.extensions) do
@@ -1075,7 +2149,13 @@ local function setup_auto_open()
         if not vim.api.nvim_buf_is_valid(ev.buf) then
           return
         end
-        M.open(path, { replace_buf = ev.buf, win = vim.api.nvim_get_current_win() })
+        local target, close_win = resolve_auto_open_wins(ev.buf)
+        M.open(path, {
+          replace_buf = ev.buf,
+          win = target,
+          close_win = close_win,
+          auto_play = true,
+        })
       end)
     end,
   })
@@ -1095,10 +2175,29 @@ local function setup_auto_open()
         if not vim.api.nvim_buf_is_valid(ev.buf) or vim.b[ev.buf].music_player then
           return
         end
-        M.open(path, { replace_buf = ev.buf, win = vim.api.nvim_get_current_win() })
+        local target, close_win = resolve_auto_open_wins(ev.buf)
+        M.open(path, {
+          replace_buf = ev.buf,
+          win = target,
+          close_win = close_win,
+          auto_play = true,
+        })
       end)
     end,
   })
+end
+
+---Scrub MusicNormal winhl left by older versions on any window.
+local function scrub_all_music_winhl()
+  for _, win in ipairs(vim.api.nvim_list_wins()) do
+    local wh = ""
+    pcall(function()
+      wh = vim.api.nvim_get_option_value("winhl", { win = win }) or ""
+    end)
+    if wh:find("MusicNormal", 1, true) then
+      pcall(vim.api.nvim_set_option_value, "winhl", "", { win = win })
+    end
+  end
 end
 
 ---@param user? MusicConfig
@@ -1111,11 +2210,15 @@ function M.setup(user)
     loop = config.loop,
     python = config.python,
   })
+  scrub_all_music_winhl()
+  ensure_statusline_hook()
+  playlist.set_on_close(refit_player_after_list)
   player.on_ended(on_ended)
   player.on_status(function()
-    if active_buf and vim.api.nvim_buf_is_valid(active_buf) then
-      render(active_buf)
+    if active_buf and vim.api.nvim_buf_is_valid(active_buf) and any_music_displayed() then
+      paint(active_buf) -- dirty
     end
+    refresh_statusline_var()
   end)
 
   vim.api.nvim_create_user_command("Music", function(opts)
@@ -1124,15 +2227,20 @@ function M.setup(user)
       path = vim.fn.expand("%:p")
     end
     if path == nil or path == "" then
-      vim.notify("music: 请指定音频文件", vim.log.levels.ERROR)
+      -- no path: toggle / restore session
+      M.toggle_ui()
       return
     end
     M.open(path)
   end, {
     nargs = "?",
     complete = "file",
-    desc = "在 buffer 中打开音频播放器",
+    desc = "打开音频播放器；无参则显示/隐藏 UI",
   })
+
+  vim.api.nvim_create_user_command("MusicToggleUI", function()
+    M.toggle_ui()
+  end, { desc = "显示/隐藏 music 播放器（后台继续播）" })
 
   if config.auto_open then
     setup_auto_open()
@@ -1140,19 +2248,30 @@ function M.setup(user)
     vim.api.nvim_create_augroup("MusicAutoOpen", { clear = true })
   end
 
-  -- window closed / tab closed → recheck visibility
   vim.api.nvim_create_autocmd({ "WinClosed", "TabClosed", "BufWinLeave" }, {
     group = vim.api.nvim_create_augroup("MusicVisibility", { clear = true }),
     callback = function()
-      vim.schedule(silence_if_hidden)
+      vim.schedule(on_ui_hidden)
     end,
   })
 
-  -- leave Neovim: quit python daemon
+  -- Global Alt+M (configurable)
+  local key = config.toggle_key or "<M-m>"
+  pcall(vim.keymap.del, "n", key)
+  vim.keymap.set({ "n", "i", "v", "t" }, key, function()
+    -- leave insert for clean UI switch
+    if vim.fn.mode():find("i") then
+      vim.cmd("stopinsert")
+    end
+    M.toggle_ui()
+  end, { desc = "music: show/hide player UI", silent = true })
+
+  -- leave Neovim: save session + quit python daemon
   local leave_aug = vim.api.nvim_create_augroup("MusicLeave", { clear = true })
   vim.api.nvim_create_autocmd({ "VimLeavePre", "VimLeave" }, {
     group = leave_aug,
     callback = function()
+      save_session()
       stop_poll()
       player.shutdown()
     end,

@@ -109,6 +109,12 @@ local function apply_payload(msg)
     state.loop = not not msg.loop
   end
 
+  if msg.event == "warn" and msg.error then
+    vim.schedule(function()
+      vim.notify("music: " .. tostring(msg.error), vim.log.levels.WARN)
+    end)
+  end
+
   if msg.event == "ended" then
     state.status = "stopped"
     fire_status()
