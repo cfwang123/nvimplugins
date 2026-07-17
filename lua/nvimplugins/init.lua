@@ -1,6 +1,6 @@
 ---nvimplugins 合集元模块（可选）
 ---整仓安装时由 plugin/nvimplugins.lua 自动挂载子插件；
----本模块仅提供列表查询，无需强制 require。
+---本模块提供列表查询与依赖检查入口。
 local M = {}
 
 ---合集内子插件名（与目录名一致）
@@ -14,6 +14,8 @@ M.plugins = {
   "pdfview",
   "xlsview",
   "tts",
+  "mixer",
+  "es",
 }
 
 ---返回当前已加载的子插件名列表（依据 vim.g.loaded_*）
@@ -25,6 +27,13 @@ function M.loaded()
     end
   end
   return out
+end
+
+---检查 pip 依赖并提示安装（见 nvimplugins.deps）
+---@param plugins? string|string[]
+---@param opts? table
+function M.check_deps(plugins, opts)
+  return require("nvimplugins.deps").ensure(plugins, opts)
 end
 
 return M

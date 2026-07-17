@@ -71,6 +71,8 @@ local function load_bundle()
     "pdfview",
     "xlsview",
     "tts",
+    "mixer",
+    "es",
   }
 
   local enable = vim.g.nvimplugins_enable
@@ -104,6 +106,24 @@ local function load_bundle()
   if vim.loader and type(vim.loader.reset) == "function" then
     pcall(vim.loader.reset)
   end
+
+  -- 启动后检测已启用子插件的 pip 依赖并提示安装
+  vim.defer_fn(function()
+    if vim.g.nvimplugins_skip_deps then
+      return
+    end
+    local ok, deps = pcall(require, "nvimplugins.deps")
+    if not ok or not deps then
+      return
+    end
+    local names = {}
+    for _, name in ipairs(enable) do
+      table.insert(names, name)
+    end
+    deps.ensure(names, { silent_ok = true })
+    vim.g.nvimplugins_deps_bundle_done = true
+  end, 400)
+
   return true
 end
 
@@ -113,3 +133,42 @@ if not load_bundle() then
     vim.log.levels.ERROR
   )
 end
+
+-- 手动重检 / 强制安装提示（含推荐包）
+pcall(function()
+  vim.api.nvim_create_user_command("NvimpluginsDeps", function(opts)
+    local deps = require("nvimplugins.deps")
+    deps.reset()
+    local arg = vim.trim(opts.args or "")
+    local o = {
+      force = true,
+      immediate = true,
+      silent_ok = false,
+      include_recommended = true,
+    }
+    if arg == "" then
+      deps.ensure_loaded(o)
+    else
+      local names = vim.split(arg, "%s+", { trimempty = true })
+      deps.ensure(names, o)
+    end
+  end, {
+    nargs = "*",
+    complete = function()
+      return {
+        "music",
+        "videobuf",
+        "pdfview",
+        "xlsview",
+        "tts",
+        "mdview",
+        "imgbuf",
+        "mixer",
+      }
+    end,
+    desc = "Check / prompt install nvimplugins Python deps (incl. recommended)",
+  })
+  vim.api.nvim_create_user_command("NvimpluginsDepsProbe", function()
+    require("nvimplugins.deps").debug_probe()
+  end, { desc = "Debug: probe Python imports used by nvimplugins" })
+end)

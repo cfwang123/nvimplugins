@@ -249,7 +249,8 @@ python -c "from PIL import Image; print('Pillow OK')"
 | 键 | 作用 |
 |----|------|
 | `q` | 关闭预览 / 单窗回源 |
-| `r` | 刷新 |
+| `r` | 刷新预览 |
+| （自动） | 源 md **被外部程序改写**且 buffer 无未保存修改时自动 reload 并重绘（`watch_external`） |
 | `<CR>` | TOC / 代码折叠 / details / 图片 / **md 链接→目标预览** |
 | `gi` | 图片 float 大图 |
 | `gh` | 当前页临时高清（滚动 / 焦点切换 / 改窗大小清除） |

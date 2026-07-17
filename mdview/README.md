@@ -242,7 +242,8 @@ With side open, switching to another **markdown** buffer in the same tab follows
 | Key | Action |
 |-----|--------|
 | `q` | Close preview / back to source |
-| `r` | Refresh |
+| `r` | Refresh preview |
+| (auto) | Reload source + re-render when the md file changes **on disk** and the buffer is not modified (`watch_external`) |
 | `<CR>` | TOC / code fold / details / image / **md link → target preview** |
 | `gi` | Image float |
 | `gh` | Temporary in-page HD (cleared on scroll / focus / resize) |

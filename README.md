@@ -2,7 +2,7 @@
 
 **English** | [中文](README.zh.md)
 
-> **About** — Small experimental Neovim plugins: **mdview** (Markdown preview), **music** / **videobuf** (audio/video), **imgbuf** (images), **nvimgames** (mini-games), **drawbuf** (block drawing), **pdfview** / **xlsview** (document previews), **tts** (Windows SAPI speech). Each plugin installs independently; no hard dependencies.
+> **About** — Small experimental Neovim plugins: **mdview** (Markdown preview), **pdfview** / **xlsview** (document previews), **tts** (Windows SAPI speech), **imgbuf** (images), **music** / **mixer** (audio & MIDI), **nvimgames** (mini-games), **drawbuf** (block drawing), **videobuf** (video), **es** (Everything file search). Each plugin installs independently; no hard dependencies.
 
 Focused on fun, practical, low-dependency terminal tooling. Most UIs support **Chinese / English** (default: follow system language; preference is remembered).
 
@@ -18,14 +18,16 @@ Focused on fun, practical, low-dependency terminal tooling. Most UIs support **C
 | Plugin | Overview | Docs |
 |--------|----------|------|
 | **[mdview](mdview/)** | Markdown preview: single-window (`:MdView`) or side-by-side (`:MdSideView`). Headings/lists/GFM tables/code, TOC, anchors, block-character images, optional terminal HD. **`L`** toggles UI language. | [EN](mdview/README.md) · [中文](mdview/README.zh.md) |
-| **[music](music/)** | Open audio → buffer player: play/pause, scrub bar, volume, folder prev/next + list, LRC lyrics, session restore. Python daemon; hide UI without focus steal. **`Y`** or button toggles language (`L` = loop). | [EN](music/README.md) · [中文](music/README.zh.md) |
-| **[videobuf](videobuf/)** | Terminal video preview (character frames + control bar); daemon-style backend similar to music. | [EN](videobuf/README.md) · [中文](videobuf/README.zh.md) |
-| **[imgbuf](imgbuf/)** | Image as character art (block/half/braille); fill/fit; auto-open, clipboard; optional pixel HD on WezTerm/Kitty/Ghostty. **`L`** toggles language. | [EN](imgbuf/README.md) · [中文](imgbuf/README.zh.md) |
-| **[nvimgames](nvimgames/)** | Minesweeper, Sokoban, **24-point**, Tetris. `:NvimGames` menu. In-game **`u`** (or button) toggles language. | [EN](nvimgames/README.md) · [中文](nvimgames/README.zh.md) |
-| **[drawbuf](drawbuf/)** | Unicode block canvas: pencil/eraser/line/rect/ellipse/fill, truecolor, clickable status bar, undo, `.draw` files, demos. Status **[EN/中]** or **`Y`** for language (`L` = line tool). | [EN](drawbuf/README.md) · [中文](drawbuf/README.zh.md) |
 | **[pdfview](pdfview/)** | PDF / Word preview: text styles, tables, chafa images; Enter/click float HD; `gh` temporary page HD. **`L`** toggles language. | [EN](pdfview/README.md) · [中文](pdfview/README.zh.md) |
 | **[xlsview](xlsview/)** | Excel (.xlsx/.xlsm) preview: cell color/bold/fill, multi-sheet, width-fit columns. **`L`** toggles language. | [EN](xlsview/README.md) · [中文](xlsview/README.zh.md) |
 | **[tts](tts/)** | Windows SAPI TTS: `<leader>vo` starts from the **segment at the cursor** (press again to jump while playing); white control bar; volume wheel / rate; system default audio device; **EN/中文** button or **`L`**. | [EN](tts/README.md) · [中文](tts/README.zh.md) |
+| **[imgbuf](imgbuf/)** | Image as character art (block/half/braille); fill/fit; auto-open, clipboard; optional pixel HD on WezTerm/Kitty/Ghostty. **`L`** toggles language. | [EN](imgbuf/README.md) · [中文](imgbuf/README.zh.md) |
+| **[music](music/)** | Open audio → buffer player: play/pause, scrub bar, volume, folder prev/next + list, LRC lyrics, session restore. Python daemon; hide UI without focus steal. **`Y`** or button toggles language (`L` = loop). | [EN](music/README.md) · [中文](music/README.zh.md) |
+| **[mixer](mixer/)** | Windows **winmm.dll** MIDI player + built-in presets; `:Mixer` / `<leader>mx`. | [EN](mixer/README.md) · [中文](mixer/README.zh.md) |
+| **[nvimgames](nvimgames/)** | Minesweeper, Sokoban, **24-point**, Tetris. `:NvimGames` menu. In-game **`u`** (or button) toggles language. | [EN](nvimgames/README.md) · [中文](nvimgames/README.zh.md) |
+| **[drawbuf](drawbuf/)** | Unicode block canvas: pencil/eraser/line/rect/ellipse/fill, truecolor, clickable status bar, undo, `.draw` files, demos. Status **[EN/中]** or **`Y`** for language (`L` = line tool). | [EN](drawbuf/README.md) · [中文](drawbuf/README.zh.md) |
+| **[videobuf](videobuf/)** | Terminal video preview (character frames + control bar); daemon-style backend similar to music. | [EN](videobuf/README.md) · [中文](videobuf/README.zh.md) |
+| **[es](es/)** | Windows **Everything** file search (`es.exe`): `:ES` / `<leader>es` live float picker. | [EN](es/README.md) · [中文](es/README.zh.md) |
 
 ## UI language (zh / en)
 
@@ -33,11 +35,12 @@ Most plugin UIs support Chinese and English. Default is **`ui_lang = "auto"`** (
 
 | Plugin | Toggle |
 |--------|--------|
-| mdview / imgbuf / pdfview / xlsview | **`L`** in preview |
+| mdview / pdfview / xlsview / imgbuf | **`L`** in preview |
 | tts | Control bar **EN / 中文** or **`L`** |
-| music | Button **EN/中(Y)** or **`Y`** (`L` = single-track loop) |
-| drawbuf | Status **[EN/中]** or **`Y`** (`L` = line tool) |
+| music / mixer | Button **EN/中(Y)** or **`Y`** (music `L` = single-track loop) |
 | nvimgames (incl. 24-point) | Footer button or **`u`** |
+| drawbuf | Status **[EN/中]** or **`Y`** (`L` = line tool) |
+| es | **`L`** or **`Ctrl-l`** in picker (default follows system language; remembered) |
 
 ```lua
 require("mdview").setup({ ui_lang = "auto" }) -- or "zh" | "en"
@@ -46,17 +49,29 @@ require("tts").setup({ ui_lang = "en" })
 
 ## Screenshots
 
-**mdview** (side)
+**mdview**
 
-![mdview](mdview/testdata/screenshots/1.png)
+![mdview](images/mdview.png)
 
-**music**
+**pdfview** (PDF)
 
-![music](images/music.png)
+![pdfview](images/pdfview-pdf.png)
+
+**xlsview**
+
+![xlsview](images/xlsview.png)
+
+**tts**
+
+![tts](images/tts.png)
 
 **imgbuf**
 
 ![imgbuf](images/imgbuf.png)
+
+**music**
+
+![music](images/music.png)
 
 **nvimgames** — Minesweeper
 
@@ -78,17 +93,13 @@ require("tts").setup({ ui_lang = "en" })
 
 ![drawbuf](images/drawbuf.png)
 
-**pdfview** (PDF)
-
-![pdfview](images/pdfview-pdf.png)
-
-**tts**
-
-![tts](images/tts.png)
-
 **videobuf**
 
 ![videobuf](images/videobuf.png)
+
+**es** (Everything file search)
+
+![es](images/es.png)
 
 More mdview shots: [mdview/testdata/screenshots/](mdview/testdata/screenshots/) and demo [mdview/testdata/demo.md](mdview/testdata/demo.md).  
 TTS samples: [tts/testdata/](tts/testdata/) (`sample.zh.txt` / `sample.en.txt`).
@@ -98,14 +109,24 @@ TTS samples: [tts/testdata/](tts/testdata/) (`sample.zh.txt` / `sample.en.txt`).
 | Plugin | Neovim | Other |
 |--------|--------|-------|
 | mdview | 0.9+ | Core needs nothing extra; block images need Pillow (or chafa); code highlight optional Tree-sitter; pixel HD needs a graphics-protocol terminal |
-| music | 0.9+ | Python3 + **just_playback** (or pygame fallback) |
-| videobuf | 0.9+ | Python3 + decode stack (see subdirectory) |
-| imgbuf | 0.9+ | chafa **or** Python3 + Pillow; HD needs WezTerm/Kitty/Ghostty + Pillow |
-| nvimgames | 0.9+ | `termguicolors`; Minesweeper benefits from `mouse=a`; Sokoban ships `data/levels.json` |
-| drawbuf | 0.9+ | `termguicolors`; `mouse=a` recommended |
 | pdfview | 0.9+ | PDF: PyMuPDF; DOCX: stdlib only; DOC: optional LibreOffice; images chafa/Pillow; HD: WezTerm/Kitty/Ghostty |
 | xlsview | 0.9+ | Python3 + **openpyxl** |
 | tts | 0.9+ | **Windows** + SAPI; Python3 + **pywin32** |
+| imgbuf | 0.9+ | chafa **or** Python3 + Pillow; HD needs WezTerm/Kitty/Ghostty + Pillow |
+| music | 0.9+ | Python3 + **just_playback** (or pygame fallback) |
+| mixer | 0.9+ | **Windows** + Python3 (**winmm.dll**, stdlib ctypes) |
+| nvimgames | 0.9+ | `termguicolors`; Minesweeper benefits from `mouse=a`; Sokoban ships `data/levels.json` |
+| drawbuf | 0.9+ | `termguicolors`; `mouse=a` recommended |
+| videobuf | 0.9+ | Python3 + **av** (or opencv-python) + **just_playback** |
+| es | 0.9+ | **Windows** + [Everything](https://www.voidtools.com/) + [es.exe CLI](https://www.voidtools.com/support/everything/command_line_interface/) |
+
+**Startup check**: on load, only **required** pip packages are checked; if missing you get an install prompt. Install opens a log float with live pip output and notifies when done.  
+- Full check (incl. recommended): `:NvimpluginsDeps` (optional plugin names)  
+- Debug probe: `:NvimpluginsDepsProbe`  
+- Disable: `let g:nvimplugins_skip_deps = 1`  
+- Auto-install without asking: `let g:nvimplugins_auto_install_deps = 1`  
+- Recommended packages can be dismissed permanently (`stdpath('data')/nvimplugins_deps.json`)  
+This repo has **no npm dependencies**.
 
 ## Quick install
 
@@ -131,10 +152,10 @@ Then run **`:PlugInstall`** once (later: `:PlugUpdate`). Optional `require("…"
 Optional subset (before load; names match directories):
 
 ```vim
-let g:nvimplugins_enable = ['mdview', 'music', 'imgbuf', 'tts']
+let g:nvimplugins_enable = ['mdview', 'pdfview', 'xlsview', 'tts', 'imgbuf', 'music', 'mixer', 'nvimgames']
 ```
 
-Default bundle: `mdview` · `music` · `imgbuf` · `videobuf` · `nvimgames` · `drawbuf` · `pdfview` · `xlsview` · `tts`.
+Default bundle: `mdview` · `pdfview` · `xlsview` · `tts` · `imgbuf` · `music` · `mixer` · `nvimgames` · `drawbuf` · `videobuf`.
 
 #### lazy.nvim
 
@@ -149,14 +170,15 @@ Default bundle: `mdview` · `music` · `imgbuf` · `videobuf` · `nvimgames` · 
 ```vim
 call plug#begin()
 Plug '/path/to/nvimplugins/mdview'
-Plug '/path/to/nvimplugins/music'
-Plug '/path/to/nvimplugins/imgbuf'
-Plug '/path/to/nvimplugins/videobuf'
-Plug '/path/to/nvimplugins/nvimgames'
-Plug '/path/to/nvimplugins/drawbuf'
 Plug '/path/to/nvimplugins/pdfview'
 Plug '/path/to/nvimplugins/xlsview'
 Plug '/path/to/nvimplugins/tts'
+Plug '/path/to/nvimplugins/imgbuf'
+Plug '/path/to/nvimplugins/music'
+Plug '/path/to/nvimplugins/mixer'
+Plug '/path/to/nvimplugins/nvimgames'
+Plug '/path/to/nvimplugins/drawbuf'
+Plug '/path/to/nvimplugins/videobuf'
 call plug#end()
 ```
 
@@ -165,14 +187,15 @@ call plug#end()
 ```lua
 {
   { dir = "/path/to/nvimplugins/mdview", name = "mdview", lazy = false },
-  { dir = "/path/to/nvimplugins/music", name = "music", lazy = false },
-  { dir = "/path/to/nvimplugins/imgbuf", name = "imgbuf", lazy = false },
-  { dir = "/path/to/nvimplugins/videobuf", name = "videobuf", lazy = false },
-  { dir = "/path/to/nvimplugins/nvimgames", name = "nvimgames", lazy = false },
-  { dir = "/path/to/nvimplugins/drawbuf", name = "drawbuf", lazy = false },
   { dir = "/path/to/nvimplugins/pdfview", name = "pdfview", lazy = false },
   { dir = "/path/to/nvimplugins/xlsview", name = "xlsview", lazy = false },
   { dir = "/path/to/nvimplugins/tts", name = "tts", lazy = false },
+  { dir = "/path/to/nvimplugins/imgbuf", name = "imgbuf", lazy = false },
+  { dir = "/path/to/nvimplugins/music", name = "music", lazy = false },
+  { dir = "/path/to/nvimplugins/mixer", name = "mixer", lazy = false },
+  { dir = "/path/to/nvimplugins/nvimgames", name = "nvimgames", lazy = false },
+  { dir = "/path/to/nvimplugins/drawbuf", name = "drawbuf", lazy = false },
+  { dir = "/path/to/nvimplugins/videobuf", name = "videobuf", lazy = false },
 }
 ```
 
@@ -194,35 +217,6 @@ require("mdview").setup({
     python = "python",
     float_hd = "always",
   },
-})
-
--- music — buffer audio player
-require("music").setup({
-  volume = 70,
-  auto_open = true,
-  auto_play = true,
-  toggle_key = "<M-m>",
-  ui_lang = "auto", -- Y toggles language; L = loop
-  python = "python",
-})
-
--- imgbuf — character art + optional HD
-require("imgbuf").setup({
-  backend = "auto",
-  mode = "block",
-  scale = "fill",
-  hd = "always",
-  ui_lang = "auto", -- L
-  auto_open = true,
-})
-
--- nvimgames — mini-games
-require("nvimgames").setup({
-  lang = "auto", -- "auto" | "zh" | "en"
-  mine = { difficulty = "beginner" },
-  sokoban = { remember_level = true },
-  twentyfour = { solvable_only = true },
-  tetris = { special_score = 1000 },
 })
 
 -- pdfview — PDF / Word
@@ -256,6 +250,35 @@ require("tts").setup({
   -- voice = "Huihui", -- optional default; float choice is remembered
 })
 
+-- imgbuf — character art + optional HD
+require("imgbuf").setup({
+  backend = "auto",
+  mode = "block",
+  scale = "fill",
+  hd = "always",
+  ui_lang = "auto", -- L
+  auto_open = true,
+})
+
+-- music — buffer audio player
+require("music").setup({
+  volume = 70,
+  auto_open = true,
+  auto_play = true,
+  toggle_key = "<M-m>",
+  ui_lang = "auto", -- Y toggles language; L = loop
+  python = "python",
+})
+
+-- nvimgames — mini-games
+require("nvimgames").setup({
+  lang = "auto", -- "auto" | "zh" | "en"
+  mine = { difficulty = "beginner" },
+  sokoban = { remember_level = true },
+  twentyfour = { solvable_only = true },
+  tetris = { special_score = 1000 },
+})
+
 -- drawbuf — Unicode block drawing
 require("drawbuf").setup({
   width = 80,
@@ -273,27 +296,29 @@ Full option lists: each plugin’s README / `lua/*/config.lua` (or `init.lua`).
 | Plugin | Command / key | Action |
 |--------|---------------|--------|
 | mdview | `<leader>mv` / `<leader>ms` · `L` | Single / side preview · language |
-| music | open audio · `<M-m>` · `Y` | Player · toggle UI · language |
-| imgbuf | open image · `L` | Preview · language |
-| nvimgames | `:NvimGames` · `u` in-game | Menu · language |
-| drawbuf | `:Draw` · `Y` | Canvas · language |
 | pdfview | open pdf/docx · `L` · `gh` | Preview · language · page HD |
 | xlsview | open xlsx · `n`/`p` · `L` | Preview · sheet · language |
 | tts | `<leader>vo` / `<leader>vs` · `L` | Play from cursor segment / stop · language |
+| imgbuf | open image · `L` | Preview · language |
+| music | open audio · `<M-m>` · `Y` | Player · toggle UI · language |
+| mixer | `:Mixer` / `<leader>mx` · `L` | Software mixer · language |
+| nvimgames | `:NvimGames` · `u` in-game | Menu · language |
+| drawbuf | `:Draw` · `Y` | Canvas · language |
 
 ## Doc index
 
 | Plugin | Entry |
 |--------|-------|
 | mdview | [EN](mdview/README.md) · [中文](mdview/README.zh.md) · [demo](mdview/testdata/demo.md) · [screenshots](mdview/testdata/screenshots/) |
-| music | [EN](music/README.md) · [中文](music/README.zh.md) |
-| videobuf | [EN](videobuf/README.md) · [中文](videobuf/README.zh.md) · [design](videobuf/DESIGN.zh.md) |
-| imgbuf | [EN](imgbuf/README.md) · [中文](imgbuf/README.zh.md) |
-| nvimgames | [EN](nvimgames/README.md) · [中文](nvimgames/README.zh.md) |
-| drawbuf | [EN](drawbuf/README.md) · [中文](drawbuf/README.zh.md) |
 | pdfview | [EN](pdfview/README.md) · [中文](pdfview/README.zh.md) |
 | xlsview | [EN](xlsview/README.md) · [中文](xlsview/README.zh.md) |
 | tts | [EN](tts/README.md) · [中文](tts/README.zh.md) · [samples](tts/testdata/) |
+| imgbuf | [EN](imgbuf/README.md) · [中文](imgbuf/README.zh.md) |
+| music | [EN](music/README.md) · [中文](music/README.zh.md) |
+| mixer | [EN](mixer/README.md) · [中文](mixer/README.zh.md) |
+| nvimgames | [EN](nvimgames/README.md) · [中文](nvimgames/README.zh.md) |
+| drawbuf | [EN](drawbuf/README.md) · [中文](drawbuf/README.zh.md) |
+| videobuf | [EN](videobuf/README.md) · [中文](videobuf/README.zh.md) · [design](videobuf/DESIGN.zh.md) |
 
 ## License / notes
 

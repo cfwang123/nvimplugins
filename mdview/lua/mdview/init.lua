@@ -23,8 +23,9 @@ local file_nav_by_tab = {}
 
 local follow_installed = false
 
--- 前向声明：do_render 内会调用 attach_maps
+-- 前向声明：do_render 内会调用 attach_maps；detach 会停外部监视
 local attach_maps
+local stop_external_watch
 
 local function get_state(source_buf)
   return states[source_buf]
@@ -108,6 +109,7 @@ local function detach_source_preview(st)
     end)
     st.debounce = nil
   end
+  stop_external_watch(st)
   if st.au_group then
     pcall(vim.api.nvim_del_augroup_by_id, st.au_group)
     st.au_group = nil
@@ -504,18 +506,17 @@ attach_maps = function(preview_buf)
   end, vim.tbl_extend("force", opts, { desc = "mdview: toggle UI language" }))
 
   local function on_mouse_click()
-    vim.schedule(function()
-      if not vim.api.nvim_buf_is_valid(preview_buf) then
-        return
-      end
-      if vim.api.nvim_get_current_buf() ~= preview_buf then
-        return
-      end
-      local st = st_from_preview(preview_buf)
-      if st then
-        M._activate_at_cursor(st)
-      end
-    end)
+    -- 立刻用 getmousepos 判定（勿等 schedule 后光标被吸到行尾导致误点链接）
+    if not vim.api.nvim_buf_is_valid(preview_buf) then
+      return
+    end
+    local st = st_from_preview(preview_buf)
+    if not st then
+      return
+    end
+    if M._activate_at_mouse(st) then
+      return
+    end
   end
   vim.keymap.set("n", "<LeftRelease>", on_mouse_click, opts)
   vim.keymap.set("n", "<2-LeftMouse>", on_mouse_click, opts)
@@ -533,10 +534,141 @@ function M.ensure_mouse()
   end
 end
 
+---停止磁盘监视（uv.fs_event）
+stop_external_watch = function(st)
+  if not st then
+    return
+  end
+  if st.file_watch then
+    pcall(function()
+      st.file_watch:stop()
+      st.file_watch:close()
+    end)
+    st.file_watch = nil
+  end
+  if st.ext_debounce then
+    pcall(function()
+      st.ext_debounce:stop()
+    end)
+    st.ext_debounce = nil
+  end
+end
+
+---防抖重绘预览（外部改盘后）
+local function schedule_external_render(st)
+  local cfg = config.get()
+  if st.ext_debounce then
+    pcall(function()
+      st.ext_debounce:stop()
+    end)
+  end
+  st.ext_debounce = vim.defer_fn(function()
+    if not vim.api.nvim_buf_is_valid(st.source_buf) then
+      return
+    end
+    if not st.preview_buf or not vim.api.nvim_buf_is_valid(st.preview_buf) then
+      return
+    end
+    do_render(st)
+    if st.mode == "side" then
+      pcall(sync.sync_from_source, st)
+    end
+  end, cfg.debounce_ms or 150)
+end
+
+---源 buffer 未修改时从磁盘重新读入并重绘
+local function reload_source_from_disk(st)
+  if not st or not vim.api.nvim_buf_is_valid(st.source_buf) then
+    return
+  end
+  -- 有未保存修改时不覆盖用户编辑
+  if vim.bo[st.source_buf].modified then
+    return
+  end
+  local path = vim.api.nvim_buf_get_name(st.source_buf)
+  if path == "" or vim.fn.filereadable(path) ~= 1 then
+    return
+  end
+  -- 优先 checktime + autoread
+  pcall(vim.cmd, "silent! checktime " .. st.source_buf)
+  -- 若内容仍与磁盘不一致（部分环境下 checktime 不可靠），直接读盘
+  if vim.bo[st.source_buf].modified then
+    return
+  end
+  local ok, disk_lines = pcall(vim.fn.readfile, path)
+  if not ok or type(disk_lines) ~= "table" then
+    schedule_external_render(st)
+    return
+  end
+  local cur = vim.api.nvim_buf_get_lines(st.source_buf, 0, -1, false)
+  local same = #cur == #disk_lines
+  if same then
+    for i = 1, #disk_lines do
+      if cur[i] ~= disk_lines[i] then
+        same = false
+        break
+      end
+    end
+  end
+  if not same then
+    local was_mod = vim.bo[st.source_buf].modifiable
+    vim.bo[st.source_buf].modifiable = true
+    vim.api.nvim_buf_set_lines(st.source_buf, 0, -1, false, disk_lines)
+    vim.bo[st.source_buf].modified = false
+    if not was_mod then
+      vim.bo[st.source_buf].modifiable = false
+    end
+  end
+  schedule_external_render(st)
+end
+
+---监视源文件路径的外部写入
+local function start_external_watch(st)
+  stop_external_watch(st)
+  local cfg = config.get()
+  if cfg.watch_external == false then
+    return
+  end
+  local path = vim.api.nvim_buf_get_name(st.source_buf)
+  if path == "" or vim.fn.filereadable(path) ~= 1 then
+    return
+  end
+  -- 便于 checktime / 外部更新
+  pcall(function()
+    vim.bo[st.source_buf].autoread = true
+  end)
+  local uv = vim.uv or vim.loop
+  if not uv or not uv.new_fs_event then
+    return
+  end
+  local handle = uv.new_fs_event()
+  if not handle then
+    return
+  end
+  st.file_watch = handle
+  local ok_start = pcall(function()
+    handle:start(path, {}, function(err, _fname, _status)
+      if err then
+        return
+      end
+      vim.schedule(function()
+        if not vim.api.nvim_buf_is_valid(st.source_buf) then
+          return
+        end
+        reload_source_from_disk(st)
+      end)
+    end)
+  end)
+  if not ok_start then
+    stop_external_watch(st)
+  end
+end
+
 local function attach_autocmds(st)
   if st.au_group then
     pcall(vim.api.nvim_del_augroup_by_id, st.au_group)
   end
+  stop_external_watch(st)
   local g = vim.api.nvim_create_augroup("mdview_" .. st.source_buf, { clear = true })
   st.au_group = g
   local cfg = config.get()
@@ -616,6 +748,42 @@ local function attach_autocmds(st)
       M.close_for(st.source_buf, true)
     end,
   })
+
+  -- 磁盘被外部程序改写后：Neovim 重载 buffer → 重绘预览
+  if cfg.watch_external ~= false then
+    pcall(function()
+      vim.bo[st.source_buf].autoread = true
+    end)
+    vim.api.nvim_create_autocmd("FileChangedShellPost", {
+      group = g,
+      buffer = st.source_buf,
+      callback = function()
+        schedule_external_render(st)
+      end,
+    })
+    -- 重新获得焦点时 checktime（配合 autoread）
+    vim.api.nvim_create_autocmd({ "FocusGained", "TermClose", "TermLeave" }, {
+      group = g,
+      callback = function()
+        if not vim.api.nvim_buf_is_valid(st.source_buf) then
+          return
+        end
+        if vim.bo[st.source_buf].modified then
+          return
+        end
+        pcall(vim.cmd, "silent! checktime " .. st.source_buf)
+      end,
+    })
+    -- 源文件改名/换路径时重挂监视
+    vim.api.nvim_create_autocmd({ "BufFilePost", "FileChangedShell" }, {
+      group = g,
+      buffer = st.source_buf,
+      callback = function()
+        start_external_watch(st)
+      end,
+    })
+    start_external_watch(st)
+  end
 
   -- 预览窗宽度变化 → 按新宽度重排（避免水平滚动）
   vim.api.nvim_create_autocmd("WinResized", {
@@ -742,6 +910,91 @@ function M._hit_at(st, row, col)
     ::continue::
   end
   return best
+end
+
+---显示列（1-based）→ 行内字节列（0-based）。超出正文显示宽度返回 nil（行尾空白）。
+---@param line_text string
+---@param screen_col integer 1-based display column within line text
+---@return integer|nil
+local function display_col_to_byte(line_text, screen_col)
+  if not line_text or screen_col < 1 then
+    return nil
+  end
+  local disp = vim.fn.strdisplaywidth(line_text)
+  if screen_col > disp then
+    return nil -- 点在行尾空白，不算点中文字/链接
+  end
+  local d = 0
+  local i = 1
+  while i <= #line_text do
+    local b = line_text:byte(i)
+    local len = 1
+    if b >= 0xF0 then
+      len = 4
+    elseif b >= 0xE0 then
+      len = 3
+    elseif b >= 0xC0 then
+      len = 2
+    end
+    local ch = line_text:sub(i, i + len - 1)
+    local w = vim.fn.strwidth(ch)
+    if w < 1 then
+      w = 1
+    end
+    if d + w >= screen_col then
+      return i - 1
+    end
+    d = d + w
+    i = i + len
+  end
+  return nil
+end
+
+---根据鼠标位置激活（不依赖光标被吸到行尾）
+---@param st table
+---@return boolean handled
+function M._activate_at_mouse(st)
+  if not st or not st.preview_buf or not vim.api.nvim_buf_is_valid(st.preview_buf) then
+    return false
+  end
+  local mp = vim.fn.getmousepos()
+  local win = mp.winid
+  if not win or win == 0 or not vim.api.nvim_win_is_valid(win) then
+    return false
+  end
+  if vim.api.nvim_win_get_buf(win) ~= st.preview_buf then
+    return false
+  end
+  local row = mp.line
+  if row < 1 then
+    return false
+  end
+  local line = vim.api.nvim_buf_get_lines(st.preview_buf, row - 1, row, false)[1] or ""
+  local info = vim.fn.getwininfo(win)[1] or {}
+  local textoff = info.textoff or 0
+  local leftcol = info.leftcol or 0
+  local wpos = vim.api.nvim_win_get_position(win)
+  -- 正文区显示列（1-based）：优先 screencol 推算，与 drawbuf 一致
+  local vcol = (mp.screencol or 0) - wpos[2] - textoff + leftcol
+  if vcol < 1 then
+    vcol = (mp.wincol or 0) - textoff
+  end
+  if vcol < 1 then
+    vcol = mp.column or 1
+  end
+  if vcol < 1 then
+    return false
+  end
+  local col = display_col_to_byte(line, vcol)
+  if col == nil then
+    return false -- 行尾空白：不激活链接
+  end
+  local hit = M._hit_at(st, row, col)
+  if not hit then
+    return false
+  end
+  M._activate_hit(st, hit, row)
+  return true
 end
 
 ---钳制列到该行合法字节列（0-based）
@@ -1529,10 +1782,11 @@ local function toggle_code_fold(st, hit, cursor_row)
   return true
 end
 
-function M._activate_at_cursor(st)
-  local cursor = vim.api.nvim_win_get_cursor(0)
-  local row, col = cursor[1], cursor[2]
-  local hit = M._hit_at(st, row, col)
+---激活 hit（键盘回车 / 鼠标共用）
+---@param st table
+---@param hit table
+---@param row integer
+function M._activate_hit(st, hit, row)
   if not hit then
     return
   end
@@ -1563,6 +1817,16 @@ function M._activate_at_cursor(st)
   elseif hit.kind == "link" then
     M._open_href(hit.href, st)
   end
+end
+
+function M._activate_at_cursor(st)
+  local cursor = vim.api.nvim_win_get_cursor(0)
+  local row, col = cursor[1], cursor[2]
+  local hit = M._hit_at(st, row, col)
+  if not hit then
+    return
+  end
+  M._activate_hit(st, hit, row)
 end
 
 ---解析光标处图片绝对路径（块图 / 行内图 / 表格图）；不在图上则 nil
@@ -2482,6 +2746,7 @@ function M.close_for(source_buf, wipe)
         st.debounce:stop()
       end)
     end
+    stop_external_watch(st)
     if st.au_group then
       pcall(vim.api.nvim_del_augroup_by_id, st.au_group)
       st.au_group = nil

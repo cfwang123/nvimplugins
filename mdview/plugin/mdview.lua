@@ -57,3 +57,42 @@ vim.api.nvim_create_user_command("MdViewSync", function()
     m.sync_now()
   end
 end, { desc = "mdview: sync side preview to source cursor" })
+
+-- 启动时检测推荐 pip 依赖（Pillow）并提示安装
+do
+  local _dep_plugin = "mdview"
+  local _dep_src = debug.getinfo(1, "S").source
+  vim.defer_fn(function()
+    if vim.g.nvimplugins_skip_deps or vim.g.nvimplugins_deps_bundle_done then
+      return
+    end
+    local ok, dc = pcall(require, "nvimplugins.depcheck")
+    if not ok or type(dc) ~= "table" then
+      local src = _dep_src
+      if type(src) == "string" and src:sub(1, 1) == "@" then
+        src = src:sub(2)
+      end
+      local dir = vim.fn.fnamemodify(src, ":p:h")
+      for _ = 1, 8 do
+        local f = dir .. "/lua/nvimplugins/depcheck.lua"
+        if vim.fn.filereadable(f) == 1 then
+          local chunk = loadfile(f)
+          if chunk then
+            dc = chunk()
+            package.loaded["nvimplugins.depcheck"] = dc
+            ok = true
+          end
+          break
+        end
+        local parent = vim.fn.fnamemodify(dir, ":h")
+        if parent == dir then
+          break
+        end
+        dir = parent
+      end
+    end
+    if ok and dc and dc.schedule then
+      dc.schedule(_dep_plugin, 0, _dep_src)
+    end
+  end, 550)
+end

@@ -73,6 +73,8 @@ local defaults = {
     sidescroll = 1,
   },
   debounce_ms = 150,
+  --- 磁盘上 md 被外部程序修改时自动 reload 源 buffer 并重绘预览
+  watch_external = true,
   show_help = true, -- ? 打开帮助 float
   show_key_hint = true, -- 预览顶部灰色快捷键提示行
   --- 界面语言："auto"（跟随系统）| "zh" | "en"；L 可切换并记住

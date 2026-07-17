@@ -27,8 +27,26 @@ function M.slugify(text)
   text = text:gsub("%[(.-)%]%b()", "%1")
   text = vim.fn.tolower(text)
   text = text:gsub("%s+", "-")
-  -- 去掉 ASCII 标点，保留 - 与非 ASCII（中文等）
-  text = vim.fn.substitute(text, [[[\]\[!"\#$%&'()*+,./:;<=>?@\\^`{|}~]], "", "g")
+  -- 去掉 ASCII 标点，保留 - _ 与非 ASCII（中文等）
+  -- 不用 vim.fn.substitute 字符类：易解析失败变成空 pattern → E33
+  text = text:gsub(".", function(ch)
+    local b = ch:byte()
+    if not b then
+      return ""
+    end
+    if ch == "-" or ch == "_" then
+      return ch
+    end
+    -- 0-9 a-z（tolower 后）
+    if (b >= 48 and b <= 57) or (b >= 97 and b <= 122) then
+      return ch
+    end
+    -- 非 ASCII：保留 UTF-8 字节（中文标题）
+    if b >= 128 then
+      return ch
+    end
+    return ""
+  end)
   text = text:gsub("%-+", "-")
   text = text:gsub("^%-", ""):gsub("%-$", "")
   return text
