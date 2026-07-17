@@ -117,6 +117,61 @@ call plug#end()
 
 各插件从简到全的安装说明见子目录 README（mdview 有 ①最简 → ③完整 分档）。
 
+### 可选 `setup()`（分插件）
+
+**全部可选。** 插件加载后即用默认配置（命令 / 自动打开无需 `setup`）。只有要改参数时才调用 `require("…").setup({ ... })`。写在插件已进入 `rtp` 之后（例如 `plug#end()` 之后）。
+
+```lua
+-- mdview — Markdown 预览（完整项见 mdview/README）
+require("mdview").setup({
+  split_direction = "right",
+  width = 0.45,
+  keys = { view = "<leader>mv", side = "<leader>ms" }, -- 或 false 关闭
+  image = {
+    mode = "thumb",
+    python = "python",
+    float_hd = "always", -- 终端支持时 float 内像素高清
+  },
+})
+
+-- music — buffer 音频播放器
+require("music").setup({
+  volume = 70,
+  auto_open = true,
+  auto_play = true,
+  toggle_key = "<M-m>", -- Alt+M 显示/隐藏
+  statusline_when_hidden = false,
+  python = "python",
+})
+
+-- imgbuf — 图片字符画 + 可选高清叠层
+require("imgbuf").setup({
+  backend = "auto", -- "auto" | "chafa" | "python"
+  mode = "block",   -- "block" | "half" | "braille"
+  scale = "fill",   -- "fill" | "fit"
+  hd = "always",    -- "always" | "never"
+  auto_open = true,
+})
+
+-- nvimgames — 小游戏
+require("nvimgames").setup({
+  mine = { difficulty = "beginner" }, -- beginner | intermediate | expert
+  sokoban = { remember_level = true },
+  twentyfour = { solvable_only = true },
+  tetris = { special_score = 1000 },
+})
+
+-- drawbuf — Unicode 色块绘图
+require("drawbuf").setup({
+  width = 80,
+  height = 24,
+  canvas_bg = "ffffff",
+  statusline = true,
+})
+```
+
+完整选项见各子插件 README / `lua/*/init.lua`（mdview：`lua/mdview/config.lua`）。
+
 ## 文档索引
 
 | 插件 | 入口 |

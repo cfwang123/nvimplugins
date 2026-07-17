@@ -117,6 +117,61 @@ call plug#end()
 
 Per-plugin install details live in each subdirectory README (mdview has tiers ① minimal → ③ full).
 
+### Optional `setup()` (per plugin)
+
+**All optional.** Loading the plugin applies defaults (commands / auto-open work without any `setup`). Call `require("…").setup({ ... })` only when you want to override options. Place it **after** the plugin is on `rtp` (e.g. after `plug#end()`).
+
+```lua
+-- mdview — Markdown preview (see mdview/README for full options)
+require("mdview").setup({
+  split_direction = "right",
+  width = 0.45,
+  keys = { view = "<leader>mv", side = "<leader>ms" }, -- or false to disable
+  image = {
+    mode = "thumb",
+    python = "python",
+    float_hd = "always", -- pixel HD in float when terminal supports it
+  },
+})
+
+-- music — buffer audio player
+require("music").setup({
+  volume = 70,
+  auto_open = true,
+  auto_play = true,
+  toggle_key = "<M-m>", -- Alt+M show/hide
+  statusline_when_hidden = false,
+  python = "python",
+})
+
+-- imgbuf — image character art + optional HD overlay
+require("imgbuf").setup({
+  backend = "auto", -- "auto" | "chafa" | "python"
+  mode = "block",   -- "block" | "half" | "braille"
+  scale = "fill",   -- "fill" | "fit"
+  hd = "always",    -- "always" | "never"
+  auto_open = true,
+})
+
+-- nvimgames — mini-games
+require("nvimgames").setup({
+  mine = { difficulty = "beginner" }, -- beginner | intermediate | expert
+  sokoban = { remember_level = true },
+  twentyfour = { solvable_only = true },
+  tetris = { special_score = 1000 },
+})
+
+-- drawbuf — Unicode block drawing
+require("drawbuf").setup({
+  width = 80,
+  height = 24,
+  canvas_bg = "ffffff",
+  statusline = true,
+})
+```
+
+Full option lists: each plugin’s README / `lua/*/init.lua` (mdview: `lua/mdview/config.lua`).
+
 ## Doc index
 
 | Plugin | Entry |
