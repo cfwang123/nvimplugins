@@ -42,7 +42,7 @@
 call plug#begin()
 " 仅装 mdview 子目录
 Plug '/path/to/nvimplugins/mdview'
-" 或整仓安装：Plug '/path/to/nvimplugins'（见仓库总 README）
+" 或整仓网络安装：Plug 'cfwang123/nvimplugins'  然后 :PlugInstall
 call plug#end()
 ```
 

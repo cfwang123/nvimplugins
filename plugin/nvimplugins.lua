@@ -1,4 +1,4 @@
--- 整仓安装入口：Plug '/path/to/nvimplugins' 时把各子插件加入 rtp 并加载。
+-- 整仓安装入口：Plug 'cfwang123/nvimplugins'（或本地根目录）时把各子插件加入 rtp 并加载。
 -- 分目录安装时不会用到本文件（各子目录自带 plugin/）。
 if vim.g.loaded_nvimplugins_bundle then
   return

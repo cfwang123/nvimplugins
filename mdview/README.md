@@ -42,7 +42,7 @@ You do **not** get: block-character images, float HD, Tree-sitter code highlight
 call plug#begin()
 " mdview subfolder only
 Plug '/path/to/nvimplugins/mdview'
-" or whole-repo: Plug '/path/to/nvimplugins' (see repo root README)
+" or whole-repo (network): Plug 'cfwang123/nvimplugins'  then :PlugInstall
 call plug#end()
 ```
 

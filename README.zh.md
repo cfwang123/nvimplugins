@@ -4,14 +4,14 @@
 
 > **About** — 面向 Neovim 的小型实验与工具插件集合：含 **mdview**（Markdown 预览）、**music**（打开音频即在 buffer 中播放）、**imgbuf**（终端图片预览）、**nvimgames**（扫雷 / 推箱子 / 24 点 / 方块）、**drawbuf**（Unicode 色块绘图）。各插件可独立安装，互不强制依赖。
 
-面向终端里「好玩、好用、少依赖」的实验与日常小工具；安装以 **本地路径**（vim-plug / lazy.nvim / `rtp`）为主。
+面向终端里「好玩、好用、少依赖」的实验与日常小工具。
 
 **两种装法任选其一：**
 
 | 方式 | 说明 |
 |------|------|
-| **整仓** | 只 `Plug` / `dir` 指向仓库根 `nvimplugins/`，自动加载全部子插件 |
-| **分目录** | 只装需要的子文件夹（如 `…/mdview`），互不影响 |
+| **整仓（网络）** | `Plug 'cfwang123/nvimplugins'`，从 GitHub 拉取；根目录 `plugin/nvimplugins.lua` 自动加载全部子插件 |
+| **分目录（本地路径）** | 只 `Plug` 需要的子文件夹（如 `…/mdview`） |
 
 ## 插件一览
 
@@ -51,27 +51,30 @@ mdview 更多场景见 [mdview/testdata/screenshots/](mdview/testdata/screenshot
 
 ## 快速安装
 
-路径改成你的本机目录。**不必**统一 `setup()`（要改参数时再 `require(...).setup`）。  
-整仓与分目录**不要混装同一批插件**（可只整仓，或只分子目录）；若混装，子插件自带 `loaded_*` 守卫，一般不会重复注册命令，但 `rtp` 会多一份路径。
+**不必**统一 `setup()`（要改参数时再 `require(...).setup`）。  
+整仓与分目录**不要混装同一批插件**；若混装，子插件有 `loaded_*` 守卫，一般不会重复注册命令，但 `rtp` 会多一份路径。
 
-### 方式 A：整仓（推荐「全要」）
+### 方式 A：整仓 — vim-plug 网络安装（推荐「全要」）
 
-根目录的 `plugin/nvimplugins.lua` 会把各子目录加入 `runtimepath` 并 source 各自的 `plugin/`。
+仓库：[cfwang123/nvimplugins](https://github.com/cfwang123/nvimplugins)。  
+根目录 `plugin/nvimplugins.lua` 会把各子目录加入 `runtimepath` 并 source 各自的 `plugin/`。
 
 #### vim-plug
 
 ```vim
 call plug#begin()
-Plug '/path/to/nvimplugins'
+Plug 'cfwang123/nvimplugins'
 call plug#end()
 ```
+
+首次（或更新后）执行 **`:PlugInstall`**（更新可用 `:PlugUpdate`）。
 
 只要部分子插件时，在 `plug#end()` **之前**设置（名与目录一致）：
 
 ```vim
 let g:nvimplugins_enable = ['mdview', 'music', 'imgbuf']
 call plug#begin()
-Plug '/path/to/nvimplugins'
+Plug 'cfwang123/nvimplugins'
 call plug#end()
 ```
 
@@ -79,8 +82,7 @@ call plug#end()
 
 ```lua
 {
-  dir = "/path/to/nvimplugins",
-  name = "nvimplugins",
+  "cfwang123/nvimplugins",
   lazy = false,
   -- 可选：只启用部分（须在插件加载前生效；也可用 init）
   -- init = function()
@@ -89,7 +91,9 @@ call plug#end()
 }
 ```
 
-### 方式 B：分目录（推荐「只要某几个」）
+### 方式 B：分目录 — 本地路径（推荐「只要某几个」）
+
+只装需要的子目录时，对本地克隆路径使用 `Plug` / `dir`。
 
 #### vim-plug
 

@@ -4,14 +4,14 @@
 
 > **About** — Small experimental Neovim plugins: **mdview** (Markdown preview), **music** (open audio and play in a buffer), **imgbuf** (terminal image preview), **nvimgames** (Minesweeper / Sokoban / 24-point / Tetris), **drawbuf** (Unicode block drawing). Each plugin installs independently; no hard dependencies.
 
-Focused on fun, practical, low-dependency terminal tooling. Install via **local path** (vim-plug / lazy.nvim / `rtp`).
+Focused on fun, practical, low-dependency terminal tooling.
 
 **Two install styles (pick one):**
 
 | Style | Description |
 |-------|-------------|
-| **Whole repo** | Point a single `Plug` / `dir` at the repo root `nvimplugins/`; all sub-plugins load automatically |
-| **Per plugin** | Install only the subfolders you need (e.g. `…/mdview`) |
+| **Whole repo (network)** | `Plug 'cfwang123/nvimplugins'` — clone from GitHub; root `plugin/nvimplugins.lua` loads every sub-plugin |
+| **Per plugin (local path)** | Plug only the subfolders you need (e.g. `…/mdview`) |
 
 ## Plugins
 
@@ -51,27 +51,31 @@ More mdview shots: [mdview/testdata/screenshots/](mdview/testdata/screenshots/) 
 
 ## Quick install
 
-Replace paths with your local directory. **No** shared `setup()` is required (call `require(...).setup` only when tuning options).  
+**No** shared `setup()` is required (call `require(...).setup` only when tuning options).  
 Do **not** mix whole-repo and per-plugin installs for the same plugins. Double-load is mostly guarded by `loaded_*`, but `rtp` would list paths twice.
 
-### Style A: whole repo (all plugins)
+### Style A: whole repo via vim-plug (network)
 
-Root `plugin/nvimplugins.lua` appends each subfolder to `runtimepath` and sources their `plugin/` files.
+Recommended when you want **all** sub-plugins. GitHub: [cfwang123/nvimplugins](https://github.com/cfwang123/nvimplugins).
+
+Root `plugin/nvimplugins.lua` adds each subfolder to `runtimepath` and sources their `plugin/` files.
 
 #### vim-plug
 
 ```vim
 call plug#begin()
-Plug '/path/to/nvimplugins'
+Plug 'cfwang123/nvimplugins'
 call plug#end()
 ```
+
+Then run **`:PlugInstall`** once (or after updates: `:PlugUpdate`).
 
 To enable only some plugins, set this **before** `plug#end()` (names match directory names):
 
 ```vim
 let g:nvimplugins_enable = ['mdview', 'music', 'imgbuf']
 call plug#begin()
-Plug '/path/to/nvimplugins'
+Plug 'cfwang123/nvimplugins'
 call plug#end()
 ```
 
@@ -79,8 +83,7 @@ call plug#end()
 
 ```lua
 {
-  dir = "/path/to/nvimplugins",
-  name = "nvimplugins",
+  "cfwang123/nvimplugins",
   lazy = false,
   -- optional subset (must apply before plugin load; or use init)
   -- init = function()
@@ -89,7 +92,9 @@ call plug#end()
 }
 ```
 
-### Style B: per plugin (only what you need)
+### Style B: per plugin (local path)
+
+Use when you only need a few plugins. Point `Plug` / `dir` at the cloned subfolders (or a local checkout).
 
 #### vim-plug
 
