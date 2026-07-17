@@ -34,7 +34,7 @@
 
 ```vim
 call plug#begin()
-Plug '/path/to/vim/drawbuf'
+Plug '/path/to/nvimplugins/drawbuf'
 call plug#end()
 
 " 可选

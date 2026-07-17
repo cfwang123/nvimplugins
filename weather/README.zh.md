@@ -1,0 +1,99 @@
+# weather.nvim
+
+[English](README.md) | **中文**
+
+状态栏显示 **`城市 天气emoji 天气 温度`**，命令弹窗用表格查看 **10 天预报**。  
+通过 HTTP 访问公开气象站 [Open-Meteo](https://open-meteo.com/)（**无需 API Key / 注册**），结果缓存到本地文件，**默认每小时**刷新一次。
+
+## 依赖
+
+| 组件 | 说明 |
+|------|------|
+| Neovim 0.9+ | |
+| **Python3** | 标准库 `urllib`（`scripts/fetch_weather.py`） |
+| 网络 | 访问 open-meteo.com |
+
+## 安装
+
+```vim
+Plug '/path/to/nvimplugins/weather'
+" 或整仓 nvimplugins
+```
+
+### 状态栏
+
+数据在 `g:weather_status`。若使用 **vim-airline**（会接管 `statusline`），不要只改 `o.statusline`，应挂到 airline 分区：
+
+```vim
+" plug#end() 之后
+autocmd User AirlineAfterInit let g:airline_section_x = '%{get(g:, "weather_status", "")}'
+" 或拼在 filetype 后面：
+" autocmd User AirlineAfterInit let g:airline_section_x .= ' %{get(g:, "weather_status", "")}'
+```
+
+```lua
+-- plug#end() 之后
+vim.api.nvim_create_autocmd("User", {
+  pattern = "AirlineAfterInit",
+  callback = function()
+    -- 占用 section_x（原 filetype 区）；想保留 filetype 可改 section_y / z
+    vim.g.airline_section_x = [[%{get(g:, "weather_status", "")}]]
+  end,
+})
+```
+
+未使用 airline 时：
+
+```vim
+set statusline+=\ %{get(g:,'weather_status','')}
+```
+
+## 命令
+
+| 命令 | 说明 |
+|------|------|
+| **`:Weather`** | 打开 10 天预报浮窗 |
+| **`:Weather 上海`** | 切换城市并打开浮窗 |
+| **`:WeatherCity 上海`** | 只切换城市并刷新 |
+| **`:WeatherRefresh`** | 强制刷新（忽略缓存） |
+| **`<leader>we`** | 打开 10 天预报（`keys_open`，可改） |
+
+### 浮窗按键
+
+| 键 | 作用 |
+|----|------|
+| `q` / `Esc` | 关闭 |
+| `r` | 强制刷新 |
+| **`L`** | 中/英文 |
+
+## 配置
+
+```lua
+require("weather").setup({
+  city = "北京",           -- 必填才会启用；不配则不拉数据、状态栏为空
+  cache_ttl = 3600,        -- 缓存秒数
+  refresh_ms = 3600 * 1000,-- 自动刷新间隔
+  status_format = "{city} {emoji} {weather} {temp}°",
+  ui_lang = "auto",
+  auto_start = true,       -- 仅在已配置 city 时生效
+  python = "python",
+  keys_open = "<leader>we", -- 打开 10 天预报；false 关闭
+})
+```
+
+**未配置 `city` 时默认不启用**（不请求网络、状态栏为空）。通过 `setup({ city = "..." })`、`:WeatherCity` 或 `:Weather 城市` 设置后启用并记忆。
+
+## 缓存
+
+| 文件 | 内容 |
+|------|------|
+| `stdpath("data")/weather-nvim-cache.json` | 当前天气 + 10 天预报 + `fetched_at` |
+| `stdpath("data")/weather-nvim-city.json` | 记忆城市 |
+| `stdpath("data")/weather-nvim-prefs.json` | 界面语言 |
+
+启动时先读缓存上状态栏；过期或满 1 小时再 HTTP 请求。
+
+## 数据说明
+
+- 地理编码 / 预报均来自 **Open-Meteo** 公开 HTTP 接口（非商业 Key API）。
+- 天气码为 WMO 标准，映射为中英文文案 + emoji（☀️🌧️❄️⛈️ 等）。

@@ -14,8 +14,11 @@ M.plugins = {
   "pdfview",
   "xlsview",
   "tts",
-  "mixer",
   "es",
+  "qrbuf",
+  "httpbuf",
+  "weather",
+  "ntemoji",
 }
 
 ---返回当前已加载的子插件名列表（依据 vim.g.loaded_*）
@@ -34,6 +37,11 @@ end
 ---@param opts? table
 function M.check_deps(plugins, opts)
   return require("nvimplugins.deps").ensure(plugins, opts)
+end
+
+---打开合集帮助浮窗（命令 / 快捷键 / 点击运行）
+function M.help()
+  return require("nvimplugins.help").open()
 end
 
 return M

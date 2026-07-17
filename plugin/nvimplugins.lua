@@ -71,8 +71,11 @@ local function load_bundle()
     "pdfview",
     "xlsview",
     "tts",
-    "mixer",
     "es",
+    "qrbuf",
+    "httpbuf",
+    "weather",
+    "ntemoji",
   }
 
   local enable = vim.g.nvimplugins_enable
@@ -134,6 +137,14 @@ if not load_bundle() then
   )
 end
 
+-- 合集帮助：命令一览 + 当前快捷键，点击/回车运行
+pcall(function()
+  local help = require("nvimplugins.help")
+  help.setup({
+    keys_help = vim.g.nvimplugins_keys_help or "<leader>hh",
+  })
+end)
+
 -- 手动重检 / 强制安装提示（含推荐包）
 pcall(function()
   vim.api.nvim_create_user_command("NvimpluginsDeps", function(opts)
@@ -163,7 +174,6 @@ pcall(function()
         "tts",
         "mdview",
         "imgbuf",
-        "mixer",
       }
     end,
     desc = "Check / prompt install nvimplugins Python deps (incl. recommended)",

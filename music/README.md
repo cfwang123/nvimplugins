@@ -2,11 +2,11 @@
 
 **English** | [中文](README.zh.md)
 
-Open an **audio file** and turn the **buffer** into a simple player (similar to how imgbuf opens images).
+Open an **audio file** and turn the **buffer** into a simple player (similar to how imgbuf opens images). On **Windows**, also plays **MIDI** (`.mid` / `.midi`) via **winmm.dll**, with built-in presets.
 
 ![music screenshot](../images/music.png)
 
-No separate playlist concept: prev/next = **same-directory** neighbors (`PgUp` / `PgDn`; `f` opens a list to pick).
+No separate playlist concept: prev/next = **same-directory** neighbors (`PgUp` / `PgDn`; `f` opens a list to pick). MIDI mode: **`m`** opens built-in preset float.
 
 ## Playback backend (Python)
 
@@ -40,7 +40,8 @@ pip install pygame mutagen
 | Controls | Play, pause, replay, stop |
 | Same-folder nav | Next / prev (sorted by filename) |
 | Time | `current / total` (m:ss) |
-| Progress bar | **Click / drag** to seek |
+| Progress bar | **Click / drag** to seek (audio; MIDI bar is display-only) |
+| **MIDI (Windows)** | Open `.mid` / `.midi`; `:MusicMidi` / `<leader>mx`; presets (`twinkle` …) |
 | Global singleton | One player buffer; opening in another tab closes the old window |
 | Show/hide UI | `Alt+M` (configurable); **bottom split, no focus steal**; keeps playing when hidden |
 | Hidden statusline | With `statusline_when_hidden`: `[title,1:22/3:33]` |
@@ -57,6 +58,7 @@ pip install pygame mutagen
 | Neovim | 0.9+ (0.10+ recommended) |
 | Python 3 | `python` on `PATH` |
 | Audio libs | **just_playback** (preferred); **pygame** fallback |
+| MIDI (Windows) | **winmm.dll** via stdlib `ctypes` (`scripts/midi_synth.py`) — no extra pip |
 
 ```text
 pip install just_playback
@@ -84,12 +86,18 @@ call plug#end()
 ## Usage
 
 ```vim
-:e D:/Music/track.mp3
-:Music D:/Music/track.mp3
+:e /path/to/track.mp3
+:Music /path/to/track.mp3
 :MusicToggle
 :MusicNext
 :MusicPrev
 :MusicStop
+
+" Windows MIDI
+:e /path/to/song.mid
+:MusicMidi
+:MusicMidi twinkle
+:Music twinkle
 ```
 
 ### Keys / clickable labels
@@ -101,15 +109,29 @@ Example action row: `Prev PgUp, Play Space, Next PgDn, Stop x, Loop:off L, Repla
 | Play/pause | `Space` |
 | Prev/next | `PgUp` / `PgDn` |
 | Stop | `x` |
-| Loop | `L` |
+| Loop | `L` (audio only) |
 | Replay | `r` |
 | Lyrics | `g`: full lyrics split above; current line embedded (CN/EN highlight together) |
 | List | `f`: same-folder track list; focus moves to list |
+| MIDI presets | **`m`**: built-in songs float (MIDI mode) |
 | Focus swap | `Tab`: player ↔ list (when list open) |
 | Close & stop | `q` |
-| Seek | Drag bar; `h`/`l` ±5s |
+| Seek | Drag bar; `h`/`l` ±5s (audio) |
 | Volume | `+/-`, up/down, wheel |
 | Show/hide UI | `Alt+M` (keeps playing when hidden) |
+| Open MIDI UI | `<leader>mx` (configurable `keys_midi`) |
+
+### Built-in MIDI presets (`m` / `:MusicMidi`)
+
+| id | Song |
+|----|------|
+| `twinkle` | Twinkle Twinkle |
+| `ode` | Ode to Joy (excerpt) |
+| `scales` | Multi-timbre scale tour |
+| `groove` | Mini groove (incl. drum channel) |
+| `sakura` | Pentatonic air |
+
+Presets are written to a temp `.mid` then played by **winmm**. Timbre depends on the OS MIDI device (usually Microsoft GS Wavetable Synth).
 
 ### Track list (`f`)
 
@@ -146,6 +168,7 @@ require("music").setup({
   loop = false,
   fit_height = true,
   toggle_key = "<M-m>", -- Alt+M show/hide
+  keys_midi = "<leader>mx", -- Windows MIDI player
   poll_ms = 100,        -- ~10 fps progress/lyrics
   statusline_when_hidden = false,
   python = "python",

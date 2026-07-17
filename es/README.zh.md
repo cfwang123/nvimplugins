@@ -33,19 +33,19 @@ Plug '/path/to/nvimplugins/es'
 打开时默认把 **当前 pwd** 填进输入框（**双引号** + 引号后空格），例如：
 
 ```text
-🔍 "D:\VS_Projects\AIPrototype" 
+🔍 "D:\path\to\project" 
 ```
 
-（路径不带末尾 `\`，避免 `C:\Program Files\` 在 es CLI 下 0 结果。）
+（路径不带末尾 `\`，避免 `C:\path\to\Program Files\` 在 es CLI 下 0 结果。）
 
 在引号后的空格处继续输入关键词即可。空格分隔的多个词为 **AND**（与）关系，例如：
 
 ```text
-"D:\proj\" README es
+"D:\path\to\proj\" README es
 ```
 
-会匹配路径含 `D:\proj\` 且同时含 `README` 与 `es` 的项。  
-绝对路径词会用 es **`-path`** 精确限定目录（例如 `C:\Program Files` **不会**命中 `C:\Program Files (x86)`）。  
+会匹配路径含 `D:\path\to\proj\` 且同时含 `README` 与 `es` 的项。  
+绝对路径词会用 es **`-path`** 精确限定目录（例如 `C:\path\to\Program Files` **不会**命中 `C:\path\to\Program Files (x86)`）。  
 路径中含空格时引号已自动处理。可用 Backspace / `Ctrl-u` 清除后搜全盘。
 
 ### 输入框

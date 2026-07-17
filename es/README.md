@@ -32,15 +32,15 @@ Plug '/path/to/nvimplugins/es'
 On open, the **current working directory** is prefilled in **double quotes** with a trailing space, e.g.:
 
 ```text
-🔍 "D:\VS_Projects\AIPrototype" 
+🔍 "D:\path\to\project" 
 ```
 
-(No trailing `\` — es CLI returns 0 hits for paths like `C:\Program Files\`.)
+(No trailing `\` — es CLI returns 0 hits for paths like `C:\path\to\Program Files\`.)
 
 Type more keywords after the trailing space. Space-separated terms are **AND**ed, e.g.:
 
 ```text
-"D:\proj\" README es
+"D:\path\to\proj\" README es
 ```
 
 Clear with Backspace / `Ctrl-u` for whole-disk search.

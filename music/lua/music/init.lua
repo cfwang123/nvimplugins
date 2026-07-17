@@ -2,6 +2,7 @@
 local M = {}
 
 local player = require("music.player")
+local midi = require("music.midi")
 local lyrics = require("music.lyrics")
 local playlist = require("music.playlist")
 
@@ -19,6 +20,7 @@ local playlist = require("music.playlist")
 ---@field toggle_key string 显示/隐藏播放器 UI（后台继续播）
 ---@field statusline_when_hidden boolean 隐藏 UI 时状态栏显示 [歌名,进度/总长]
 ---@field python string Python 可执行文件（默认 python）
+---@field keys_midi string|false 打开 MIDI 播放器 / 预设（Windows）
 
 local default_config = {
   backend = "python",
@@ -40,6 +42,8 @@ local default_config = {
     "aiff",
     "ape",
     "wv",
+    "mid",
+    "midi",
   },
   poll_ms = 100, -- 10 frames/s：进度条与歌词跟进
   bar_width = nil,
@@ -49,7 +53,15 @@ local default_config = {
   python = "python",
   --- 界面语言："auto" | "zh" | "en"；Y 切换（L 为单曲循环）
   ui_lang = "auto",
+  --- Windows：打开 MIDI 模式播放器（预设 / .mid）
+  keys_midi = "<leader>mx",
 }
+
+---内置 MIDI 预设 id（与 scripts/midi_synth.py 一致）
+local MIDI_PRESET_IDS = { "twinkle", "ode", "scales", "groove", "sakura" }
+
+local ns_preset_float = vim.api.nvim_create_namespace("music_midi_presets")
+local preset_float = { win = nil, buf = nil }
 
 local config = vim.deepcopy(default_config)
 local EXT = {}
@@ -79,6 +91,8 @@ local EXT = {}
 ---@field paint_lines string[]|nil last painted lines (dirty refresh)
 ---@field paint_cols integer|nil last paint width
 ---@field paint_segs table<integer, MusicSeg[]>|nil last segs for dirty hl
+---@field mode "audio"|"midi"
+---@field preset string|nil 内置 MIDI 预设 id
 
 ---@type table<integer, MusicBufState>
 local state_by_buf = {}
@@ -104,6 +118,91 @@ local function is_audio(path)
   return ext and EXT[ext:lower()] == true
 end
 
+local function is_midi_path(path)
+  if not path or path == "" then
+    return false
+  end
+  local ext = path:match("%.([%w]+)$")
+  if not ext then
+    return false
+  end
+  ext = ext:lower()
+  return ext == "mid" or ext == "midi"
+end
+
+local function is_midi_preset(name)
+  if not name or name == "" then
+    return false
+  end
+  local key = tostring(name):lower():gsub("%s+", "")
+  for _, id in ipairs(MIDI_PRESET_IDS) do
+    if id == key then
+      return true
+    end
+  end
+  return false
+end
+
+---@param st MusicBufState|nil
+local function is_midi_mode(st)
+  return st and st.mode == "midi"
+end
+
+---当前 buffer 对应的播放引擎（audio player / midi）
+---@param st MusicBufState|nil
+local function engine(st)
+  if is_midi_mode(st) then
+    return midi
+  end
+  return player
+end
+
+local function stop_other_engine(mode)
+  if mode == "midi" then
+    pcall(function()
+      player.stop()
+    end)
+  else
+    pcall(function()
+      midi.stop()
+    end)
+  end
+end
+
+local function stop_all_engines()
+  pcall(function()
+    player.stop()
+  end)
+  pcall(function()
+    midi.stop()
+  end)
+end
+
+local function close_preset_float()
+  if preset_float.win and vim.api.nvim_win_is_valid(preset_float.win) then
+    pcall(vim.api.nvim_win_close, preset_float.win, true)
+  end
+  if preset_float.buf and vim.api.nvim_buf_is_valid(preset_float.buf) then
+    pcall(vim.api.nvim_buf_delete, preset_float.buf, { force = true })
+  end
+  preset_float.win, preset_float.buf = nil, nil
+end
+
+local function midi_preset_list()
+  local st = midi.get_state()
+  local list = st.presets or {}
+  if #list == 0 then
+    return {
+      { id = "twinkle", title = "小星星 / Twinkle" },
+      { id = "ode", title = "欢乐颂 / Ode to Joy" },
+      { id = "scales", title = "乐器巡演 / Scales" },
+      { id = "groove", title = "迷你律动 / Groove" },
+      { id = "sakura", title = "五声音韵 / Pentatonic" },
+    }
+  end
+  return list
+end
+
 local function fmt_time(sec)
   if sec == nil or sec < 0 or sec ~= sec then
     return "--:--"
@@ -123,10 +222,15 @@ local function list_siblings(path)
   path = vim.fn.fnamemodify(path, ":p")
   local dir = vim.fn.fnamemodify(path, ":h")
   local files = vim.fn.glob(dir .. "/*", false, true)
+  local want_midi = is_midi_path(path)
   local audio = {}
   for _, f in ipairs(files) do
     if vim.fn.isdirectory(f) == 0 and is_audio(f) then
-      table.insert(audio, vim.fn.fnamemodify(f, ":p"))
+      local fmidi = is_midi_path(f)
+      -- MIDI 与普通音频分目录列表，互不混排
+      if fmidi == want_midi then
+        table.insert(audio, vim.fn.fnamemodify(f, ":p"))
+      end
     end
   end
   table.sort(audio, function(a, b)
@@ -428,7 +532,7 @@ local function load_session()
     return nil
   end
   local ok, data = pcall(vim.json.decode, table.concat(lines, "\n"))
-  if ok and type(data) == "table" and data.path then
+  if ok and type(data) == "table" and (data.path or data.preset) then
     return data
   end
   return nil
@@ -436,11 +540,27 @@ end
 
 ---Persist last dir / file / position / volume (for Alt+M restore).
 local function save_session()
-  player.poll()
-  local pst = player.get_state()
+  local st = active_buf and state_by_buf[active_buf]
+  local eng = engine(st)
+  eng.poll()
+  local pst = eng.get_state()
   local path = pst.path
-  if (not path or path == "") and active_buf and state_by_buf[active_buf] then
-    path = state_by_buf[active_buf].path
+  if (not path or path == "") and st then
+    path = st.path
+  end
+  -- 预设 MIDI：无真实文件则跳过会话（或记 preset）
+  if (not path or path == "") and st and st.preset then
+    local data = {
+      mode = "midi",
+      preset = st.preset,
+      position = tonumber(pst.position) or 0,
+      volume = tonumber(pst.volume) or config.volume,
+    }
+    pcall(function()
+      vim.fn.mkdir(vim.fn.fnamemodify(session_path(), ":h"), "p")
+      vim.fn.writefile({ vim.json.encode(data) }, session_path())
+    end)
+    return
   end
   if not path or path == "" then
     return
@@ -452,6 +572,7 @@ local function save_session()
     position = tonumber(pst.position) or 0,
     volume = tonumber(pst.volume) or config.volume,
     loop = not not pst.loop,
+    mode = is_midi_path(path) and "midi" or "audio",
   }
   pcall(function()
     vim.fn.mkdir(vim.fn.fnamemodify(session_path(), ":h"), "p")
@@ -682,7 +803,11 @@ end
 local function track_status(st, pst)
   local status = pst.status or "idle"
   local pos = pst.position or 0
-  if pst.path and st.path and norm_path(pst.path) ~= norm_path(st.path) then
+  if is_midi_mode(st) then
+    -- MIDI：允许 path 尚未回写（预设）
+    return status, pos, pst.duration
+  end
+  if pst.path and st.path and st.path ~= "" and norm_path(pst.path) ~= norm_path(st.path) then
     -- different track still loading in daemon
     status = "idle"
     pos = 0
@@ -695,15 +820,38 @@ end
 ---@return MusicHit[] hits
 local function build_ui(buf, st)
   ensure_hl()
-  local pst = player.get_state()
+  local pst = engine(st).get_state()
   local w = win_width(buf)
   local content_w = math.max(28, w - 4)
   local bar_w = config.bar_width or math.min(content_w - 4, math.max(24, w - 10))
+  local midi_mode = is_midi_mode(st)
 
-  local title = vim.fn.fnamemodify(st.path, ":t")
+  local title
+  if midi_mode then
+    title = pst.title
+    if not title or title == "" then
+      if st.preset and st.preset ~= "" then
+        title = st.preset
+      elseif st.path and st.path ~= "" then
+        title = vim.fn.fnamemodify(st.path, ":t")
+      else
+        title = require("music.i18n").t("midi_badge")
+      end
+    end
+  else
+    title = vim.fn.fnamemodify(st.path, ":t")
+  end
   local status, pos, dur = track_status(st, pst)
+  if status == "loading" then
+    local i18n = require("music.i18n")
+    -- reuse idle highlight for loading
+  end
   local playing = status == "playing"
   local slabel, shl = status_label(status)
+  if status == "loading" then
+    slabel = require("music.i18n").t("loading")
+    shl = "MusicMeta"
+  end
 
   local lines = {}
   local segs_by_row = {}
@@ -730,14 +878,16 @@ local function build_ui(buf, st)
     L:gap(1):add("|", "MusicBarBracket")
     local fill_n, has_thumb, empty_n = progress_segments(pos, dur, bar_w)
     local bar_d0 = L.disp + 1
+    -- MIDI 暂不支持 seek：进度条仅展示
+    local seek_action = midi_mode and nil or "seek"
     if fill_n > 0 then
-      L:add(string.rep("#", fill_n), "MusicBarFill", "seek", { bar_d0 = bar_d0, bar_w = bar_w })
+      L:add(string.rep("#", fill_n), "MusicBarFill", seek_action, seek_action and { bar_d0 = bar_d0, bar_w = bar_w } or nil)
     end
     if has_thumb then
-      L:add("|", "MusicBarThumb", "seek", { bar_d0 = bar_d0, bar_w = bar_w })
+      L:add("|", "MusicBarThumb", seek_action, seek_action and { bar_d0 = bar_d0, bar_w = bar_w } or nil)
     end
     if empty_n > 0 then
-      L:add(string.rep("-", empty_n), "MusicBarEmpty", "seek", { bar_d0 = bar_d0, bar_w = bar_w })
+      L:add(string.rep("-", empty_n), "MusicBarEmpty", seek_action, seek_action and { bar_d0 = bar_d0, bar_w = bar_w } or nil)
     end
     L:add("|", "MusicBarBracket")
     push(L)
@@ -746,6 +896,10 @@ local function build_ui(buf, st)
   ---Current lyric line(s) with karaoke progress (CN+EN same timestamp → 2 lines).
   local function push_current_lyrics()
     local i18n = require("music.i18n")
+    if midi_mode then
+      -- MIDI：不显示歌词行，省高度
+      return
+    end
     local texts, progress = lyrics.get_current_display(pos)
     if not texts or #texts == 0 then
       local L = new_line()
@@ -787,17 +941,28 @@ local function build_ui(buf, st)
     L:sep(", ")
     L:btn(i18n.t("stop"), "x", "MusicBtn", "stop")
     L:sep(", ")
-    if pst.loop then
-      L:btn(i18n.t("loop_on"), "L", "MusicBtnLoopOn", "loop")
+    if not midi_mode then
+      if pst.loop then
+        L:btn(i18n.t("loop_on"), "L", "MusicBtnLoopOn", "loop")
+      else
+        L:btn(i18n.t("loop_off"), "L", "MusicBtnLoopOff", "loop")
+      end
+      L:sep(", ")
+      L:btn(i18n.t("restart"), "r", "MusicBtn", "restart")
+      L:sep(", ")
+      L:btn(i18n.t("lyrics"), "g", "MusicBtn", "lyrics")
+      L:sep(", ")
+      L:btn(i18n.t("list"), "f", "MusicBtn", "playlist")
     else
-      L:btn(i18n.t("loop_off"), "L", "MusicBtnLoopOff", "loop")
+      L:btn(i18n.t("restart"), "r", "MusicBtn", "restart")
+      L:sep(", ")
+      -- MIDI：同目录 mid 列表 + 内置预设
+      if st.path and st.path ~= "" and #st.siblings > 0 then
+        L:btn(i18n.t("list"), "f", "MusicBtn", "playlist")
+        L:sep(", ")
+      end
+      L:btn(i18n.t("presets"), "m", "MusicBtn", "presets")
     end
-    L:sep(", ")
-    L:btn(i18n.t("restart"), "r", "MusicBtn", "restart")
-    L:sep(", ")
-    L:btn(i18n.t("lyrics"), "g", "MusicBtn", "lyrics")
-    L:sep(", ")
-    L:btn(i18n.t("list"), "f", "MusicBtn", "playlist")
     L:sep(", ")
     L:btn(i18n.t("lang"), "Y", "MusicBtn", "lang")
     L:sep(", ")
@@ -808,7 +973,8 @@ local function build_ui(buf, st)
   -- 唯一布局：标题 + 状态时间 + 进度条 + 歌词 + 操作行
   do
     local L = new_line()
-    L:gap(1):add("MUSIC", "MusicHeader"):gap(2):add(title, "MusicTitle")
+    local badge = midi_mode and require("music.i18n").t("midi_badge") or "MUSIC"
+    L:gap(1):add(badge, "MusicHeader"):gap(2):add(title, "MusicTitle")
     push(L)
   end
   do
@@ -821,8 +987,9 @@ local function build_ui(buf, st)
       :add(fmt_time(dur), "MusicTime")
       :gap(2)
       :add(string.format("%s%d%%", require("music.i18n").t("volume"), pst.volume or config.volume), "MusicMeta")
-      :gap(2)
-      :add(string.format("%d/%d", st.index, #st.siblings), "MusicMeta")
+    if not midi_mode or (st.siblings and #st.siblings > 0 and st.path and st.path ~= "") then
+      L:gap(2):add(string.format("%d/%d", st.index or 1, math.max(1, #(st.siblings or {}))), "MusicMeta")
+    end
     push(L)
   end
   push_progress()
@@ -963,7 +1130,7 @@ local function render(buf)
   if not st or not vim.api.nvim_buf_is_valid(buf) then
     return
   end
-  player.poll()
+  engine(st).poll()
   paint(buf, { force = true })
 end
 
@@ -1020,21 +1187,59 @@ local function mouse_display_pos(buf)
   return mouse.line, vcol
 end
 
+local play_path_in_buf ---@type fun(buf: integer, path: string, opts?: table)
+local play_preset_in_buf ---@type fun(buf: integer, name: string, opts?: table)
+local open_preset_float ---@type fun()
+
 local function do_toggle(buf, st)
-  local pst = player.get_state()
-  if pst.status == "idle" or pst.status == "stopped" or not pst.path then
-    player.play(st.path, pst.position or 0)
+  local eng = engine(st)
+  local pst = eng.get_state()
+  if is_midi_mode(st) then
+    if pst.status == "idle" or pst.status == "stopped" then
+      if st.preset and st.preset ~= "" then
+        midi.load_preset(st.preset, true)
+      elseif st.path and st.path ~= "" then
+        midi.load_path(st.path, true)
+      else
+        open_preset_float()
+        return
+      end
+    else
+      midi.toggle()
+    end
   else
-    player.toggle()
+    if pst.status == "idle" or pst.status == "stopped" or not pst.path then
+      player.play(st.path, pst.position or 0)
+    else
+      player.toggle()
+    end
   end
   render(buf)
 end
 
-local play_path_in_buf ---@type fun(buf: integer, path: string, opts?: table)
-
 local function goto_sibling(buf, delta)
   local st = state_by_buf[buf]
-  if not st or #st.siblings == 0 then
+  if not st then
+    return
+  end
+  -- 预设模式：循环内置曲目
+  if is_midi_mode(st) and st.preset and (not st.path or st.path == "") then
+    local presets = midi_preset_list()
+    if #presets == 0 then
+      return
+    end
+    local idx = st.index or 1
+    idx = idx + delta
+    if idx < 1 then
+      idx = #presets
+    elseif idx > #presets then
+      idx = 1
+    end
+    local p = presets[idx]
+    play_preset_in_buf(buf, p.id or p.name, { auto_play = true })
+    return
+  end
+  if not st.siblings or #st.siblings == 0 then
     return
   end
   local idx = st.index + delta
@@ -1047,6 +1252,9 @@ local function goto_sibling(buf, delta)
 end
 
 local function seek_from_hit(buf, st, hit, col)
+  if is_midi_mode(st) then
+    return
+  end
   local pst = player.get_state()
   local dur = pst.duration
   if not dur or dur <= 0 then
@@ -1068,6 +1276,7 @@ local function seek_from_hit(buf, st, hit, col)
 end
 
 local function run_action(buf, st, action, hit, col)
+  local eng = engine(st)
   if action == "toggle" then
     do_toggle(buf, st)
   elseif action == "prev" then
@@ -1075,34 +1284,53 @@ local function run_action(buf, st, action, hit, col)
   elseif action == "next" then
     goto_sibling(buf, 1)
   elseif action == "stop" then
-    player.stop()
+    eng.stop()
     render(buf)
   elseif action == "seek_back" then
-    player.seek(-5)
-    render(buf)
+    if not is_midi_mode(st) then
+      player.seek(-5)
+      render(buf)
+    end
   elseif action == "seek_fwd" then
-    player.seek(5)
-    render(buf)
+    if not is_midi_mode(st) then
+      player.seek(5)
+      render(buf)
+    end
   elseif action == "vol_up" then
-    player.volume_up(5)
+    eng.volume_up(5)
     render(buf)
   elseif action == "vol_down" then
-    player.volume_down(5)
+    eng.volume_down(5)
     render(buf)
   elseif action == "loop" then
+    if is_midi_mode(st) then
+      return
+    end
     local on = player.set_loop()
     local i18n = require("music.i18n")
     vim.notify(on and i18n.t("loop_notify_on") or i18n.t("loop_notify_off"), vim.log.levels.INFO)
     render(buf)
   elseif action == "restart" then
-    player.play(st.path, 0)
+    if is_midi_mode(st) then
+      if st.preset and st.preset ~= "" then
+        midi.load_preset(st.preset, true)
+      elseif st.path and st.path ~= "" then
+        midi.load_path(st.path, true)
+      end
+    else
+      player.play(st.path, 0)
+    end
     render(buf)
   elseif action == "close" then
     M.close(buf)
   elseif action == "lyrics" then
-    M.toggle_lyrics()
+    if not is_midi_mode(st) then
+      M.toggle_lyrics()
+    end
   elseif action == "playlist" then
     M.toggle_playlist()
+  elseif action == "presets" then
+    open_preset_float()
   elseif action == "lang" then
     M.toggle_ui_lang(buf)
   elseif action == "seek" then
@@ -1132,6 +1360,9 @@ function M.toggle_lyrics()
   end
   local buf = active_buf
   local st = buf and state_by_buf[buf]
+  if is_midi_mode(st) then
+    return
+  end
   local path = st and st.path or (player.get_state().path)
   local mwin = music_win_of(buf)
   lyrics.toggle(mwin, path)
@@ -1173,6 +1404,11 @@ function M.toggle_playlist()
   local st = buf and state_by_buf[buf]
   if not st then
     vim.notify(require("music.i18n").t("no_playing"), vim.log.levels.INFO)
+    return
+  end
+  -- 纯预设 MIDI：列表改为内置曲目
+  if is_midi_mode(st) and (not st.path or st.path == "" or not st.siblings or #st.siblings == 0) then
+    open_preset_float()
     return
   end
   local mwin = music_win_of(buf)
@@ -1266,6 +1502,10 @@ end
 play_path_in_buf = function(buf, path, opts)
   opts = opts or {}
   path = vim.fn.fnamemodify(path, ":p")
+  local midi_file = is_midi_path(path)
+  local mode = midi_file and "midi" or "audio"
+  stop_other_engine(mode)
+
   local siblings, index = list_siblings(path)
   local st = state_by_buf[buf]
   if not st then
@@ -1277,12 +1517,16 @@ play_path_in_buf = function(buf, path, opts)
       segs = {},
       dragging = false,
       drag_action = nil,
+      mode = mode,
+      preset = nil,
     }
     state_by_buf[buf] = st
   else
     st.path = path
     st.siblings = siblings
     st.index = index
+    st.mode = mode
+    st.preset = nil
   end
 
   -- track/layout change → next paint is full
@@ -1298,20 +1542,190 @@ play_path_in_buf = function(buf, path, opts)
   start_poll()
 
   local start_pos = tonumber(opts.start_pos) or 0
-  if opts.auto_play ~= false and config.auto_play then
-    local ok, err = player.play(path, start_pos)
-    if not ok then
-      vim.notify("music: " .. tostring(err), vim.log.levels.ERROR)
+  local want_play = opts.auto_play ~= false and config.auto_play
+  if midi_file then
+    lyrics.close_panel()
+    midi.load_path(path, want_play)
+    if not want_play then
+      -- load only
     end
-  elseif start_pos > 0 and opts.seek_only then
-    player.play(path, start_pos)
-    player.pause()
+  else
+    if want_play then
+      local ok, err = player.play(path, start_pos)
+      if not ok then
+        vim.notify("music: " .. tostring(err), vim.log.levels.ERROR)
+      end
+    elseif start_pos > 0 and opts.seek_only then
+      player.play(path, start_pos)
+      player.pause()
+    end
+    -- reload lyrics for new track (keep panel if open)
+    lyrics.on_track(path, start_pos)
   end
-  -- reload lyrics for new track (keep panel if open)
-  lyrics.on_track(path, start_pos)
   sync_playlist(st)
   render(buf)
   save_session()
+end
+
+play_preset_in_buf = function(buf, name, opts)
+  opts = opts or {}
+  name = tostring(name or ""):lower()
+  stop_other_engine("midi")
+  midi.ensure()
+
+  local presets = midi_preset_list()
+  local index = 1
+  for i, p in ipairs(presets) do
+    if (p.id or p.name) == name then
+      index = i
+      break
+    end
+  end
+
+  local st = state_by_buf[buf]
+  if not st then
+    st = {
+      path = "",
+      siblings = {},
+      index = index,
+      hits = {},
+      segs = {},
+      dragging = false,
+      drag_action = nil,
+      mode = "midi",
+      preset = name,
+    }
+    state_by_buf[buf] = st
+  else
+    st.path = ""
+    st.siblings = {}
+    st.index = index
+    st.mode = "midi"
+    st.preset = name
+  end
+  st.paint_lines = nil
+  st.paint_segs = nil
+  st.paint_cols = nil
+
+  pcall(vim.api.nvim_buf_set_name, buf, "music://midi/" .. name)
+  vim.b[buf].music_player = true
+  active_buf = buf
+  ensure_hl()
+  lyrics.close_panel()
+  playlist.close_panel()
+
+  local want_play = opts.auto_play ~= false and config.auto_play
+  midi.load_preset(name, want_play)
+  start_poll()
+  render(buf)
+  save_session()
+end
+
+open_preset_float = function()
+  close_preset_float()
+  M.ensure_setup()
+  midi.ensure()
+  midi.list_presets()
+  vim.wait(300, function()
+    local s = midi.get_state()
+    return s.presets and #s.presets > 0
+  end, 30)
+
+  local i18n = require("music.i18n")
+  local presets = midi_preset_list()
+  local cur_idx = 1
+  local st = active_buf and state_by_buf[active_buf]
+  if st and st.preset then
+    for i, p in ipairs(presets) do
+      if (p.id or p.name) == st.preset then
+        cur_idx = i
+        break
+      end
+    end
+  end
+
+  local lines = { " " .. i18n.t("presets_title") .. " ", "" }
+  for i, p in ipairs(presets) do
+    local mark = (i == cur_idx) and "● " or "○ "
+    lines[#lines + 1] = mark .. (p.title or p.name or p.id or ("#" .. i))
+  end
+
+  local fbuf = vim.api.nvim_create_buf(false, true)
+  vim.api.nvim_buf_set_lines(fbuf, 0, -1, false, lines)
+  vim.bo[fbuf].modifiable = false
+  vim.bo[fbuf].bufhidden = "wipe"
+  vim.b[fbuf].music_midi_presets = true
+
+  local width = 40
+  for _, l in ipairs(lines) do
+    width = math.max(width, vim.fn.strdisplaywidth(l) + 4)
+  end
+  width = math.min(width, math.floor(vim.o.columns * 0.7))
+  local height = math.min(#lines + 2, math.floor(vim.o.lines * 0.5))
+  local fwin = vim.api.nvim_open_win(fbuf, true, {
+    relative = "editor",
+    width = width,
+    height = height,
+    row = math.max(0, math.floor((vim.o.lines - height) / 2) - 1),
+    col = math.max(0, math.floor((vim.o.columns - width) / 2)),
+    style = "minimal",
+    border = "rounded",
+    title = " " .. i18n.t("presets") .. " ",
+    title_pos = "center",
+    zindex = 80,
+  })
+  pcall(function()
+    vim.wo[fwin].cursorline = true
+    vim.wo[fwin].number = false
+    vim.wo[fwin].wrap = false
+  end)
+  preset_float.win = fwin
+  preset_float.buf = fbuf
+  pcall(vim.api.nvim_buf_set_extmark, fbuf, ns_preset_float, cur_idx + 1, 0, {
+    end_row = cur_idx + 1,
+    line_hl_group = "MusicBtnLoopOn",
+  })
+  pcall(vim.api.nvim_win_set_cursor, fwin, { cur_idx + 2, 0 })
+
+  local function pick_line(lnum)
+    local i = lnum - 2
+    if i < 1 or i > #presets then
+      return
+    end
+    local p = presets[i]
+    local id = p.id or p.name
+    close_preset_float()
+    local b = active_buf
+    if not b or not vim.api.nvim_buf_is_valid(b) then
+      -- 无播放器 buffer：走 open_midi 创建
+      M.open_midi({ preset = id, play = true })
+      return
+    end
+    play_preset_in_buf(b, id, { auto_play = true })
+    vim.notify(i18n.t("midi_loaded") .. tostring(p.title or id), vim.log.levels.INFO)
+  end
+
+  local o = { buffer = fbuf, silent = true, nowait = true }
+  vim.keymap.set("n", "q", close_preset_float, o)
+  vim.keymap.set("n", "<Esc>", close_preset_float, o)
+  vim.keymap.set("n", "<CR>", function()
+    pick_line(vim.api.nvim_win_get_cursor(0)[1])
+  end, o)
+  vim.keymap.set("n", "<LeftRelease>", function()
+    vim.schedule(function()
+      if preset_float.buf and vim.api.nvim_get_current_buf() == preset_float.buf then
+        pick_line(vim.api.nvim_win_get_cursor(0)[1])
+      end
+    end)
+  end, o)
+  for _, lhs in ipairs({ "v", "V", "<C-v>", "gv" }) do
+    pcall(vim.keymap.set, "n", lhs, "<Nop>", o)
+  end
+  for i = 1, math.min(9, #presets) do
+    vim.keymap.set("n", tostring(i), function()
+      pick_line(i + 2)
+    end, o)
+  end
 end
 
 ---True if buffer is shown in any window (current tab).
@@ -1351,17 +1765,24 @@ function M.statusline()
   if any_music_displayed() then
     return ""
   end
-  local pst = player.get_state()
+  local st = active_buf and state_by_buf[active_buf]
+  local pst = engine(st).get_state()
   local path = pst.path
-  if (not path or path == "") and active_buf and state_by_buf[active_buf] then
-    path = state_by_buf[active_buf].path
+  if (not path or path == "") and st then
+    path = st.path
   end
-  if not path or path == "" then
+  local name
+  if path and path ~= "" then
+    name = vim.fn.fnamemodify(path, ":t:r")
+    if name == "" then
+      name = vim.fn.fnamemodify(path, ":t")
+    end
+  elseif st and st.preset then
+    name = st.preset
+  elseif pst.title and pst.title ~= "" then
+    name = pst.title
+  else
     return ""
-  end
-  local name = vim.fn.fnamemodify(path, ":t:r")
-  if name == "" then
-    name = vim.fn.fnamemodify(path, ":t")
   end
   return string.format("[%s,%s/%s]", name, fmt_time(pst.position or 0), fmt_time(pst.duration))
 end
@@ -1407,8 +1828,9 @@ should_poll = function()
     return true
   end
   if config.statusline_when_hidden then
-    local pst = player.get_state()
-    if pst.path and (pst.status == "playing" or pst.status == "paused" or pst.status == "stopped") then
+    local st = active_buf and state_by_buf[active_buf]
+    local pst = engine(st).get_state()
+    if (pst.path or (st and st.preset)) and (pst.status == "playing" or pst.status == "paused" or pst.status == "stopped") then
       return true
     end
     if active_buf and vim.api.nvim_buf_is_valid(active_buf) and state_by_buf[active_buf] then
@@ -1436,17 +1858,21 @@ start_poll = function()
         refresh_statusline_var()
         return
       end
-      player.poll()
+      local st = active_buf and state_by_buf[active_buf]
+      local eng = engine(st)
+      eng.poll()
       local ui_visible = active_buf
         and vim.api.nvim_buf_is_valid(active_buf)
         and is_buf_displayed(active_buf)
       if ui_visible then
         paint(active_buf) -- dirty refresh
-        local pst = player.get_state()
-        if pst.path then
-          lyrics.on_track(pst.path, pst.position or 0)
-        else
-          lyrics.follow(pst.position or 0)
+        if not is_midi_mode(st) then
+          local pst = player.get_state()
+          if pst.path then
+            lyrics.on_track(pst.path, pst.position or 0)
+          else
+            lyrics.follow(pst.position or 0)
+          end
         end
       end
       refresh_statusline_var()
@@ -1481,6 +1907,31 @@ local function on_ended()
   end
   local st = state_by_buf[buf]
   if not st then
+    return
+  end
+  if is_midi_mode(st) then
+    local mst = midi.get_state()
+    if mst.loop then
+      if st.preset and st.preset ~= "" then
+        midi.load_preset(st.preset, true)
+      elseif st.path and st.path ~= "" then
+        midi.load_path(st.path, true)
+      end
+      render(buf)
+      return
+    end
+    if config.auto_next then
+      if st.preset and (not st.path or st.path == "") then
+        goto_sibling(buf, 1)
+      elseif st.siblings and #st.siblings > 1 then
+        goto_sibling(buf, 1)
+      else
+        render(buf)
+      end
+    else
+      render(buf)
+    end
+    save_session()
     return
   end
   local pst = player.get_state()
@@ -1590,58 +2041,68 @@ local function bind(buf)
   map("<PageDown>", function()
     goto_sibling(buf, 1)
   end, "music: next")
-  map("x", function()
-    player.stop()
+  map("x", with_st(function(st)
+    engine(st).stop()
     paint(buf)
-  end, "music: stop")
+  end), "music: stop")
   -- rebind after Nop
-  map("l", function()
-    player.seek(5)
+  map("l", with_st(function(st)
+    if not is_midi_mode(st) then
+      player.seek(5)
+      paint(buf)
+    end
+  end), "music: +5s")
+  map("h", with_st(function(st)
+    if not is_midi_mode(st) then
+      player.seek(-5)
+      paint(buf)
+    end
+  end), "music: -5s")
+  map("<Right>", with_st(function(st)
+    if not is_midi_mode(st) then
+      player.seek(5)
+      paint(buf)
+    end
+  end), "music: +5s")
+  map("<Left>", with_st(function(st)
+    if not is_midi_mode(st) then
+      player.seek(-5)
+      paint(buf)
+    end
+  end), "music: -5s")
+  map("+", with_st(function(st)
+    engine(st).volume_up(5)
     paint(buf)
-  end, "music: +5s")
-  map("h", function()
-    player.seek(-5)
+  end), "music: vol+")
+  map("=", with_st(function(st)
+    engine(st).volume_up(5)
     paint(buf)
-  end, "music: -5s")
-  map("<Right>", function()
-    player.seek(5)
+  end), "music: vol+")
+  map("-", with_st(function(st)
+    engine(st).volume_down(5)
     paint(buf)
-  end, "music: +5s")
-  map("<Left>", function()
-    player.seek(-5)
-    paint(buf)
-  end, "music: -5s")
-  map("+", function()
-    player.volume_up(5)
-    paint(buf)
-  end, "music: vol+")
-  map("=", function()
-    player.volume_up(5)
-    paint(buf)
-  end, "music: vol+")
-  map("-", function()
-    player.volume_down(5)
-    paint(buf)
-  end, "music: vol-")
+  end), "music: vol-")
   -- Up/Down arrows → volume
-  map("<Up>", function()
-    player.volume_up(5)
+  map("<Up>", with_st(function(st)
+    engine(st).volume_up(5)
     paint(buf)
-  end, "music: vol+")
-  map("<Down>", function()
-    player.volume_down(5)
+  end), "music: vol+")
+  map("<Down>", with_st(function(st)
+    engine(st).volume_down(5)
     paint(buf)
-  end, "music: vol-")
+  end), "music: vol-")
   map("r", with_st(function(st)
-    player.play(st.path, 0)
-    paint(buf)
+    run_action(buf, st, "restart", nil, 0)
   end), "music: restart")
-  map("L", function()
+  map("L", with_st(function(st)
+    if is_midi_mode(st) then
+      return
+    end
     local on = player.set_loop()
     local i18n = require("music.i18n")
     vim.notify(on and i18n.t("loop_notify_on") or i18n.t("loop_notify_off"), vim.log.levels.INFO)
     paint(buf)
-  end, "music: loop")
+  end), "music: loop")
   map("Y", function()
     M.toggle_ui_lang(buf)
   end, "music: toggle UI language")
@@ -1651,6 +2112,11 @@ local function bind(buf)
   map("f", function()
     M.toggle_playlist()
   end, "music: toggle playlist")
+  map("m", with_st(function(st)
+    if is_midi_mode(st) then
+      open_preset_float()
+    end
+  end), "music: midi presets")
   map("<Tab>", function()
     if playlist.is_open() then
       focus_tab_cycle()
@@ -1660,10 +2126,12 @@ local function bind(buf)
   -- mouse wheel → volume
   local function wheel_vol(delta)
     return function()
+      local st = state_by_buf[buf]
+      local eng = engine(st)
       if delta > 0 then
-        player.volume_up(5)
+        eng.volume_up(5)
       else
-        player.volume_down(5)
+        eng.volume_down(5)
       end
       paint(buf)
     end
@@ -1840,17 +2308,21 @@ local function attach_player_autocmds(buf)
     once = true,
     callback = function()
       restore_player_cursor()
+      close_preset_float()
       for _, win in ipairs(vim.api.nvim_list_wins()) do
         if vim.api.nvim_win_get_buf(win) == buf then
           pcall(vim.api.nvim_set_option_value, "winhl", "", { win = win })
         end
       end
       save_session()
+      local st = state_by_buf[buf]
       state_by_buf[buf] = nil
       if active_buf == buf then
         active_buf = nil
         stop_poll()
-        player.stop()
+        stop_all_engines()
+      elseif st then
+        engine(st).stop()
       end
     end,
   })
@@ -1887,28 +2359,16 @@ local function attach_player_autocmds(buf)
   })
 end
 
----@param path string
----@param opts? { win?: integer, replace_buf?: integer, auto_play?: boolean, close_win?: integer, bottom_split?: boolean, start_pos?: number }
+---确保有播放器 buffer（复用或新建底栏）
+---@param opts? { win?: integer, replace_buf?: integer, close_win?: integer, bottom_split?: boolean }
 ---@return integer|nil buf
-function M.open(path, opts)
-  M.ensure_setup()
+local function ensure_player_buf(opts)
   opts = opts or {}
-  path = vim.fn.expand(path or "")
-  path = vim.fn.fnamemodify(path, ":p")
-  if path == "" or vim.fn.filereadable(path) ~= 1 then
-    vim.notify(require("music.i18n").t("not_found") .. tostring(path), vim.log.levels.ERROR)
-    return nil
-  end
-  if not is_audio(path) then
-    vim.notify(require("music.i18n").t("not_audio") .. path, vim.log.levels.WARN)
-  end
-
   local existing_win, existing_buf = find_music_win()
   local close_win = opts.close_win
   local cur_tab = vim.api.nvim_get_current_tabpage()
   local bottom = opts.bottom_split == true
 
-  -- Singleton buffer: reuse if exists
   if existing_buf and vim.api.nvim_buf_is_valid(existing_buf) and vim.b[existing_buf].music_player then
     local win
     if bottom then
@@ -1916,9 +2376,8 @@ function M.open(path, opts)
       win = open_bottom_split(existing_buf, estimate_ui_lines())
       ensure_singleton_window(win, existing_buf)
     else
-      -- Prefer covering existing player / content pane (NERDTree `o`)
       win = find_content_win(opts.win or existing_win)
-      if not is_usable_content_win(existing_win) or vim.api.nvim_win_get_tabpage(existing_win) ~= cur_tab then
+      if not is_usable_content_win(existing_win) or (existing_win and vim.api.nvim_win_get_tabpage(existing_win) ~= cur_tab) then
         win = find_content_win(opts.win)
       elseif is_usable_content_win(existing_win) then
         win = existing_win
@@ -1938,11 +2397,6 @@ function M.open(path, opts)
     if close_win then
       close_orphan_split(close_win, win)
     end
-    play_path_in_buf(existing_buf, path, {
-      auto_play = opts.auto_play,
-      start_pos = opts.start_pos,
-    })
-    -- 底栏分屏不抢焦；整窗打开时聚焦播放器
     if not bottom then
       pcall(vim.api.nvim_set_current_win, win)
     end
@@ -1973,13 +2427,100 @@ function M.open(path, opts)
   if close_win then
     close_orphan_split(close_win, win)
   end
+  if not bottom then
+    pcall(vim.api.nvim_set_current_win, win)
+  end
+  return buf
+end
 
+---@param path string
+---@param opts? { win?: integer, replace_buf?: integer, auto_play?: boolean, close_win?: integer, bottom_split?: boolean, start_pos?: number }
+---@return integer|nil buf
+function M.open(path, opts)
+  M.ensure_setup()
+  opts = opts or {}
+  -- 允许预设名：:Music twinkle
+  local raw = vim.trim(path or "")
+  if is_midi_preset(raw) and vim.fn.filereadable(raw) ~= 1 then
+    return M.open_midi({ preset = raw:lower(), play = opts.auto_play ~= false })
+  end
+  path = vim.fn.expand(path or "")
+  path = vim.fn.fnamemodify(path, ":p")
+  if path == "" or vim.fn.filereadable(path) ~= 1 then
+    vim.notify(require("music.i18n").t("not_found") .. tostring(path), vim.log.levels.ERROR)
+    return nil
+  end
+  if not is_audio(path) then
+    vim.notify(require("music.i18n").t("not_audio") .. path, vim.log.levels.WARN)
+  end
+
+  local buf = ensure_player_buf(opts)
+  if not buf then
+    return nil
+  end
   play_path_in_buf(buf, path, {
     auto_play = opts.auto_play,
     start_pos = opts.start_pos,
   })
-  if not bottom then
-    pcall(vim.api.nvim_set_current_win, win)
+  return buf
+end
+
+---打开 MIDI 模式：预设名 / .mid 路径 / 空闲（可按 m 选预设）
+---@param opts? { path?: string, preset?: string, play?: boolean, win?: integer, replace_buf?: integer, bottom_split?: boolean }
+---@return integer|nil buf
+function M.open_midi(opts)
+  M.ensure_setup()
+  opts = opts or {}
+  if vim.fn.has("win32") ~= 1 and vim.fn.has("win64") ~= 1 then
+    vim.notify(require("music.i18n").t("midi_need_win"), vim.log.levels.ERROR)
+    return nil
+  end
+  local play = opts.play
+  if play == nil then
+    play = config.auto_play ~= false
+  end
+  local buf = ensure_player_buf({
+    win = opts.win,
+    replace_buf = opts.replace_buf,
+    bottom_split = opts.bottom_split ~= false, -- 默认底栏
+  })
+  if not buf then
+    return nil
+  end
+  if opts.path and opts.path ~= "" then
+    play_path_in_buf(buf, opts.path, { auto_play = play })
+  elseif opts.preset and opts.preset ~= "" then
+    play_preset_in_buf(buf, opts.preset, { auto_play = play })
+  else
+    -- 空闲 MIDI UI
+    stop_other_engine("midi")
+    local st = state_by_buf[buf]
+    if not st then
+      st = {
+        path = "",
+        siblings = {},
+        index = 1,
+        hits = {},
+        segs = {},
+        dragging = false,
+        drag_action = nil,
+        mode = "midi",
+        preset = nil,
+      }
+      state_by_buf[buf] = st
+    else
+      st.path = ""
+      st.siblings = {}
+      st.mode = "midi"
+      st.preset = nil
+      st.paint_lines = nil
+    end
+    pcall(vim.api.nvim_buf_set_name, buf, "music://midi")
+    vim.b[buf].music_player = true
+    active_buf = buf
+    midi.ensure()
+    start_poll()
+    render(buf)
   end
   return buf
 end
@@ -1987,10 +2528,11 @@ end
 function M.close(buf)
   buf = buf or active_buf
   save_session()
+  close_preset_float()
   lyrics.close_panel()
   playlist.close_panel()
   if not buf or not vim.api.nvim_buf_is_valid(buf) then
-    player.stop()
+    stop_all_engines()
     return
   end
   for _, win in ipairs(vim.api.nvim_list_wins()) do
@@ -1998,7 +2540,7 @@ function M.close(buf)
       pcall(vim.api.nvim_set_option_value, "winhl", "", { win = win })
     end
   end
-  player.stop()
+  stop_all_engines()
   state_by_buf[buf] = nil
   if active_buf == buf then
     active_buf = nil
@@ -2011,6 +2553,7 @@ end
 function M.hide_ui()
   M.ensure_setup()
   save_session()
+  close_preset_float()
   lyrics.close_panel()
   playlist.close_panel()
   local buf = active_buf
@@ -2065,18 +2608,31 @@ function M.show_ui()
 
   -- no live buffer: restore from session into bottom split
   local sess = load_session()
-  if sess and sess.path and vim.fn.filereadable(sess.path) == 1 then
+  if sess then
     if type(sess.volume) == "number" then
-      player.set_volume(sess.volume)
+      if sess.mode == "midi" or (sess.path and is_midi_path(sess.path)) then
+        midi.set_volume(sess.volume)
+      else
+        player.set_volume(sess.volume)
+      end
     end
-    if sess.loop ~= nil then
-      player.set_loop(sess.loop)
+    if sess.preset and (not sess.path or sess.path == "") then
+      return M.open_midi({
+        preset = sess.preset,
+        play = true,
+        bottom_split = true,
+      })
     end
-    return M.open(sess.path, {
-      auto_play = true,
-      start_pos = tonumber(sess.position) or 0,
-      bottom_split = true,
-    })
+    if sess.path and vim.fn.filereadable(sess.path) == 1 then
+      if sess.loop ~= nil and not is_midi_path(sess.path) then
+        player.set_loop(sess.loop)
+      end
+      return M.open(sess.path, {
+        auto_play = true,
+        start_pos = tonumber(sess.position) or 0,
+        bottom_split = true,
+      })
+    end
   end
 
   vim.notify(require("music.i18n").t("no_session"), vim.log.levels.INFO)
@@ -2115,7 +2671,12 @@ function M.prev()
 end
 
 function M.stop()
-  player.stop()
+  local st = active_buf and state_by_buf[active_buf]
+  if st then
+    engine(st).stop()
+  else
+    stop_all_engines()
+  end
   if active_buf and vim.api.nvim_buf_is_valid(active_buf) then
     render(active_buf)
   end
@@ -2254,37 +2815,114 @@ function M.setup(user)
     loop = config.loop,
     python = config.python,
   })
+  midi.setup({
+    python = config.python,
+    volume = config.volume,
+  })
   scrub_all_music_winhl()
   ensure_statusline_hook()
   playlist.set_on_close(refit_player_after_list)
   player.on_ended(on_ended)
-  player.on_status(function()
+  midi.on_ended(on_ended)
+  local function on_any_status()
     if active_buf and vim.api.nvim_buf_is_valid(active_buf) and any_music_displayed() then
       paint(active_buf) -- dirty
     end
     refresh_statusline_var()
-  end)
+  end
+  player.on_status(on_any_status)
+  midi.on_status(on_any_status)
 
   vim.api.nvim_create_user_command("Music", function(opts)
-    local path = opts.args
-    if path == nil or path == "" then
-      path = vim.fn.expand("%:p")
-    end
-    if path == nil or path == "" then
+    local arg = vim.trim(opts.args or "")
+    if arg == "" then
+      local cur = vim.fn.expand("%:p")
+      if cur ~= "" and is_audio(cur) then
+        M.open(cur)
+        return
+      end
       -- no path: toggle / restore session
       M.toggle_ui()
       return
     end
-    M.open(path)
+    if is_midi_preset(arg) and vim.fn.filereadable(arg) ~= 1 then
+      M.open_midi({ preset = arg:lower(), play = true })
+      return
+    end
+    if vim.fn.filereadable(arg) == 1 or vim.fn.filereadable(vim.fn.expand(arg)) == 1 then
+      M.open(arg)
+      return
+    end
+    M.open(arg)
   end, {
     nargs = "?",
-    complete = "file",
-    desc = "打开音频播放器；无参则显示/隐藏 UI",
+    complete = function(arglead)
+      local out = {}
+      for _, id in ipairs(MIDI_PRESET_IDS) do
+        if id:find(arglead, 1, true) == 1 then
+          out[#out + 1] = id
+        end
+      end
+      -- 文件补全
+      local files = vim.fn.getcompletion(arglead, "file")
+      for _, f in ipairs(files) do
+        out[#out + 1] = f
+      end
+      return out
+    end,
+    desc = "打开音频/MIDI 播放器；预设名或文件路径；无参则显示/隐藏 UI",
   })
+
+  vim.api.nvim_create_user_command("MusicToggle", function()
+    M.toggle()
+  end, { desc = "播放/暂停" })
+
+  vim.api.nvim_create_user_command("MusicNext", function()
+    M.next()
+  end, { desc = "同目录下一首" })
+
+  vim.api.nvim_create_user_command("MusicPrev", function()
+    M.prev()
+  end, { desc = "同目录上一首" })
+
+  vim.api.nvim_create_user_command("MusicStop", function()
+    M.stop()
+  end, { desc = "停止播放" })
 
   vim.api.nvim_create_user_command("MusicToggleUI", function()
     M.toggle_ui()
   end, { desc = "显示/隐藏 music 播放器（后台继续播）" })
+
+  vim.api.nvim_create_user_command("MusicMidi", function(opts)
+    local arg = vim.trim(opts.args or "")
+    if arg == "" then
+      M.open_midi({ play = false })
+      return
+    end
+    if is_midi_preset(arg) and vim.fn.filereadable(arg) ~= 1 then
+      M.open_midi({ preset = arg:lower(), play = true })
+    elseif vim.fn.filereadable(arg) == 1 or vim.fn.filereadable(vim.fn.expand(arg)) == 1 then
+      M.open_midi({ path = vim.fn.fnamemodify(vim.fn.expand(arg), ":p"), play = true })
+    else
+      M.open_midi({ preset = arg:lower(), play = true })
+    end
+  end, {
+    nargs = "?",
+    complete = function(arglead)
+      local out = {}
+      for _, id in ipairs(MIDI_PRESET_IDS) do
+        if id:find(arglead, 1, true) == 1 then
+          out[#out + 1] = id
+        end
+      end
+      local files = vim.fn.getcompletion(arglead, "file")
+      for _, f in ipairs(files) do
+        out[#out + 1] = f
+      end
+      return out
+    end,
+    desc = "打开 MIDI 播放器；参数为预设名或 .mid 路径",
+  })
 
   if config.auto_open then
     setup_auto_open()
@@ -2310,7 +2948,16 @@ function M.setup(user)
     M.toggle_ui()
   end, { desc = "music: show/hide player UI", silent = true })
 
-  -- leave Neovim: save session + quit python daemon
+  -- MIDI 快捷键（兼容原 mixer <leader>mx）
+  local mk = config.keys_midi
+  if mk and mk ~= false and mk ~= "" then
+    pcall(vim.keymap.del, "n", mk)
+    vim.keymap.set("n", mk, function()
+      M.open_midi({ play = false })
+    end, { silent = true, desc = "music: open MIDI player" })
+  end
+
+  -- leave Neovim: save session + quit python daemons
   local leave_aug = vim.api.nvim_create_augroup("MusicLeave", { clear = true })
   vim.api.nvim_create_autocmd({ "VimLeavePre", "VimLeave" }, {
     group = leave_aug,
@@ -2318,8 +2965,12 @@ function M.setup(user)
       save_session()
       stop_poll()
       player.shutdown()
+      midi.shutdown()
     end,
   })
+
+  -- Windows：后台预热 MIDI 引擎
+  midi.warmup()
 
   ensure_hl()
   vim.g.music_setup_done = true

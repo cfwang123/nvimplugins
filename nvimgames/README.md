@@ -50,7 +50,7 @@ require("nvimgames").setup({
     difficulty = "beginner", -- beginner | intermediate | expert
   },
   sokoban = {
-    -- levels_file = "D:/path/to/levels.json",
+    -- levels_file = "/path/to/levels.json",
     -- remember_level = true,
     -- state_file = ".../sokoban.json",
   },

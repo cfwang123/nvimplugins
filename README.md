@@ -2,7 +2,7 @@
 
 **English** | [中文](README.zh.md)
 
-> **About** — Small experimental Neovim plugins: **mdview** (Markdown preview), **pdfview** / **xlsview** (document previews), **tts** (Windows SAPI speech), **imgbuf** (images), **music** / **mixer** (audio & MIDI), **nvimgames** (mini-games), **drawbuf** (block drawing), **videobuf** (video), **es** (Everything file search). Each plugin installs independently; no hard dependencies.
+> **About** — Small experimental Neovim plugins: **mdview** (Markdown preview), **pdfview** / **xlsview** (document previews), **tts** (Windows SAPI speech), **imgbuf** (images), **music** (audio + Windows MIDI), **nvimgames** (mini-games), **drawbuf** (block drawing), **videobuf** (video), **es** (Everything file search), **qrbuf** (QR codes), **httpbuf** (HTTP scratch), **weather** (forecast). Each plugin installs independently; no hard dependencies.
 
 Focused on fun, practical, low-dependency terminal tooling. Most UIs support **Chinese / English** (default: follow system language; preference is remembered).
 
@@ -22,12 +22,15 @@ Focused on fun, practical, low-dependency terminal tooling. Most UIs support **C
 | **[xlsview](xlsview/)** | Excel (.xlsx/.xlsm) preview: cell color/bold/fill, multi-sheet, width-fit columns. **`L`** toggles language. | [EN](xlsview/README.md) · [中文](xlsview/README.zh.md) |
 | **[tts](tts/)** | Windows SAPI TTS: `<leader>vo` starts from the **segment at the cursor** (press again to jump while playing); white control bar; volume wheel / rate; system default audio device; **EN/中文** button or **`L`**. | [EN](tts/README.md) · [中文](tts/README.zh.md) |
 | **[imgbuf](imgbuf/)** | Image as character art (block/half/braille); fill/fit; auto-open, clipboard; optional pixel HD on WezTerm/Kitty/Ghostty. **`L`** toggles language. | [EN](imgbuf/README.md) · [中文](imgbuf/README.zh.md) |
-| **[music](music/)** | Open audio → buffer player: play/pause, scrub bar, volume, folder prev/next + list, LRC lyrics, session restore. Python daemon; hide UI without focus steal. **`Y`** or button toggles language (`L` = loop). | [EN](music/README.md) · [中文](music/README.zh.md) |
-| **[mixer](mixer/)** | Windows **winmm.dll** MIDI player + built-in presets; `:Mixer` / `<leader>mx`. | [EN](mixer/README.md) · [中文](mixer/README.zh.md) |
+| **[music](music/)** | Open audio → buffer player: play/pause, scrub, volume, folder prev/next + list, LRC lyrics. **Windows MIDI** (`.mid` / presets via **winmm.dll**): `:MusicMidi` / `<leader>mx`. **`Y`** toggles language (`L` = loop). | [EN](music/README.md) · [中文](music/README.zh.md) |
 | **[nvimgames](nvimgames/)** | Minesweeper, Sokoban, **24-point**, Tetris. `:NvimGames` menu. In-game **`u`** (or button) toggles language. | [EN](nvimgames/README.md) · [中文](nvimgames/README.zh.md) |
 | **[drawbuf](drawbuf/)** | Unicode block canvas: pencil/eraser/line/rect/ellipse/fill, truecolor, clickable status bar, undo, `.draw` files, demos. Status **[EN/中]** or **`Y`** for language (`L` = line tool). | [EN](drawbuf/README.md) · [中文](drawbuf/README.zh.md) |
 | **[videobuf](videobuf/)** | Terminal video preview (character frames + control bar); daemon-style backend similar to music. | [EN](videobuf/README.md) · [中文](videobuf/README.zh.md) |
 | **[es](es/)** | Windows **Everything** file search (`es.exe`): `:ES` / `<leader>es` live float picker. | [EN](es/README.md) · [中文](es/README.zh.md) |
+| **[qrbuf](qrbuf/)** | Text → terminal **QR code** float: `:QrBuf` / `<leader>qr`, selection supported. | [EN](qrbuf/README.md) · [中文](qrbuf/README.zh.md) |
+| **[httpbuf](httpbuf/)** | Lightweight **HTTP** request editor + response view: `:HttpBuf` / `<leader>http`, curl or Python. | [EN](httpbuf/README.md) · [中文](httpbuf/README.zh.md) |
+| **[weather](weather/)** | Statusline **city / weather / temp** + `:Weather` / `<leader>we` 10-day table; Open-Meteo public HTTP, hourly cache. | [EN](weather/README.md) · [中文](weather/README.zh.md) |
+| **[ntemoji](ntemoji/)** | **NERDTree** emoji icons (no Nerd Font / no vim-devicons). | [EN](ntemoji/README.md) · [中文](ntemoji/README.zh.md) |
 
 ## UI language (zh / en)
 
@@ -37,10 +40,11 @@ Most plugin UIs support Chinese and English. Default is **`ui_lang = "auto"`** (
 |--------|--------|
 | mdview / pdfview / xlsview / imgbuf | **`L`** in preview |
 | tts | Control bar **EN / 中文** or **`L`** |
-| music / mixer | Button **EN/中(Y)** or **`Y`** (music `L` = single-track loop) |
+| music | Button **EN/中(Y)** or **`Y`** (`L` = single-track loop; MIDI: **`m`** presets) |
 | nvimgames (incl. 24-point) | Footer button or **`u`** |
 | drawbuf | Status **[EN/中]** or **`Y`** (`L` = line tool) |
 | es | **`L`** or **`Ctrl-l`** in picker (default follows system language; remembered) |
+| qrbuf / httpbuf / weather | **`L`** in float |
 
 ```lua
 require("mdview").setup({ ui_lang = "auto" }) -- or "zh" | "en"
@@ -114,11 +118,14 @@ TTS samples: [tts/testdata/](tts/testdata/) (`sample.zh.txt` / `sample.en.txt`).
 | tts | 0.9+ | **Windows** + SAPI; Python3 + **pywin32** |
 | imgbuf | 0.9+ | chafa **or** Python3 + Pillow; HD needs WezTerm/Kitty/Ghostty + Pillow |
 | music | 0.9+ | Python3 + **just_playback** (or pygame fallback) |
-| mixer | 0.9+ | **Windows** + Python3 (**winmm.dll**, stdlib ctypes) |
+| music (MIDI) | 0.9+ | **Windows** + Python3 (**winmm.dll**, stdlib ctypes) — bundled in music |
 | nvimgames | 0.9+ | `termguicolors`; Minesweeper benefits from `mouse=a`; Sokoban ships `data/levels.json` |
 | drawbuf | 0.9+ | `termguicolors`; `mouse=a` recommended |
 | videobuf | 0.9+ | Python3 + **av** (or opencv-python) + **just_playback** |
 | es | 0.9+ | **Windows** + [Everything](https://www.voidtools.com/) + [es.exe CLI](https://www.voidtools.com/support/everything/command_line_interface/) |
+| qrbuf | 0.9+ | Python3 (stdlib, `scripts/qrgen.py`) |
+| httpbuf | 0.9+ | **curl** or Python3 (stdlib urllib) |
+| weather | 0.9+ | Python3 + network (Open-Meteo public HTTP, no key) |
 
 **Startup check**: on load, only **required** pip packages are checked; if missing you get an install prompt. Install opens a log float with live pip output and notifies when done.  
 - Full check (incl. recommended): `:NvimpluginsDeps` (optional plugin names)  
@@ -127,6 +134,17 @@ TTS samples: [tts/testdata/](tts/testdata/) (`sample.zh.txt` / `sample.en.txt`).
 - Auto-install without asking: `let g:nvimplugins_auto_install_deps = 1`  
 - Recommended packages can be dismissed permanently (`stdpath('data')/nvimplugins_deps.json`)  
 This repo has **no npm dependencies**.
+
+## Bundle help
+
+After whole-repo install:
+
+| Action | Description |
+|--------|-------------|
+| **`<leader>hh`** | Help float (`g:nvimplugins_keys_help` to change) |
+| **`:NvimpluginsHelp`** | Same |
+
+Lists **commands** and **current keymaps** per plugin; lines with **▶** run on **Enter / click** (commands that need args are pre-filled on the cmdline).
 
 ## Quick install
 
@@ -152,10 +170,10 @@ Then run **`:PlugInstall`** once (later: `:PlugUpdate`). Optional `require("…"
 Optional subset (before load; names match directories):
 
 ```vim
-let g:nvimplugins_enable = ['mdview', 'pdfview', 'xlsview', 'tts', 'imgbuf', 'music', 'mixer', 'nvimgames']
+let g:nvimplugins_enable = ['mdview', 'pdfview', 'xlsview', 'tts', 'imgbuf', 'music', 'nvimgames']
 ```
 
-Default bundle: `mdview` · `pdfview` · `xlsview` · `tts` · `imgbuf` · `music` · `mixer` · `nvimgames` · `drawbuf` · `videobuf`.
+Default bundle: `mdview` · `pdfview` · `xlsview` · `tts` · `imgbuf` · `music` · `nvimgames` · `drawbuf` · `videobuf` · … · `weather` · `ntemoji`.
 
 #### lazy.nvim
 
@@ -175,7 +193,6 @@ Plug '/path/to/nvimplugins/xlsview'
 Plug '/path/to/nvimplugins/tts'
 Plug '/path/to/nvimplugins/imgbuf'
 Plug '/path/to/nvimplugins/music'
-Plug '/path/to/nvimplugins/mixer'
 Plug '/path/to/nvimplugins/nvimgames'
 Plug '/path/to/nvimplugins/drawbuf'
 Plug '/path/to/nvimplugins/videobuf'
@@ -192,7 +209,6 @@ call plug#end()
   { dir = "/path/to/nvimplugins/tts", name = "tts", lazy = false },
   { dir = "/path/to/nvimplugins/imgbuf", name = "imgbuf", lazy = false },
   { dir = "/path/to/nvimplugins/music", name = "music", lazy = false },
-  { dir = "/path/to/nvimplugins/mixer", name = "mixer", lazy = false },
   { dir = "/path/to/nvimplugins/nvimgames", name = "nvimgames", lazy = false },
   { dir = "/path/to/nvimplugins/drawbuf", name = "drawbuf", lazy = false },
   { dir = "/path/to/nvimplugins/videobuf", name = "videobuf", lazy = false },
@@ -301,7 +317,7 @@ Full option lists: each plugin’s README / `lua/*/config.lua` (or `init.lua`).
 | tts | `<leader>vo` / `<leader>vs` · `L` | Play from cursor segment / stop · language |
 | imgbuf | open image · `L` | Preview · language |
 | music | open audio · `<M-m>` · `Y` | Player · toggle UI · language |
-| mixer | `:Mixer` / `<leader>mx` · `L` | Software mixer · language |
+| music | `:Music` / `:MusicMidi` / `<leader>mx` · `Y` | Audio + Windows MIDI |
 | nvimgames | `:NvimGames` · `u` in-game | Menu · language |
 | drawbuf | `:Draw` · `Y` | Canvas · language |
 
@@ -315,7 +331,7 @@ Full option lists: each plugin’s README / `lua/*/config.lua` (or `init.lua`).
 | tts | [EN](tts/README.md) · [中文](tts/README.zh.md) · [samples](tts/testdata/) |
 | imgbuf | [EN](imgbuf/README.md) · [中文](imgbuf/README.zh.md) |
 | music | [EN](music/README.md) · [中文](music/README.zh.md) |
-| mixer | [EN](mixer/README.md) · [中文](mixer/README.zh.md) |
+
 | nvimgames | [EN](nvimgames/README.md) · [中文](nvimgames/README.zh.md) |
 | drawbuf | [EN](drawbuf/README.md) · [中文](drawbuf/README.zh.md) |
 | videobuf | [EN](videobuf/README.md) · [中文](videobuf/README.zh.md) · [design](videobuf/DESIGN.zh.md) |

@@ -39,7 +39,7 @@
 
 ```vim
 call plug#begin()
-Plug '/path/to/vim/imgbuf'
+Plug '/path/to/nvimplugins/imgbuf'
 call plug#end()
 
 " 可选

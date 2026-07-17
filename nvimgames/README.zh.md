@@ -36,7 +36,7 @@ Neovim 小游戏合集，目前包含：
 
 ```vim
 call plug#begin()
-Plug '/path/to/vim/nvimgames'
+Plug '/path/to/nvimplugins/nvimgames'
 call plug#end()
 
 lua require('nvimgames').setup()
@@ -50,7 +50,7 @@ require("nvimgames").setup({
     difficulty = "beginner", -- beginner | intermediate | expert
   },
   sokoban = {
-    -- levels_file = "D:/path/to/levels.json", -- 可选，默认用插件自带
+    -- levels_file = "/path/to/levels.json", -- 可选，默认用插件自带
     -- remember_level = true,                  -- 记住上次关卡（默认 true）
     -- state_file = ".../sokoban.json",        -- 进度文件路径
   },

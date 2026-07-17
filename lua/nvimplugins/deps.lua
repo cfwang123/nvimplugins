@@ -110,18 +110,6 @@ local SPECS = {
       },
     },
   },
-  mixer = {
-    plugin = "mixer",
-    title = "mixer",
-    python = true,
-    required = {
-      { import = "numpy", pip = "numpy" },
-      { import = "pygame", pip = "pygame" },
-    },
-    recommended = {
-      { import = "mido", pip = "mido", optional = true },
-    },
-  },
 }
 
 local state = {

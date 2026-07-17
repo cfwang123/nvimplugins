@@ -2,7 +2,7 @@
 
 [English](README.md) | **中文**
 
-> **About** — 面向 Neovim 的小型实验与工具插件集合：含 **mdview**（Markdown 预览）、**pdfview** / **xlsview**（文档表格预览）、**tts**（Windows 朗读）、**imgbuf**（图片）、**music** / **mixer**（音频与 MIDI）、**nvimgames**（小游戏）、**drawbuf**（色块绘图）、**videobuf**（视频）、**es**（Everything 搜文件）。各插件可独立安装，互不强制依赖。
+> **About** — 面向 Neovim 的小型实验与工具插件集合：含 **mdview**（Markdown 预览）、**pdfview** / **xlsview**（文档表格预览）、**tts**（Windows 朗读）、**imgbuf**（图片）、**music**（音频 + Windows MIDI）、**nvimgames**（小游戏）、**drawbuf**（色块绘图）、**videobuf**（视频）、**es**（Everything 搜文件）、**qrbuf**（二维码）、**httpbuf**（HTTP 调试）、**weather**（天气）。各插件可独立安装，互不强制依赖。
 
 面向终端里「好玩、好用、少依赖」的实验与日常小工具。多数 UI 支持**中/英文**切换（默认跟随系统语言，可记忆）。
 
@@ -22,12 +22,15 @@
 | **[xlsview](xlsview/)** | Excel（.xlsx/.xlsm）预览：单元格颜色/粗体/底色、多工作表、列宽适配窗口。**`L`** 切换中英文。 | [EN](xlsview/README.md) · [中文](xlsview/README.zh.md) |
 | **[tts](tts/)** | Windows SAPI 朗读：`<leader>vo` **从光标所在段起播**（播放中再按可跳段）；控制条白底；音量/滚轮/语速；系统默认输出设备；**EN/中文** 按钮或 **`L`**。 | [EN](tts/README.md) · [中文](tts/README.zh.md) |
 | **[imgbuf](imgbuf/)** | 图片字符画（block/half/braille），等比/拉伸；自动预览、剪贴板；WezTerm/Kitty/Ghostty 可选像素高清。底栏 **`L`** 中英文。 | [EN](imgbuf/README.md) · [中文](imgbuf/README.zh.md) |
-| **[music](music/)** | 打开音频即 buffer 播放器：播放/暂停/进度条、音量、同目录切歌与列表、LRC 歌词、会话恢复。Python 后台播，可隐藏 UI。**`Y`** 或按钮切换中英文。 | [EN](music/README.md) · [中文](music/README.zh.md) |
-| **[mixer](mixer/)** | Windows **winmm.dll** 播放 MIDI / 内置预设；`:Mixer` / `<leader>mx`。 | [EN](mixer/README.md) · [中文](mixer/README.zh.md) |
+| **[music](music/)** | 打开音频即 buffer 播放器：播放/暂停/进度条、音量、同目录切歌与列表、LRC 歌词。**Windows MIDI**（`.mid` / 内置预设，**winmm.dll**）：`:MusicMidi` / `<leader>mx`。**`Y`** 切换中英文（`L` = 循环）。 | [EN](music/README.md) · [中文](music/README.zh.md) |
 | **[nvimgames](nvimgames/)** | 扫雷、推箱子、**24 点**、俄罗斯方块。`:NvimGames` 选单。各游戏内 **`u`**（或按钮）切换中英文。 | [EN](nvimgames/README.md) · [中文](nvimgames/README.zh.md) |
 | **[drawbuf](drawbuf/)** | Unicode 色块画布：铅笔/橡皮/直线/矩形/椭圆/填充、真彩色、可点状态栏、撤销、`.draw` 存盘与演示图。状态栏 **`[中英]`** 或 **`Y`** 切换语言。 | [EN](drawbuf/README.md) · [中文](drawbuf/README.zh.md) |
 | **[videobuf](videobuf/)** | 终端视频预览（字符画帧 + 控制条）；与 music 类似的守护进程模式。 | [EN](videobuf/README.md) · [中文](videobuf/README.zh.md) |
 | **[es](es/)** | Windows **Everything** 文件搜索（`es.exe`）：`:ES` / `<leader>es` 浮窗即时搜，回车打开。 | [EN](es/README.md) · [中文](es/README.zh.md) |
+| **[qrbuf](qrbuf/)** | 文本 → 终端 **二维码** 浮窗：`:QrBuf` / `<leader>qr`，支持选区。 | [EN](qrbuf/README.md) · [中文](qrbuf/README.zh.md) |
+| **[httpbuf](httpbuf/)** | 轻量 **HTTP** 请求编辑与响应查看：`:HttpBuf` / `<leader>http`，curl 或 Python。 | [EN](httpbuf/README.md) · [中文](httpbuf/README.zh.md) |
+| **[weather](weather/)** | 状态栏 **城市/天气/温度** + `:Weather` / `<leader>we` 十天表格；Open-Meteo 公开 HTTP，小时缓存。 | [EN](weather/README.md) · [中文](weather/README.zh.md) |
+| **[ntemoji](ntemoji/)** | **NERDTree** emoji 图标（无需 Nerd Font / 无需 vim-devicons）。 | [EN](ntemoji/README.md) · [中文](ntemoji/README.zh.md) |
 
 ## 界面语言（中 / 英）
 
@@ -37,10 +40,11 @@
 |------|----------|
 | mdview / pdfview / xlsview / imgbuf | 预览内 **`L`** |
 | tts | 控制条 **EN / 中文** 或 **`L`** |
-| music / mixer | 按钮 **中英(Y)** 或 **`Y`**（music 的 `L` 为单曲循环） |
+| music | 按钮 **中英(Y)** 或 **`Y`**（`L` = 单曲循环；MIDI 下 **`m`** 选预设） |
 | nvimgames（含 24 点） | 底栏按钮或 **`u`** |
 | drawbuf | 状态栏 **[中英]** 或 **`Y`**（`L` 为直线工具） |
 | es | 浮窗内 **`L`** 或 **`Ctrl-l`**（默认跟随系统语言，可记忆） |
+| qrbuf / httpbuf / weather | 浮窗内 **`L`** |
 
 ```lua
 require("mdview").setup({ ui_lang = "auto" }) -- 或 "zh" | "en"
@@ -114,11 +118,14 @@ tts 测试稿：[tts/testdata/](tts/testdata/)（`sample.zh.txt` / `sample.en.tx
 | tts | 0.9+ | **Windows** + SAPI；Python3 + **pywin32** |
 | imgbuf | 0.9+ | chafa **或** Python3 + Pillow；高清需 WezTerm/Kitty/Ghostty + Pillow |
 | music | 0.9+ | Python3 + **just_playback**（或 pygame 回退） |
-| mixer | 0.9+ | **Windows** + Python3（**winmm.dll**，标准库 ctypes） |
+| music (MIDI) | 0.9+ | **Windows** + Python3（**winmm.dll**，标准库 ctypes；已并入 music） |
 | nvimgames | 0.9+ | `termguicolors`；扫雷建议 `mouse=a`；推箱子自带 `data/levels.json` |
 | drawbuf | 0.9+ | `termguicolors`；建议 `mouse=a` |
 | videobuf | 0.9+ | Python3 + **av**（或 opencv-python）+ **just_playback** |
 | es | 0.9+ | **Windows** + [Everything](https://www.voidtools.com/) + [es.exe CLI](https://www.voidtools.com/support/everything/command_line_interface/) |
+| qrbuf | 0.9+ | Python3（标准库，`scripts/qrgen.py`） |
+| httpbuf | 0.9+ | **curl** 或 Python3（标准库 urllib） |
+| weather | 0.9+ | Python3 + 网络（Open-Meteo 公开 HTTP，无 Key） |
 
 **启动自动检测**：加载后只检查**必需** pip 包；缺失时弹出安装选项。安装过程打开预览窗口显示 pip 实时输出，结束后通知结果。  
 - 含推荐包的完整检查：`:NvimpluginsDeps`（可跟插件名）  
@@ -127,6 +134,17 @@ tts 测试稿：[tts/testdata/](tts/testdata/)（`sample.zh.txt` / `sample.en.tx
 - 不询问直接装：`let g:nvimplugins_auto_install_deps = 1`  
 - 推荐包可在菜单中选「忽略不再提示」（写入 `stdpath('data')/nvimplugins_deps.json`）  
 本仓库 **无 npm 依赖**。
+
+## 合集帮助
+
+整仓加载后可用：
+
+| 操作 | 说明 |
+|------|------|
+| **`<leader>hh`** | 打开帮助浮窗（`g:nvimplugins_keys_help` 可改） |
+| **`:NvimpluginsHelp`** | 同上 |
+
+帮助中列出各子插件**命令**与**当前快捷键**；行首 **▶** 支持 **回车 / 鼠标点击** 直接运行（需参数的命令会预填到命令行）。
 
 ## 快速安装
 
@@ -152,10 +170,10 @@ call plug#end()
 可选：只启用部分子插件（在加载前设置，名与目录一致）：
 
 ```vim
-let g:nvimplugins_enable = ['mdview', 'pdfview', 'xlsview', 'tts', 'imgbuf', 'music', 'mixer', 'nvimgames']
+let g:nvimplugins_enable = ['mdview', 'pdfview', 'xlsview', 'tts', 'imgbuf', 'music', 'nvimgames']
 ```
 
-整仓默认启用：`mdview` · `pdfview` · `xlsview` · `tts` · `imgbuf` · `music` · `mixer` · `nvimgames` · `drawbuf` · `videobuf`。
+整仓默认启用：`mdview` · `pdfview` · `xlsview` · `tts` · `imgbuf` · `music` · `nvimgames` · `drawbuf` · `videobuf` · … · `weather` · `ntemoji`。
 
 #### lazy.nvim
 
@@ -175,7 +193,6 @@ Plug '/path/to/nvimplugins/xlsview'
 Plug '/path/to/nvimplugins/tts'
 Plug '/path/to/nvimplugins/imgbuf'
 Plug '/path/to/nvimplugins/music'
-Plug '/path/to/nvimplugins/mixer'
 Plug '/path/to/nvimplugins/nvimgames'
 Plug '/path/to/nvimplugins/drawbuf'
 Plug '/path/to/nvimplugins/videobuf'
@@ -192,7 +209,6 @@ call plug#end()
   { dir = "/path/to/nvimplugins/tts", name = "tts", lazy = false },
   { dir = "/path/to/nvimplugins/imgbuf", name = "imgbuf", lazy = false },
   { dir = "/path/to/nvimplugins/music", name = "music", lazy = false },
-  { dir = "/path/to/nvimplugins/mixer", name = "mixer", lazy = false },
   { dir = "/path/to/nvimplugins/nvimgames", name = "nvimgames", lazy = false },
   { dir = "/path/to/nvimplugins/drawbuf", name = "drawbuf", lazy = false },
   { dir = "/path/to/nvimplugins/videobuf", name = "videobuf", lazy = false },
@@ -301,7 +317,7 @@ require("drawbuf").setup({
 | tts | `<leader>vo` / `<leader>vs` · `L` | 从光标段播 / 停止 · 中英文 |
 | imgbuf | 打开图片 · `L` | 预览 · 中英文 |
 | music | 打开音频 · `<M-m>` · `Y` | 播放器 · 显隐 UI · 中英文 |
-| mixer | `:Mixer` / `<leader>mx` · `L` | 混音器 · 中英文 |
+| music | `:Music` / `:MusicMidi` / `<leader>mx` · `Y` | 音频 + Windows MIDI |
 | nvimgames | `:NvimGames` · 游戏内 `u` | 选单 · 中英文 |
 | drawbuf | `:Draw` · `Y` | 画布 · 中英文 |
 
@@ -315,7 +331,7 @@ require("drawbuf").setup({
 | tts | [EN](tts/README.md) · [中文](tts/README.zh.md) · [测试稿](tts/testdata/) |
 | imgbuf | [EN](imgbuf/README.md) · [中文](imgbuf/README.zh.md) |
 | music | [EN](music/README.md) · [中文](music/README.zh.md) |
-| mixer | [EN](mixer/README.md) · [中文](mixer/README.zh.md) |
+
 | nvimgames | [EN](nvimgames/README.md) · [中文](nvimgames/README.zh.md) |
 | drawbuf | [EN](drawbuf/README.md) · [中文](drawbuf/README.zh.md) |
 | videobuf | [EN](videobuf/README.md) · [中文](videobuf/README.zh.md) · [设计](videobuf/DESIGN.zh.md) |

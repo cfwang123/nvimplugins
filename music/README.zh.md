@@ -42,7 +42,8 @@ pip install pygame mutagen
 | 播放控制 | 播放、暂停、重播、停止 |
 | 同目录切换 | 下一首 / 上一首（按文件名排序） |
 | 进度 | `当前 / 总长`（分:秒） |
-| 进度条 | 可 **点击 / 拖动** 跳转 |
+| 进度条 | 可 **点击 / 拖动** 跳转（音频；MIDI 仅显示） |
+| **MIDI（Windows）** | 打开 `.mid` / `.midi`；`:MusicMidi` / `<leader>mx`；内置预设 |
 | 全局单例 | 全 Neovim 仅一个播放器 buffer；其它 tab 打开会关掉旧窗口 |
 | 显隐 UI | `Alt+M`（可配）显示/隐藏；**底部分屏且不抢焦**；隐藏后后台继续播 |
 | 隐藏状态栏 | 配置 `statusline_when_hidden` 后显示 `[歌名,1:22/3:33]` |
@@ -59,6 +60,7 @@ pip install pygame mutagen
 | Neovim | 0.9+（推荐 0.10+） |
 | Python 3 | `PATH` 中可执行 `python` |
 | 音频库 | **just_playback**（首选）；**pygame** 作回退 |
+| MIDI（Windows） | **winmm.dll** + 标准库 `ctypes`（`scripts/midi_synth.py`，无需额外 pip） |
 
 ```text
 pip install just_playback
@@ -78,7 +80,7 @@ pip install mutagen
 
 ```vim
 call plug#begin()
-Plug '/path/to/vim/music'
+Plug '/path/to/nvimplugins/music'
 call plug#end()
 
 " 可选
@@ -88,12 +90,18 @@ call plug#end()
 ## 用法
 
 ```vim
-:e D:/Music/track.mp3
-:Music D:/Music/track.mp3
+:e /path/to/track.mp3
+:Music /path/to/track.mp3
 :MusicToggle
 :MusicNext
 :MusicPrev
 :MusicStop
+
+" Windows MIDI
+:e /path/to/song.mid
+:MusicMidi
+:MusicMidi twinkle
+:Music twinkle
 ```
 
 ### 界面快捷键 / 可点文字
@@ -105,15 +113,29 @@ call plug#end()
 | 播放/暂停 | `Space` |
 | 上/下一首 | `PgUp` / `PgDn` |
 | 停止 | `x` |
-| 循环 | `L` |
+| 循环 | `L`（仅音频） |
 | 重播 | `r` |
 | 歌词 | `g`：上方分屏全文；播放器内嵌当前句（中英同时高亮）；已唱部分加深 |
 | 列表 | `f`：同目录曲目列表显隐；打开后焦点在列表 |
+| MIDI 预设 | **`m`**：内置曲目浮窗（MIDI 模式） |
 | 焦点切换 | `Tab`：播放器 ↔ 列表（列表打开时） |
 | 关闭并停止 | `q` |
-| 进度 | 拖动进度条；`h`/`l` ±5s |
+| 进度 | 拖动进度条；`h`/`l` ±5s（音频） |
 | 音量 | `+/-`、上/下方向键、滚轮 |
 | 显示/隐藏 UI | `Alt+M`（隐藏后后台播） |
+| 打开 MIDI | `<leader>mx`（可配 `keys_midi`） |
+
+### 内置 MIDI 预设（`m` / `:MusicMidi`）
+
+| id | 曲目 |
+|----|------|
+| `twinkle` | 小星星 |
+| `ode` | 欢乐颂（节选） |
+| `scales` | 乐器巡演 |
+| `groove` | 迷你律动（含鼓轨） |
+| `sakura` | 五声音韵 |
+
+预设写入临时 `.mid` 后由 **winmm** 播放。音色取决于系统 MIDI 设备（多为 Microsoft GS Wavetable Synth）。
 
 ### 曲目列表（`f`）
 
@@ -150,6 +172,7 @@ require("music").setup({
   loop = false,
   fit_height = true,    -- 上下分屏时按内容缩高度
   toggle_key = "<M-m>", -- Alt+M 显示/隐藏
+  keys_midi = "<leader>mx", -- Windows MIDI 播放器
   poll_ms = 100,        -- 10f/s：进度条与歌词跟进
   -- 隐藏播放器 UI 时，状态栏显示 [歌名,1:22/3:33]
   statusline_when_hidden = false,
