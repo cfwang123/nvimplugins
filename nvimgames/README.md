@@ -1,46 +1,48 @@
 # nvimgames.nvim
 
-Neovim 小游戏合集，目前包含：
+**English** | [中文](README.zh.md)
 
-| 游戏 | 命令 | 说明 |
-|------|------|------|
-| **扫雷** | `:Mine` | Windows 风格彩色扫雷 |
-| **推箱子** | `:Sokoban` | 关卡制推箱子（`data/levels.json` 共 245 关） |
-| **24点** | `:Game24` | 彩色扑克算 24 |
-| **俄罗斯方块** | `:Tetris` | 经典方块 + 特殊清列 |
-| **选单** | `:NvimGames` | 浮动窗口选游戏（数字键 / Esc） |
+Mini-games for Neovim:
 
-也可：`:NvimGames mine` / `sokoban` / `game24` / `tetris`（或 `1`–`4`）直接进对应游戏。
+| Game | Command | Notes |
+|------|---------|-------|
+| **Minesweeper** | `:Mine` | Windows-style colored minesweeper |
+| **Sokoban** | `:Sokoban` | Level-based (245 levels in `data/levels.json`) |
+| **24-point** | `:Game24` | Colored poker cards, make 24 |
+| **Tetris** | `:Tetris` | Classic + special clear pieces |
+| **Menu** | `:NvimGames` | Float picker (number keys / Esc) |
 
-## 截图
+Or jump straight in: `:NvimGames mine` / `sokoban` / `game24` / `tetris` (or `1`–`4`).
 
-| 扫雷 | 推箱子 |
-|:----:|:------:|
-| ![扫雷](../images/mine.png) | ![推箱子](../images/sokoban.png) |
+## Screenshots
 
-| 24点 | 俄罗斯方块 |
-|:----:|:----------:|
-| ![24点](../images/twentyfour.png) | ![俄罗斯方块](../images/tetris.png) |
+| Minesweeper | Sokoban |
+|:-----------:|:-------:|
+| ![mine](../images/mine.png) | ![sokoban](../images/sokoban.png) |
 
-## 依赖
+| 24-point | Tetris |
+|:--------:|:------:|
+| ![24](../images/twentyfour.png) | ![tetris](../images/tetris.png) |
 
-- Neovim 0.9+（推箱子需要 `vim.json`）
+## Dependencies
+
+- Neovim 0.9+ (Sokoban needs `vim.json`)
 - `termguicolors`
-- 扫雷建议 `mouse=a`（未开启时插件会自动打开）
+- Minesweeper benefits from `mouse=a` (auto-enabled if empty)
 
-## 安装（vim-plug）
+## Install (vim-plug)
 
-路径请改成你的本机目录。
+Use your local path.
 
 ```vim
 call plug#begin()
-Plug '/path/to/vim/nvimgames'
+Plug '/path/to/nvimplugins/nvimgames'
 call plug#end()
 
 lua require('nvimgames').setup()
 ```
 
-### 配置示例
+### Config example
 
 ```lua
 require("nvimgames").setup({
@@ -48,15 +50,15 @@ require("nvimgames").setup({
     difficulty = "beginner", -- beginner | intermediate | expert
   },
   sokoban = {
-    -- levels_file = "D:/path/to/levels.json", -- 可选，默认用插件自带
-    -- remember_level = true,                  -- 记住上次关卡（默认 true）
-    -- state_file = ".../sokoban.json",        -- 进度文件路径
+    -- levels_file = "D:/path/to/levels.json",
+    -- remember_level = true,
+    -- state_file = ".../sokoban.json",
   },
   twentyfour = {
-    solvable_only = true, -- 只发可解牌局（默认 true）
+    solvable_only = true, -- only solvable deals (default true)
   },
   tetris = {
-    special_score = 1000, -- 每 1000 分 1 个特殊块（用完后重新计）
+    special_score = 1000, -- one special piece per 1000 points
     -- tick_ms = 600,
   },
 })
@@ -64,18 +66,18 @@ require("nvimgames").setup({
 
 ---
 
-## 扫雷 `:Mine`
+## Minesweeper `:Mine`
 
-### 功能
+### Features
 
-- 初级 / 中级 / 高级（9×9·10 雷 / 16×16·40 雷 / 30×16·99 雷）
-- 左键开格、右键插旗、**左右键同时**或中键弦开
-- 首次点击安全（周围也不布雷）
-- 顶部 **剩余雷数 / 表情 / 计时**（红字 LED 风格）
-- 胜负：😎 胜利 / 😵 踩雷
-- **禁止选中字符**（屏蔽 Visual / 鼠标拖选）
+- Beginner / intermediate / expert (9×9·10 / 16×16·40 / 30×16·99)
+- LMB open, RMB flag, **chord** (both buttons or middle)
+- First click safe (including neighbors)
+- Top bar: **remaining mines / face / timer** (red LED style)
+- Win/lose: 😎 / 😵
+- **No text selection** (Visual / drag select blocked)
 
-### 用法
+### Usage
 
 ```vim
 :Mine
@@ -85,179 +87,177 @@ require("nvimgames").setup({
 :Mine 初级
 ```
 
-### 鼠标
+### Mouse
 
-| 操作 | 作用 |
-|------|------|
-| 左键格子 | 打开（松开时开格，便于组合右键） |
-| 右键格子 | 插旗 / 取消 |
-| **左右键同时按** | **弦开** |
-| 中键 | 弦开 |
-| 点顶部表情 | 重开 |
-| 底部 [初级][中级][高级][重开] | 切换难度 / 重开 |
+| Action | Effect |
+|--------|--------|
+| LMB on cell | Open (on release, for chording) |
+| RMB on cell | Flag / unflag |
+| **Both buttons** | **Chord** |
+| Middle | Chord |
+| Top face | Restart |
+| Bottom [初级][中级][高级][重开] | Difficulty / restart |
 
-### 键盘
+### Keyboard
 
-| 键 | 作用 |
-|----|------|
-| `hjkl` / 方向键 | 移动选择格 |
-| `Space` | 打开当前格 |
-| `m` | 插旗 |
-| `c` | 弦开 |
-| `1` / `2` / `3` | 初 / 中 / 高 |
-| `r` | 重开 |
-| `q` | 退出 |
-| `?` | 帮助 |
+| Key | Action |
+|-----|--------|
+| `hjkl` / arrows | Move selection |
+| `Space` | Open |
+| `m` | Flag |
+| `c` | Chord |
+| `1` / `2` / `3` | Beg / mid / exp |
+| `r` | Restart |
+| `q` | Quit |
+| `?` | Help |
 
 ---
 
-## 推箱子 `:Sokoban`
+## Sokoban `:Sokoban`
 
-### 功能
+### Features
 
-- 完整关卡数据（`data/levels.json`）
-- 推箱计步（纯移动不计步，与 C 版一致）
-- 撤销：回到上一次**推箱**之前
-- 彩色图块：`墙` / `◎`(目标) / `箱` / `人`
-- 隐藏光标；过关后 **Space** 进入下一关
-- 禁止 Visual 选中
+- Full level pack (`data/levels.json`)
+- Push counting (pure moves free, same as C version)
+- Undo: back to state before last **push**
+- Colored tiles: wall / `◎` target / box / player
+- Hidden cursor; **Space** after clear → next level
+- Visual select disabled
 
-### 用法
+### Usage
 
 ```vim
-:Sokoban        " 上次关卡（无记录则第 1 关）
-:Sokoban 10     " 第 10 关（并记为进度）
+:Sokoban        " last level (or 1)
+:Sokoban 10     " level 10 (saved as progress)
 ```
 
-进度保存在 `stdpath('data')/nvimgames/sokoban.json`（换关 / 退出时写入）。
+Progress: `stdpath('data')/nvimgames/sokoban.json`.
 
-| 键 | 作用 |
-|----|------|
-| `hjkl` / 方向键 | 移动 |
-| `z` | 撤销（跳到上次推箱前） |
-| `r` | 重开本关 |
-| `n` / `p` | 下一关 / 上一关 |
-| **`Space`** | **过关后进入下一关** |
-| `g` | 跳转到指定关卡 |
-| `q` | 退出 |
-| `?` | 帮助 |
-
-关卡逻辑参考 `game/sokoban/c_app`。
+| Key | Action |
+|-----|--------|
+| `hjkl` / arrows | Move |
+| `z` | Undo (to last push) |
+| `r` | Restart level |
+| `n` / `p` | Next / previous level |
+| **`Space`** | **After clear: next level** |
+| `g` | Jump to level |
+| `q` | Quit |
+| `?` | Help |
 
 ---
 
-## 选单 `:NvimGames`
+## Menu `:NvimGames`
 
-无参时打开居中 **float** 窗口：
+No args → centered **float**:
 
 ```
-  1  扫雷 (Mine)
-  2  推箱子 (Sokoban)
-  3  24点 (Game24)
-  4  俄罗斯方块 (Tetris)
+  1  Minesweeper (Mine)
+  2  Sokoban
+  3  24-point (Game24)
+  4  Tetris
 
-  数字选择 · Esc 退出
+  Number to select · Esc to quit
 ```
 
-| 键 | 作用 |
-|----|------|
-| `1`–`4` | 进入对应游戏 |
-| `Esc` / `q` | 关闭选单 |
+| Key | Action |
+|-----|--------|
+| `1`–`4` | Enter game |
+| `Esc` / `q` | Close menu |
 
 ---
 
-## 24点 `:Game24`
+## 24-point `:Game24`
 
-### 功能
+### Features
 
-- 随机发 4 张彩色扑克（♠♥♣♦，红黑分色）
-- 默认只发**可解**牌局
-- 输入四则运算公式，校验：数字各用一次、结果为 24
-- 可看参考答案；计分
+- Four colored poker cards (♠♥♣♦)
+- Solvable deals only by default
+- Enter arithmetic; each number once; result 24
+- Optional solution reveal; scoring
 
-### 用法
+### Usage
 
 ```vim
 :Game24
 :NvimGames 3
 ```
 
-| 键 | 作用 |
-|----|------|
-| 在 `公式>` 后直接打字 | 编辑算式（开局自动进入插入） |
-| `Enter` | 判定是否等于 24 |
-| `Space` | 判定失败后：清空输入 |
-| `i` | 跳到公式行继续编辑 |
-| `r` | 发新牌（并清空输入） |
-| `h` | 显示/隐藏参考答案 |
-| `q` | 退出 |
-| `?` | 帮助 |
+| Key | Action |
+|-----|--------|
+| Type after `公式>` | Edit expression (insert on start) |
+| `Enter` | Check = 24 |
+| `Space` | After fail: clear input |
+| `i` | Jump to formula line |
+| `r` | New deal |
+| `h` | Toggle solution |
+| `q` | Quit |
+| `?` | Help |
 
-点数：`A=1`，`J=11`，`Q=12`，`K=13`。  
-例：`(8/(3-8/3))`、`8*3-(3-3)` 等。
+Ranks: `A=1`, `J=11`, `Q=12`, `K=13`.  
+Examples: `(8/(3-8/3))`, `8*3-(3-3)`.
 
 ---
 
-## 俄罗斯方块 `:Tetris`
+## Tetris `:Tetris`
 
-### 功能
+### Features
 
-- 标准 7 种方块、固定高饱和配色、影子落点
-- 消行计分、等级加速
-- **特殊方块**（箭头表示朝向：`↓←↑→`）
-  - 每累计 **`special_score`（默认 1000）分** 出现 **1 个**
-  - **落地并填充/消除全部完成后**，特殊计分从 **0** 重新开始（过程中不再累加）
-  - `z`/`x`/↑ 旋转朝向
-  - **↓** 只填落点**下方**同列；**←/→** 只填箭头侧同行（一次一格动画）
-  - **↑ 禁止填充**，仅 **1 格**
-- 落点预览：同色暗淡块 / 特殊块影子显示朝向
-- **下一个方块**预览（场地旁「下一」；含特殊↓）
-- **人机对战**（`:Tetris vs`）
-  - 左右双场地：你 / 电脑；**双方普通方块顺序相同**（共享 7-bag 序列）
-  - 各自「下一」预览；特殊块仍按各自得分触发（插入一次，不打乱后续共用序列）
-  - **一次清得越多惩罚越重**（三角数）：整行 + 特殊清除格数
-  - **对方当前方块落地后**顶入垃圾
+- Standard 7 pieces, saturated colors, ghost placement
+- Line clear scoring, level speed-up
+- **Special pieces** (arrow orientation `↓←↑→`)
+  - One special per **`special_score`** (default 1000) points
+  - After lock + fill/clear finish, special score resets to **0**
+  - `z`/`x`/↑ rotate orientation
+  - **↓** fills column below; **←/→** fill row to the side (animated cell by cell)
+  - **↑** does **not** fill — only **1** cell
+- Ghost: dim same-color / special shows orientation
+- **Next** piece preview (including special ↓)
+- **Vs AI** (`:Tetris vs`)
+  - Split boards: you / CPU; **shared normal bag sequence**
+  - Separate next previews; specials still per-score
+  - Heavier garbage for bigger clears (triangular); garbage after opponent piece locks
 
-### 用法
+### Usage
 
 ```vim
-:Tetris          " 单人
-:Tetris vs       " 人机对战
+:Tetris          " solo
+:Tetris vs       " vs AI
 :NvimGames 4
 ```
 
-| 键 | 作用 |
-|----|------|
-| `h`/`l` 或 ←/→ | 左右移动 |
-| `j` 或 ↓ | 软降 |
-| `k`/`x`/`↑` | 顺时针旋转 |
-| `z` | 逆时针旋转 |
-| `Space` | 硬降 |
-| `p` | 暂停 / 继续 |
-| `r` | 重开（保持当前模式） |
-| `v` | 切换到人机对战 |
-| `m` | 切换到单人 |
-| `q` | 退出 |
-| `?` | 帮助 |
+| Key | Action |
+|-----|--------|
+| `h`/`l` or ←/→ | Move |
+| `j` or ↓ | Soft drop |
+| `k`/`x`/`↑` | Rotate CW |
+| `z` | Rotate CCW |
+| `Space` | Hard drop |
+| `p` | Pause |
+| `r` | Restart (same mode) |
+| `v` | Switch to vs AI |
+| `m` | Switch to solo |
+| `q` | Quit |
+| `?` | Help |
 
 ---
 
-## 目录
+## Layout
 
 ```
 nvimgames/
-  plugin/nvimgames.lua      " :Mine / :Sokoban / :Game24 / :Tetris / :NvimGames
+  plugin/nvimgames.lua
   lua/nvimgames/
-    init.lua                " setup 入口
-    menu.lua                " float 选单
-    mine.lua                " 扫雷
-    sokoban.lua             " 推箱子
-    twentyfour.lua          " 24点
-    tetris.lua              " 俄罗斯方块
-  data/levels.json          " 推箱子关卡
+    init.lua
+    menu.lua
+    mine.lua
+    sokoban.lua
+    twentyfour.lua
+    tetris.lua
+  data/levels.json
   README.md
+  README.zh.md
 ```
 
-## 相关
+## Related
 
-- 仓库总览：[../README.md](../README.md)
+- Repo overview: [English](../README.md) · [中文](../README.zh.md)

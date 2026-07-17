@@ -111,7 +111,7 @@ line 2
 
 ## 5. 图片
 
-块图（预览 █ 缩略；**Enter / gi** 开 float 大图；float 内 **o** 系统打开）：
+块图（预览内用色块字符渲染；**Enter / gi** 开 float 大图；float 内 **o** 系统打开）：
 
 ![imgbuf](../../images/imgbuf.png)
 
@@ -223,7 +223,7 @@ console.log("inside details")
 | 2 | ![2 TOC float](./screenshots/2.png) | TOC float（`t`） |
 | 3 | ![3 代码块](./screenshots/3.png) | 代码块 / `c` 复制 |
 | 4 | ![4 表格](./screenshots/4.png) | 表格 |
-| 5 | ![5 图片缩略](./screenshots/5.png) | 图片 █ 缩略 |
+| 5 | ![5 图片缩略](./screenshots/5.png) | 图片用色块字符渲染 |
 | 6 | ![6 float 高清](./screenshots/6.png) | float 高清（`gi`） |
 | 7 | ![7 页内高清](./screenshots/7.png) | 页内高清（`gh`） |
 | 8 | ![8 details](./screenshots/8.png) | details |

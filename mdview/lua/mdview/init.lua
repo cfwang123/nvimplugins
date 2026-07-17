@@ -1827,6 +1827,310 @@ function M._bind_tab_source(tab, source_buf, source_win)
   end
 end
 
+-- ---------------------------------------------------------------------------
+-- NERDTree / 文件树 `o`：nofile 预览窗无法被替换时会多出 vsplit，在此回收
+-- · 仅 mdview 内容窗：覆盖预览窗（md→单窗预览；其它→直接打开文本，不留 vsplit）
+-- · mdview + 编辑窗：打开到编辑窗；md 则更新侧栏预览
+-- ---------------------------------------------------------------------------
+
+local reclaiming = false
+
+local SIDEBAR_FILETYPES = {
+  nerdtree = true,
+  NerdTree = true,
+  NvimTree = true,
+  ["neo-tree"] = true,
+  CHADTree = true,
+  aerial = true,
+  ultratree = true,
+  Outline = true,
+}
+
+local function is_sidebar_win(win)
+  if not win or win == 0 or not vim.api.nvim_win_is_valid(win) then
+    return false
+  end
+  local buf = vim.api.nvim_win_get_buf(win)
+  local ft = vim.bo[buf].filetype or ""
+  if SIDEBAR_FILETYPES[ft] then
+    return true
+  end
+  local name = vim.api.nvim_buf_get_name(buf)
+  if name:match("NERD_tree_") or name:match("NvimTree_") or name:match("neo%-tree") then
+    return true
+  end
+  return false
+end
+
+local function list_content_wins(tab)
+  local list = {}
+  for _, win in ipairs(vim.api.nvim_tabpage_list_wins(tab or 0)) do
+    if not is_sidebar_win(win) then
+      list[#list + 1] = win
+    end
+  end
+  return list
+end
+
+local function find_tab_preview_win(tab)
+  tab = tab or tabpage()
+  local sess = get_tab_session(tab)
+  if sess and sess.preview_win and vim.api.nvim_win_is_valid(sess.preview_win) then
+    local b = vim.api.nvim_win_get_buf(sess.preview_win)
+    if window.is_preview_buf(b) then
+      return sess.preview_win, sess
+    end
+  end
+  local wins = window.list_preview_wins(tab)
+  if wins[1] then
+    return wins[1], sess
+  end
+  return nil, sess
+end
+
+---卸掉侧栏 session，不关窗口（窗口将用于放普通文件）
+local function drop_side_session(tab, pwin)
+  tab = tab or tabpage()
+  local sess = get_tab_session(tab)
+  if sess and sess.source_buf then
+    local st = get_state(sess.source_buf)
+    if st then
+      detach_source_preview(st)
+    end
+  end
+  -- 单窗预览：按预览 buffer 找 state
+  if pwin and vim.api.nvim_win_is_valid(pwin) then
+    local pb = vim.api.nvim_win_get_buf(pwin)
+    if window.is_preview_buf(pb) then
+      local src = vim.b[pb].mdview_source
+      local st = get_state(src)
+      if st and st.mode == "single" then
+        detach_source_preview(st)
+      end
+    end
+  end
+  set_tab_session(tab, nil)
+end
+
+---在指定窗以单窗模式打开 md 预览
+local function open_md_single_on_win(source_buf, win)
+  if not source_buf or not vim.api.nvim_buf_is_valid(source_buf) then
+    return
+  end
+  if not win or not vim.api.nvim_win_is_valid(win) then
+    return
+  end
+  local tab = tabpage()
+  drop_side_session(tab, win)
+
+  local st = ensure_state(source_buf)
+  st.source_win = win
+  M.ensure_preview_buf(st)
+  do_render(st)
+  attach_autocmds(st)
+  vim.api.nvim_win_set_buf(win, st.preview_buf)
+  window.apply_winopts(win, config.get())
+  M.ensure_mouse()
+  st.mode = "single"
+  st.preview_win = win
+  if vim.api.nvim_win_is_valid(win) then
+    vim.api.nvim_set_current_win(win)
+  end
+end
+
+local function close_orphan_win(orphan, keep)
+  if orphan and orphan ~= keep and vim.api.nvim_win_is_valid(orphan) then
+    pcall(vim.api.nvim_win_close, orphan, true)
+  end
+end
+
+---把 file 放到编辑窗（非预览），关闭误开的 vsplit；md 则绑定侧栏
+local function place_in_editor_and_maybe_preview(file_buf, file_win, pwin, sess, editors)
+  local tab = tabpage()
+  local target = nil
+  if sess and sess.source_win and vim.api.nvim_win_is_valid(sess.source_win) and sess.source_win ~= pwin then
+    target = sess.source_win
+  end
+  if not target then
+    for _, w in ipairs(editors) do
+      if w ~= file_win and w ~= pwin then
+        target = w
+        break
+      end
+    end
+  end
+  if not target then
+    target = file_win
+  end
+
+  if file_win ~= target and vim.api.nvim_win_is_valid(target) then
+    vim.api.nvim_win_set_buf(target, file_buf)
+    close_orphan_win(file_win, target)
+    file_win = target
+  end
+
+  if is_markdown_buf(file_buf) then
+    if sess and sess.preview_win and vim.api.nvim_win_is_valid(sess.preview_win) then
+      sess.source_win = file_win
+      set_tab_session(tab, sess)
+      M._bind_tab_source(tab, file_buf, file_win)
+    else
+      -- 有预览窗但无 session：重建 side session
+      local pbuf = vim.api.nvim_win_get_buf(pwin)
+      if not window.is_preview_buf(pbuf) then
+        pbuf = window.create_preview_buf(file_buf)
+        vim.api.nvim_win_set_buf(pwin, pbuf)
+      end
+      set_tab_session(tab, {
+        preview_win = pwin,
+        preview_buf = pbuf,
+        source_buf = file_buf,
+        source_win = file_win,
+        mode = "side",
+      })
+      M._bind_tab_source(tab, file_buf, file_win)
+    end
+    if vim.api.nvim_win_is_valid(file_win) then
+      vim.api.nvim_set_current_win(file_win)
+    end
+  else
+    if vim.api.nvim_win_is_valid(file_win) then
+      vim.api.nvim_set_current_win(file_win)
+    end
+  end
+end
+
+---仅预览内容区时：用 file 覆盖预览窗并关掉多余 split
+local function cover_preview_with_file(file_buf, file_win, pwin)
+  local tab = tabpage()
+  local is_md = is_markdown_buf(file_buf)
+
+  if is_md then
+    close_orphan_win(file_win, pwin)
+    open_md_single_on_win(file_buf, pwin)
+    return
+  end
+
+  -- 普通文件：覆盖预览窗，清 session
+  drop_side_session(tab, pwin)
+  if vim.api.nvim_win_is_valid(pwin) then
+    vim.api.nvim_win_set_buf(pwin, file_buf)
+  end
+  close_orphan_win(file_win, pwin)
+  if vim.api.nvim_win_is_valid(pwin) then
+    vim.api.nvim_set_current_win(pwin)
+  end
+end
+
+---NERDTree `o` 等打开普通 buffer 后回收布局
+function M._reclaim_tree_open(buf)
+  if reclaiming then
+    return
+  end
+  if not buf or not vim.api.nvim_buf_is_valid(buf) then
+    return
+  end
+  if window.is_preview_buf(buf) then
+    return
+  end
+  if vim.b[buf].mdview_toc_float or vim.b[buf].mdview_image_float or vim.b[buf].mdview_help_float then
+    return
+  end
+  local bt = vim.bo[buf].buftype
+  if bt ~= "" then
+    return
+  end
+  local ft = vim.bo[buf].filetype or ""
+  if SIDEBAR_FILETYPES[ft] then
+    return
+  end
+
+  local tab = tabpage()
+  local pwin = select(1, find_tab_preview_win(tab))
+  if not pwin or not vim.api.nvim_win_is_valid(pwin) then
+    return
+  end
+
+  local file_win = vim.api.nvim_get_current_win()
+  if vim.api.nvim_win_get_buf(file_win) ~= buf then
+    local id = vim.fn.bufwinid(buf)
+    if id == -1 then
+      return
+    end
+    file_win = id
+  end
+  if is_sidebar_win(file_win) then
+    return
+  end
+
+  reclaiming = true
+  vim.schedule(function()
+    local ok, err = pcall(function()
+      if not vim.api.nvim_buf_is_valid(buf) then
+        return
+      end
+      local pw = select(1, find_tab_preview_win(tab))
+      if not pw or not vim.api.nvim_win_is_valid(pw) then
+        return
+      end
+
+      local fw = file_win
+      if not vim.api.nvim_win_is_valid(fw) or vim.api.nvim_win_get_buf(fw) ~= buf then
+        local id = vim.fn.bufwinid(buf)
+        if id == -1 then
+          return
+        end
+        fw = id
+      end
+      if is_sidebar_win(fw) then
+        return
+      end
+
+      -- 已在预览窗内打开
+      if fw == pw then
+        if is_markdown_buf(buf) then
+          open_md_single_on_win(buf, pw)
+        else
+          drop_side_session(tab, pw)
+        end
+        return
+      end
+
+      local eds = {}
+      for _, w in ipairs(list_content_wins(tab)) do
+        if w ~= pw then
+          local b = vim.api.nvim_win_get_buf(w)
+          if not window.is_preview_buf(b) then
+            eds[#eds + 1] = w
+          end
+        end
+      end
+
+      local sess2 = get_tab_session(tab)
+      local side_ok = sess2
+        and sess2.mode == "side"
+        and sess2.source_win
+        and vim.api.nvim_win_is_valid(sess2.source_win)
+        and sess2.source_win ~= pw
+
+      -- 右侧原先只有 mdview：文件在误开的 vsplit → 覆盖预览窗
+      if #eds <= 1 and not (side_ok and sess2.source_win == fw) then
+        cover_preview_with_file(buf, fw, pw)
+        return
+      end
+
+      -- 有编辑窗（或 side 健康）：打开到编辑区；md 更新预览
+      if side_ok or #eds >= 2 then
+        place_in_editor_and_maybe_preview(buf, fw, pw, sess2, eds)
+      end
+    end)
+    reclaiming = false
+    if not ok then
+      vim.notify("mdview reclaim: " .. tostring(err), vim.log.levels.DEBUG)
+    end
+  end)
+end
+
 function M._ensure_tab_follow()
   if follow_installed then
     return
@@ -1836,7 +2140,14 @@ function M._ensure_tab_follow()
     group = vim.api.nvim_create_augroup("mdview_tab_follow", { clear = true }),
     callback = function(args)
       vim.schedule(function()
-        M._on_focus_change(args.buf)
+        -- 先回收文件树误开的 vsplit，再跟随源文件
+        if args.event == "BufWinEnter" then
+          M._reclaim_tree_open(args.buf)
+        end
+        -- reclaim 异步进行中时跳过；结束后布局/绑定已由 reclaim 处理
+        if not reclaiming then
+          M._on_focus_change(args.buf)
+        end
       end)
     end,
   })

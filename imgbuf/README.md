@@ -1,50 +1,52 @@
 # imgbuf.nvim
 
-在 Neovim 里预览图片：默认 **字符画 + 高清叠层**（WezTerm/Kitty/Ghostty 上自动检测；其它终端仅字符画）。
+**English** | [中文](README.zh.md)
 
-不把每个像素做成 highlight 组，因此不会触发 `E849: Too many highlight and syntax groups`。
+Preview images in Neovim: default **character art + HD overlay** (auto-detected on WezTerm/Kitty/Ghostty; other terminals show character art only).
 
-![imgbuf 截图](../images/imgbuf.png)
+Pixels are **not** turned into individual highlight groups, so you avoid `E849: Too many highlight and syntax groups`.
 
-## 功能
+![imgbuf screenshot](../images/imgbuf.png)
 
-- **block / half / braille** 三种符号模式（默认 **block**）
-- **缩放**：默认**拉伸铺满**；`s` 切换为窗口内**等比**（可再按 `s` 回拉伸）
-- **底部按键提示**
-- **自动预览**：`:e photo.png` / 文件树打开
-- **剪贴板**：`:ImgbufClipboard`
-- **窗口缩放**防抖重绘、只读、禁止滚动
-- **文件树友好**（NERDTree / NvimTree / neo-tree）
-- **高清默认开启**（`hd = "always"`）：终端支持时自动叠像素图（WezTerm/Kitty/Ghostty + Pillow）；否则仅字符画
+## Features
 
-## 依赖
+- **block / half / braille** glyph modes (default **block**)
+- **Scale**: default **fill**; press `s` for **fit** inside the window (press again to fill)
+- Bottom key hints
+- **Auto preview**: `:e photo.png` / open from a file tree
+- **Clipboard**: `:ImgbufClipboard`
+- Debounced redraw on resize; read-only; scroll locked
+- **File-tree friendly** (NERDTree / NvimTree / neo-tree)
+- **HD on by default** (`hd = "always"`): pixel overlay when the terminal supports it (WezTerm/Kitty/Ghostty + Pillow); otherwise character art only
 
-| 组件 | 要求 |
-|------|------|
-| Neovim | 0.9+（推荐 0.10+） |
-| 字符画 | chafa **或** Python 3 + Pillow |
-| 高清叠层 | WezTerm / Kitty / Ghostty + **Pillow**（`hd=always` 默认） |
+## Dependencies
 
-**chafa（推荐）**：`scoop install chafa`  
-**高清/字符画 Python**：`pip install Pillow`
+| Component | Requirement |
+|-----------|-------------|
+| Neovim | 0.9+ (0.10+ recommended) |
+| Character art | chafa **or** Python 3 + Pillow |
+| HD overlay | WezTerm / Kitty / Ghostty + **Pillow** (`hd=always` default) |
 
-## 安装（vim-plug）
+**chafa (recommended)**: `scoop install chafa`  
+**HD / Python art**: `pip install Pillow`
 
-路径请改成你的本机目录。
+## Install (vim-plug)
 
-**无需** `require('imgbuf').setup()`：插件加载后即用默认配置。  
-需要改参数时再调用 `setup({ ... })`。
+Use your local path.
+
+**No** `require('imgbuf').setup()` is required: defaults apply on load.  
+Call `setup({ ... })` only to override options.
 
 ```vim
 call plug#begin()
-Plug '/path/to/vim/imgbuf'
+Plug '/path/to/nvimplugins/imgbuf'
 call plug#end()
 
-" 可选
+" optional
 " lua require('imgbuf').setup({ backend = 'chafa' })
 ```
 
-## 用法
+## Usage
 
 ```vim
 :e photo.png
@@ -52,53 +54,51 @@ call plug#end()
 :ImgbufClipboard
 :ImgbufMode block
 :ImgbufRefresh
-:ImgbufScale           " 切换 fit/fill
+:ImgbufScale           " toggle fit/fill
 :ImgbufScale fit
 :ImgbufScale fill
 ```
 
-| 键 | 作用 |
-|----|------|
-| `q` | 关闭 |
-| `r` | 刷新 |
-| `1` | block 字符画 |
-| `2` | half（`▀`） |
-| `3` | braille（点阵） |
-| `s` | 拉伸 (fill) ↔ 等比适配窗口 (fit) |
-| `o` | 用系统默认程序打开原图 |
+| Key | Action |
+|-----|--------|
+| `q` | Close |
+| `r` | Refresh |
+| `1` | block art |
+| `2` | half (`▀`) |
+| `3` | braille |
+| `s` | fill ↔ fit |
+| `o` | Open original with the system handler |
 
-| 缩放 | 含义 |
-|------|------|
-| **fill**（默认） | 拉伸铺满窗口（可能变形） |
-| **fit** | 等比缩放到窗口内并**居中**；高清叠层与字符画对齐重叠 |
+| Scale | Meaning |
+|-------|---------|
+| **fill** (default) | Stretch to window (may distort) |
+| **fit** | Letterbox/center inside the window; HD overlay aligns with the art |
 
-## 配置（可选）
-
-不调用 `setup()` 时使用内置默认值。需要改参数时：
+## Config (optional)
 
 ```lua
 require("imgbuf").setup({
   backend = "auto",   -- "auto" | "chafa" | "python"
   mode = "block",     -- "block" | "half" | "braille"
-  scale = "fill",     -- "fill" 拉伸 | "fit" 等比（s 切换）
-  hd = "always",      -- 默认：检测终端支持则叠高清；"never" 关闭
-  -- hd_tmux = true,  -- tmux 内也尝试
+  scale = "fill",     -- "fill" | "fit" (toggle with s)
+  hd = "always",      -- overlay when supported; "never" to disable
+  -- hd_tmux = true,
   show_help = true,
   auto_open = true,
 })
 ```
 
-默认 **`hd = "always"`**：在 WezTerm / Kitty / Ghostty 等支持图形协议的终端上，字符画之上自动叠像素图（需 `pip install Pillow`）。不支持或检测失败时只显示字符画。设 `hd = "never"` 可关掉高清。
+Default **`hd = "always"`**: on graphics-protocol terminals, a pixel image is layered on top of the character art (needs Pillow). Unsupported terminals show art only. Use `hd = "never"` to force that off.
 
-可多次调用；后一次以默认值为底再合并你传入的字段。
+Later `setup` calls merge on top of defaults.
 
-## 原理
+## How it works
 
-1. 在编辑区开 **terminal buffer**，字符画（chafa / render.py）
-2. 若 `hd` 开启且终端支持：宿主 TTY 叠 iTerm2/Kitty 像素图
-3. 文件树友好：收回误开的 vsplit
+1. Open a **terminal buffer** in the edit area for character art (chafa / `render.py`)
+2. If `hd` is on and supported: host TTY overlays iTerm2/Kitty pixel graphics
+3. File-tree friendly: reclaim accidental vsplits
 
-## 目录
+## Layout
 
 ```
 imgbuf/
@@ -108,18 +108,19 @@ imgbuf/
   scripts/render.py
   scripts/gfx_prepare.py
   README.md
+  README.zh.md
 ```
 
-## 故障排除
+## Troubleshooting
 
-| 现象 | 处理 |
-|------|------|
-| 无颜色 | 开启真彩色终端 / `termguicolors` |
-| 启动失败 | 检查 chafa 或 `pip install Pillow` |
-| 点阵字符 | `:ImgbufMode block` 或按 `1` |
-| NERDTree 多一列 | 更新插件；文本 `o` 应覆盖预览 |
+| Symptom | Fix |
+|---------|-----|
+| No color | Truecolor terminal / `termguicolors` |
+| Fail to start | Check chafa or `pip install Pillow` |
+| Braille glyphs | `:ImgbufMode block` or press `1` |
+| Extra NERDTree column | Update plugin; text `o` should replace preview |
 
-## 相关
+## Related
 
-- 仓库总览：[../README.md](../README.md)
-- 绘图插件：[../drawbuf/README.md](../drawbuf/README.md)
+- Repo overview: [English](../README.md) · [中文](../README.zh.md)
+- Drawing plugin: [English](../drawbuf/README.md) · [中文](../drawbuf/README.zh.md)

@@ -1,100 +1,132 @@
 # nvimplugins
 
-本地 **Neovim** 小插件合集：图片预览、Markdown 预览、色块绘图、小游戏、音频播放。每个子目录是一个可独立安装的插件，互不强制依赖。
+**English** | [中文](README.zh.md)
 
-面向终端里「好玩、好用、少依赖」的实验与日常小工具；安装以 **本地路径**（vim-plug / lazy.nvim / `rtp`）为主。
+> **About** — Small experimental Neovim plugins: **mdview** (Markdown preview), **music** (open audio and play in a buffer), **imgbuf** (terminal image preview), **nvimgames** (Minesweeper / Sokoban / 24-point / Tetris), **drawbuf** (Unicode block drawing). Each plugin installs independently; no hard dependencies.
 
-## 插件一览
+Focused on fun, practical, low-dependency terminal tooling. Install via **local path** (vim-plug / lazy.nvim / `rtp`).
 
-| 插件 | 一句话 | 文档 |
-|------|--------|------|
-| **[imgbuf](imgbuf/)** | 打开图片 → 字符画 + 可选高清叠层 | [imgbuf/README.md](imgbuf/README.md) |
-| **[mdview](mdview/)** | Markdown 单窗/侧边预览（TOC、表、代码、图、链接跳转） | [mdview/README.md](mdview/README.md) |
-| **[drawbuf](drawbuf/)** | 在 buffer 里用 Unicode 色块画画 | [drawbuf/README.md](drawbuf/README.md) |
-| **[nvimgames](nvimgames/)** | 小游戏：扫雷 / 推箱子 / 24点 / 俄罗斯方块 | [nvimgames/README.md](nvimgames/README.md) |
-| **[music](music/)** | 打开音频 → buffer 播放器（进度 / 歌词 / 列表） | [music/README.md](music/README.md) |
+**Two install styles (pick one):**
 
-## 截图
+| Style | Description |
+|-------|-------------|
+| **Whole repo** | Point a single `Plug` / `dir` at the repo root `nvimplugins/`; all sub-plugins load automatically |
+| **Per plugin** | Install only the subfolders you need (e.g. `…/mdview`) |
 
-| imgbuf | drawbuf | 扫雷 |
-|:------:|:-------:|:----:|
-| ![imgbuf](images/imgbuf.png) | ![drawbuf](images/drawbuf.png) | ![扫雷](images/mine.png) |
+## Plugins
 
-| 推箱子 | 24点 | 俄罗斯方块 |
-|:------:|:----:|:----------:|
-| ![推箱子](images/sokoban.png) | ![24点](images/twentyfour.png) | ![俄罗斯方块](images/tetris.png) |
+| Plugin | Overview | Docs |
+|--------|----------|------|
+| **[mdview](mdview/)** | Markdown preview inside Neovim: single-window reading (`:MdView`) or side-by-side source (`:MdSideView`). Pure Lua rendering for headings/lists/GFM tables/code blocks (optional Tree-sitter), TOC, link & anchor jumps, images rendered with block characters, and optional terminal HD overlays. | [EN](mdview/README.md) · [中文](mdview/README.zh.md) |
+| **[music](music/)** | Open an audio file and turn the buffer into a player: play/pause, scrubbable progress bar, volume, prev/next in the same folder, track list, LRC lyrics sync, session restore. Python daemon backend (`just_playback` / pygame); hide UI without stealing focus. | [EN](music/README.md) · [中文](music/README.zh.md) |
+| **[imgbuf](imgbuf/)** | Open images as character-art previews (block / half / braille); fill or fit scaling; auto-open, clipboard, file-tree friendly; optional pixel HD overlay on WezTerm/Kitty/Ghostty (chafa or Python+Pillow). | [EN](imgbuf/README.md) · [中文](imgbuf/README.zh.md) |
+| **[nvimgames](nvimgames/)** | Terminal mini-games: Minesweeper, Sokoban (bundled levels), 24-point poker, Tetris (special pieces + optional vs AI). Launch from `:NvimGames` float menu. | [EN](nvimgames/README.md) · [中文](nvimgames/README.zh.md) |
+| **[drawbuf](drawbuf/)** | Draw with Unicode block characters in a buffer: pencil/eraser/line/rect/ellipse/fill, truecolor palette, clickable status bar, undo/redo, `.draw` files, and built-in demo pictures. | [EN](drawbuf/README.md) · [中文](drawbuf/README.zh.md) |
 
-| music | mdview（侧栏） |
-|:-----:|:--------------:|
-| ![music](images/music.png) | ![mdview](mdview/testdata/screenshots/1.png) |
+## Screenshots
 
-mdview 更多场景见 [mdview/testdata/screenshots/](mdview/testdata/screenshots/) 与演示文 [mdview/testdata/demo.md](mdview/testdata/demo.md)。
+| mdview (side) | music | imgbuf |
+|:--------------:|:-----:|:------:|
+| ![mdview](mdview/testdata/screenshots/1.png) | ![music](images/music.png) | ![imgbuf](images/imgbuf.png) |
 
-## 依赖摘要
+| Minesweeper | Sokoban | 24-point | Tetris |
+|:-----------:|:-------:|:--------:|:------:|
+| ![mine](images/mine.png) | ![sokoban](images/sokoban.png) | ![24](images/twentyfour.png) | ![tetris](images/tetris.png) |
 
-| 插件 | Neovim | 其他 |
-|------|--------|------|
-| imgbuf | 0.9+ | chafa **或** Python3 + Pillow；高清需 WezTerm/Kitty/Ghostty + Pillow |
-| mdview | 0.9+ | 核心无额外依赖；█ 缩略需 Pillow（或 chafa）；代码高亮可选 Tree-sitter；像素高清需图形协议终端 |
-| drawbuf | 0.9+ | `termguicolors`；建议 `mouse=a` |
-| nvimgames | 0.9+ | `termguicolors`；扫雷建议 `mouse=a`；推箱子自带 `data/levels.json` |
-| music | 0.9+ | Python3 + **just_playback**（或 pygame 回退） |
+| drawbuf |
+|:-------:|
+| ![drawbuf](images/drawbuf.png) |
 
-## 快速安装
+More mdview shots: [mdview/testdata/screenshots/](mdview/testdata/screenshots/) and demo [mdview/testdata/demo.md](mdview/testdata/demo.md).
 
-路径改成你的本机目录。可只装需要的子目录；**不必**统一 `setup()`（要改参数时再 `require(...).setup`）。
+## Dependencies (summary)
 
-### vim-plug
+| Plugin | Neovim | Other |
+|--------|--------|-------|
+| mdview | 0.9+ | Core needs nothing extra; block-character images need Pillow (or chafa); code highlight optional Tree-sitter; pixel HD needs a graphics-protocol terminal |
+| music | 0.9+ | Python3 + **just_playback** (or pygame fallback) |
+| imgbuf | 0.9+ | chafa **or** Python3 + Pillow; HD needs WezTerm/Kitty/Ghostty + Pillow |
+| nvimgames | 0.9+ | `termguicolors`; Minesweeper benefits from `mouse=a`; Sokoban ships `data/levels.json` |
+| drawbuf | 0.9+ | `termguicolors`; `mouse=a` recommended |
+
+## Quick install
+
+Replace paths with your local directory. **No** shared `setup()` is required (call `require(...).setup` only when tuning options).  
+Do **not** mix whole-repo and per-plugin installs for the same plugins. Double-load is mostly guarded by `loaded_*`, but `rtp` would list paths twice.
+
+### Style A: whole repo (all plugins)
+
+Root `plugin/nvimplugins.lua` appends each subfolder to `runtimepath` and sources their `plugin/` files.
+
+#### vim-plug
 
 ```vim
 call plug#begin()
-Plug '/path/to/nvimplugins/imgbuf'
-Plug '/path/to/nvimplugins/mdview'
-Plug '/path/to/nvimplugins/drawbuf'
-Plug '/path/to/nvimplugins/nvimgames'
-Plug '/path/to/nvimplugins/music'
+Plug '/path/to/nvimplugins'
 call plug#end()
 ```
 
-### lazy.nvim（示例）
+To enable only some plugins, set this **before** `plug#end()` (names match directory names):
+
+```vim
+let g:nvimplugins_enable = ['mdview', 'music', 'imgbuf']
+call plug#begin()
+Plug '/path/to/nvimplugins'
+call plug#end()
+```
+
+#### lazy.nvim
 
 ```lua
 {
-  { dir = "/path/to/nvimplugins/imgbuf", name = "imgbuf", lazy = false },
-  { dir = "/path/to/nvimplugins/mdview", name = "mdview", lazy = false },
-  { dir = "/path/to/nvimplugins/drawbuf", name = "drawbuf", lazy = false },
-  { dir = "/path/to/nvimplugins/nvimgames", name = "nvimgames", lazy = false },
-  { dir = "/path/to/nvimplugins/music", name = "music", lazy = false },
+  dir = "/path/to/nvimplugins",
+  name = "nvimplugins",
+  lazy = false,
+  -- optional subset (must apply before plugin load; or use init)
+  -- init = function()
+  --   vim.g.nvimplugins_enable = { "mdview", "music", "imgbuf" }
+  -- end,
 }
 ```
 
-各插件从简到全的安装说明见子目录 README（mdview 有 ①最简 → ③完整 分档）。
+### Style B: per plugin (only what you need)
 
-## 目录结构
+#### vim-plug
 
-```
-nvimplugins/
-  imgbuf/       # 图片预览
-  mdview/       # Markdown 预览
-  drawbuf/      # 色块绘图
-  nvimgames/    # 小游戏
-  music/        # 音频播放器
-  images/       # 仓库 README 用截图
-  tmp/          # 本地临时（gitignore）
-  README.md
-  AGENTS.md
+```vim
+call plug#begin()
+Plug '/path/to/nvimplugins/mdview'
+Plug '/path/to/nvimplugins/music'
+Plug '/path/to/nvimplugins/imgbuf'
+Plug '/path/to/nvimplugins/nvimgames'
+Plug '/path/to/nvimplugins/drawbuf'
+call plug#end()
 ```
 
-## 文档索引
+#### lazy.nvim (example)
 
-| 插件 | 入口 |
-|------|------|
-| imgbuf | [imgbuf/README.md](imgbuf/README.md) |
-| mdview | [mdview/README.md](mdview/README.md) · [demo](mdview/testdata/demo.md) · [截图](mdview/testdata/screenshots/) |
-| drawbuf | [drawbuf/README.md](drawbuf/README.md) |
-| nvimgames | [nvimgames/README.md](nvimgames/README.md) |
-| music | [music/README.md](music/README.md) |
+```lua
+{
+  { dir = "/path/to/nvimplugins/mdview", name = "mdview", lazy = false },
+  { dir = "/path/to/nvimplugins/music", name = "music", lazy = false },
+  { dir = "/path/to/nvimplugins/imgbuf", name = "imgbuf", lazy = false },
+  { dir = "/path/to/nvimplugins/nvimgames", name = "nvimgames", lazy = false },
+  { dir = "/path/to/nvimplugins/drawbuf", name = "drawbuf", lazy = false },
+}
+```
 
-## 许可与说明
+Per-plugin install details live in each subdirectory README (mdview has tiers ① minimal → ③ full).
 
-个人 / 原型向合集，按需拷贝子目录使用即可。问题与改动建议落在对应插件目录下。
+## Doc index
+
+| Plugin | Entry |
+|--------|-------|
+| mdview | [EN](mdview/README.md) · [中文](mdview/README.zh.md) · [demo](mdview/testdata/demo.md) · [screenshots](mdview/testdata/screenshots/) |
+| music | [EN](music/README.md) · [中文](music/README.zh.md) |
+| imgbuf | [EN](imgbuf/README.md) · [中文](imgbuf/README.zh.md) |
+| nvimgames | [EN](nvimgames/README.md) · [中文](nvimgames/README.zh.md) |
+| drawbuf | [EN](drawbuf/README.md) · [中文](drawbuf/README.zh.md) |
+
+## License / notes
+
+Personal / prototype collection. Copy subfolders as needed. Prefer filing issues and changes under the matching plugin directory.

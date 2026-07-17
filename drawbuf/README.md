@@ -1,108 +1,105 @@
 # drawbuf.nvim
 
-在 Neovim 里用 **Unicode 色块** 画画：鼠标拖拽、直线/矩形/椭圆预览、前景/背景色、可点击中文状态栏、彩色演示图案。
+**English** | [中文](README.zh.md)
 
-![drawbuf 截图](../images/drawbuf.png)
+Draw with **Unicode block characters** in Neovim: mouse drag, line/rect/ellipse preview, fg/bg colors, clickable Chinese status bar, and colorful demo patterns.
 
-## 功能一览
+![drawbuf screenshot](../images/drawbuf.png)
 
-| 能力 | 说明 |
-|------|------|
-| 色块笔刷 | **100%** `█`，**1/2** `▀▄▌▐`，**1/4·3/4** `▘▝▖▗▚▞▙▛▜▟` |
-| 工具 | 铅笔、橡皮、直线、矩形、椭圆、填充 |
-| 形状绘制 | **按下 → 拖动预览 → 松开确认**；`Esc` 取消；预览用当前前景/背景色 |
-| 颜色 | 固定调色板；float 色板真彩色预览 |
-| 状态栏 | 中文可点：工具 / 字符 / 前景 / 背景 / 演示 / 保存 / 退出 / 撤销 |
-| 演示 | 笑脸、彩虹猫、狗、云、楼、彩虹 |
-| 性能 | **增量重绘**（脏行），大画布更流畅 |
-| 尺寸 | `:Draw` 默认适应窗口（扣 gutter），四周留 1 格白边 |
+## Features
 
-## 依赖
+| Feature | Description |
+|---------|-------------|
+| Block brushes | **100%** `█`, **1/2** `▀▄▌▐`, **1/4·3/4** `▘▝▖▗▚▞▙▛▜▟` |
+| Tools | Pencil, eraser, line, rectangle, ellipse, fill |
+| Shapes | **press → drag preview → release to commit**; `Esc` cancels; uses current fg/bg |
+| Colors | Fixed palette; float picker with truecolor swatches |
+| Status bar | Clickable: tool / glyph / fg / bg / demos / save / quit / undo |
+| Demos | Smiley, Nyan-style cat, dog, clouds, city, rainbow |
+| Performance | **Dirty-line** incremental redraw |
+| Size | `:Draw` fits the window (minus gutter) with a 1-cell white margin |
+
+## Dependencies
 
 - Neovim 0.9+
 - `set termguicolors`
-- `set mouse=a`（打开画布时若为空会自动打开）
+- `set mouse=a` (enabled automatically if empty when opening the canvas)
 
-## 安装（vim-plug）
+## Install (vim-plug)
 
-路径请改成你的本机目录。
+Use your local path.
 
-**无需** `require('drawbuf').setup()`：插件加载后即用默认配置。  
-需要改参数时再调用 `setup({ ... })`。
+**No** `require('drawbuf').setup()` is required. Call `setup` only to override options.
 
 ```vim
 call plug#begin()
-Plug '/path/to/vim/drawbuf'
+Plug '/path/to/nvimplugins/drawbuf'
 call plug#end()
 
-" 可选
+" optional
 " lua require('drawbuf').setup({ width = 100, height = 30 })
 ```
 
-## 用法
+## Usage
 
 ```vim
-:Draw              " 默认：适应当前窗口，四周留 1 格白边
-:Draw 60x20        " 指定宽高
-:Draw sketch.draw  " 打开已有文件
+:Draw              " default: fit current window, 1-cell margin
+:Draw 60x20        " fixed size
+:Draw sketch.draw  " open existing file
 ```
 
-### 状态栏（鼠标点击）
+### Status bar (mouse)
 
-| 按钮 | 作用 |
-|------|------|
-| `[铅笔 ▾]` | float 切换工具（含椭圆） |
-| `[字符:█ ▾]` | float 选择色块 |
-| `[前景:██ ▾]` / `[背景:██ ▾]` | float 选色（可见色块）；点外部关闭 |
-| `[演示 ▾]` | 加载预制彩色图案 |
-| `[保存]` | 保存 `.draw` |
-| `[清空]` | 清空画布（可撤销；`C` 键同效） |
-| `[撤销]` `[退出]` `[?]` | 撤销 / 退出 / 帮助 |
+| Button | Action |
+|--------|--------|
+| `[铅笔 ▾]` | Float tool menu (incl. ellipse) |
+| `[字符:█ ▾]` | Float glyph picker |
+| `[前景:██ ▾]` / `[背景:██ ▾]` | Float color pickers |
+| `[演示 ▾]` | Load demo art |
+| `[保存]` | Save `.draw` |
+| `[清空]` | Clear canvas (undoable; `C` same) |
+| `[撤销]` `[退出]` `[?]` | Undo / quit / help |
 
-### 内置演示
+### Built-in demos
 
-| 名称 | 内容 |
-|------|------|
-| 笑脸 | 黄色笑脸、腮红、微笑 |
-| 彩虹猫 | Nyan 风彩虹拖尾 + 猫 |
-| 狗 | 卡通小狗、草地、骨头 |
-| 云 | 蓝天白云、太阳、小鸟 |
-| 楼 | 夜景城市楼群与灯光 |
-| 彩虹 | 拱形彩虹与草地 |
+| Name | Content |
+|------|---------|
+| 笑脸 | Yellow smiley |
+| 彩虹猫 | Nyan-style cat + rainbow trail |
+| 狗 | Cartoon dog, grass, bone |
+| 云 | Sky, sun, birds |
+| 楼 | Night city skyline |
+| 彩虹 | Arc rainbow + grass |
 
-### 快捷键
+### Keys
 
-| 键 | 作用 |
-|----|------|
-| `hjkl` / 方向键 | 移动 |
-| 鼠标左键拖 | 铅笔绘制；形状：起点→预览→终点 |
-| 鼠标右键拖 | 擦除 |
-| `Space` | 绘制 / 形状确认 |
-| `Esc` | 取消形状 |
-| `p` | 连续绘制开关 |
-| `a`/`d`/`L`/`R`/`O`/`f` | 铅笔/橡皮/直线/矩形/椭圆/填充 |
-| `[]` `,` `.` `<>` | 字符 / 前景 / 背景 |
-| `u` / `Ctrl-r` | 撤销 / 重做 |
-| `C` | 清空画布 |
-| `s` / `q` | 保存 / 退出 |
+| Key | Action |
+|-----|--------|
+| `hjkl` / arrows | Move |
+| LMB drag | Pencil / shape: start → preview → end |
+| RMB drag | Erase |
+| `Space` | Draw / confirm shape |
+| `Esc` | Cancel shape |
+| `p` | Continuous paint toggle |
+| `a`/`d`/`L`/`R`/`O`/`f` | Pencil/eraser/line/rect/ellipse/fill |
+| `[]` `,` `.` `<>` | Glyph / fg / bg |
+| `u` / `Ctrl-r` | Undo / redo |
+| `C` | Clear |
+| `s` / `q` | Save / quit |
 
-## 配置（可选）
-
-不调用 `setup()` 时使用内置默认值。需要改参数时：
+## Config (optional)
 
 ```lua
 require("drawbuf").setup({
   width = 80,
   height = 24,
-  canvas_bg = "ffffff", -- 默认白底；画笔默认取调色板中的黑色
+  canvas_bg = "ffffff", -- white canvas; brush defaults to palette black
   statusline = true,
-  -- 其余见 lua/drawbuf/init.lua 的 default_config
+  -- see default_config in lua/drawbuf/init.lua
 })
 ```
 
-可多次调用；后一次以默认值为底再合并你传入的字段。
-
-## 文件格式 `.draw`
+## File format `.draw`
 
 ```
 DRAWBUF 80 24
@@ -113,21 +110,22 @@ BGCOLORS
 00001111...
 ```
 
-## 性能
+## Performance
 
-绘制默认 **按脏行增量更新**；打开、演示、撤销等会全量刷新。
+Default draw path updates **dirty lines only**; open / demos / undo use full refresh.
 
-## 目录
+## Layout
 
 ```
 drawbuf/
   plugin/drawbuf.lua
   lua/drawbuf/init.lua
   README.md
+  README.zh.md
   .gitignore
 ```
 
-## 相关
+## Related
 
-- 仓库总览：[../README.md](../README.md)
-- 图片预览：[../imgbuf/README.md](../imgbuf/README.md)
+- Repo overview: [English](../README.md) · [中文](../README.zh.md)
+- Image preview: [English](../imgbuf/README.md) · [中文](../imgbuf/README.zh.md)

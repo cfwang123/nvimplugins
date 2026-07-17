@@ -1,84 +1,75 @@
 # mdview.nvim
 
-在 Neovim 内预览 Markdown：**单窗阅读**（`:MdView`）或 **侧边对照**（`:MdSideView`）。
+**English** | [中文](README.zh.md)
 
-纯 Lua 解析 + 只读预览 buffer；代码高亮、TOC、表格、图片 █ 缩略、链接跳转、可选终端高清叠层。
+Preview Markdown inside Neovim: **single-window reading** (`:MdView`) or **side-by-side** (`:MdSideView`).
 
-- 功能演示：[testdata/demo.md](./testdata/demo.md)
-- 截图：[testdata/screenshots/](./testdata/screenshots/)
+Pure Lua parse + read-only preview buffer; code highlighting, TOC, tables, images rendered with block characters, link jumps, optional terminal HD overlays.
 
-## 功能一览
+- Demo: [testdata/demo.md](./testdata/demo.md)
+- Screenshots: [testdata/screenshots/](./testdata/screenshots/)
 
-| 能力 | 说明 |
-|------|------|
-| 单窗 / 侧边 | `:MdView` 源⇄预览；`:MdSideView` 对照 + 同步滚动 / 光标 `_` 标记 |
-| 样式 | 标题（可自动序号）、粗体、斜体、`` code ``、删除线、`==mark==`、链接 |
-| 列表 / 引用 / HR / 表 | GFM 表；列宽动态；表内图；单元格 `\|` 转义 |
-| 代码块 | 边框、语言、行号、灰底、默认 10 行折叠、**`c` / `yc` / [Copy]**、TS→syntax→单色 |
-| TOC | 预览顶目录；`t` 打开目录 float |
-| 链接 | Enter/点击；`#标题` / `#1. 标题` 锚点；md 文件→目标预览；`Ctrl-o` 返回 |
-| 图片 | 预览 █ 缩略；`gi`/Enter float；`gh` 临时页内高清；`o` 系统打开 |
-| HTML | `<details>` / `<summary>`、`<img>` |
-| 排版 | 按预览宽度软折行，变宽自动重排 |
+## Features
+
+| Area | Description |
+|------|-------------|
+| Single / side | `:MdView` source ⇄ preview; `:MdSideView` paired view + scroll sync / `_` cursor mark |
+| Style | Headings (optional auto numbers), bold, italic, `` code ``, strike, `==mark==`, links |
+| Lists / quotes / HR / tables | GFM tables; dynamic columns; images in cells; escaped `\|` |
+| Code blocks | Border, language, line numbers, gray bg, fold after 10 lines, **`c` / `yc` / [Copy]**, TS→syntax→plain |
+| TOC | Top of preview; `t` opens TOC float |
+| Links | Enter/click; `#heading` / `#1. heading` anchors; md files → target preview; `Ctrl-o` back |
+| Images | Block-character render in preview; `gi`/Enter float; `gh` temporary in-page HD; `o` system open |
+| HTML | `<details>` / `<summary>`, `<img>` |
+| Layout | Soft-wrap to preview width; reflow on resize |
 
 ---
 
-## 安装
+## Install
 
-按需求从 **① 最简** 装到 **③ 完整功能**。路径请改成你的本机目录。
+From **① minimal** to **③ full**. Use your local paths.
 
-### ① 最简安装（开箱即用）
+### ① Minimal (works out of the box)
 
-**只需 Neovim 0.9+**，无需 Python、无需 Tree-sitter、无需改配置。
+**Neovim 0.9+ only** — no Python, no Tree-sitter, no config.
 
-得到：标题/列表/表/代码块（单色或 syntax）、TOC、链接、侧栏同步等**核心预览**。  
-没有：█ 图片缩略、float 高清、代码 TS 高亮。
+You get: headings/lists/tables/code (plain or syntax), TOC, links, side sync, etc.  
+You do **not** get: block-character images, float HD, Tree-sitter code highlight.
 
-#### vim-plug（本地路径）
+#### vim-plug (local path)
 
 ```vim
 call plug#begin()
-" 仅装 mdview 子目录
+" mdview subfolder only
 Plug '/path/to/nvimplugins/mdview'
-" 或装整个仓库后 rtp 已含 mdview 亦可
+" or whole-repo: Plug '/path/to/nvimplugins' (see repo root README)
 call plug#end()
 ```
 
-#### lazy.nvim
-
-```lua
-{
-  dir = "/path/to/nvimplugins/mdview", -- 本地插件
-  name = "mdview",
-  lazy = false, -- 或 ft = "markdown"
-  -- 不写 config 也可用：plugin/mdview.lua 会加载命令
-}
-```
-
-#### packer / 手动 rtp
+#### Manual rtp
 
 ```lua
 vim.opt.rtp:prepend("/path/to/nvimplugins/mdview")
--- 确保 plugin/mdview.lua 被加载（启动时 source 或 packadd）
+-- ensure plugin/mdview.lua is sourced at startup (or packadd)
 ```
 
-装好后**无需 `setup()`**，直接：
+No `setup()` required:
 
 ```vim
 :e /path/to/nvimplugins/mdview/testdata/demo.md
 :MdSideView
-" 或
+" or
 :MdView
 ```
 
-默认全局键（若未被占用）：
+Default global maps (if free):
 
-| 键 | 命令 |
-|----|------|
+| Key | Command |
+|-----|---------|
 | `<leader>mv` | `:MdView` |
 | `<leader>ms` | `:MdSideView` |
 
-关闭默认键：
+Disable default keys:
 
 ```lua
 require("mdview").setup({
@@ -88,46 +79,42 @@ require("mdview").setup({
 
 ---
 
-### ② 推荐安装（日常 Markdown 阅读）
+### ② Recommended (daily Markdown)
 
-在 ① 的基础上增加：
+On top of ①:
 
-| 依赖 | 作用 |
-|------|------|
-| **`termguicolors`** | 颜色/█ 缩略正常 |
-| **Python 3 + Pillow** | 图片 █ 真彩缩略、float 底层与高清编码 |
-| **Tree-sitter** + 常用语言 parser | 代码块语法高亮（否则 syntax / 单色） |
+| Dependency | Role |
+|------------|------|
+| **`termguicolors`** | Colors / block-character images look right |
+| **Python 3 + Pillow** | Truecolor block images, float base + HD encode |
+| **Tree-sitter** + language parsers | Code block highlighting (else syntax / plain) |
 
-#### 系统依赖
+#### System deps
 
 ```bash
-# Python 缩略 / 高清 PNG
 pip install Pillow
-# 或: python -m pip install Pillow
-
-# 可选：系统里有 python / python3 即可；可用 image.python 指定解释器
+# or: python -m pip install Pillow
 ```
 
-Tree-sitter（任选其一）：
+Tree-sitter example:
 
 ```lua
--- nvim-treesitter 示例
 require("nvim-treesitter.configs").setup({
   ensure_installed = { "lua", "python", "javascript", "bash", "markdown" },
   highlight = { enable = true },
 })
 ```
 
-并保证已安装对应 parser（`:TSInstall lua python` 等）。
+Install parsers as needed (`:TSInstall lua python`, etc.).
 
-#### 推荐 `setup`
+#### Suggested `setup`
 
 ```lua
 require("mdview").setup({
   split_direction = "right",
   width = 0.45,
   code_fold_lines = 10,
-  code_highlight = "auto", -- treesitter → syntax → 单色
+  code_highlight = "auto", -- treesitter → syntax → plain
   sync_scroll = true,
   sync_cursor_block = true,
   keys = {
@@ -135,48 +122,48 @@ require("mdview").setup({
     side = "<leader>ms",
   },
   image = {
-    mode = "thumb",          -- 预览内 █ 缩略
-    python = "python",       -- 或 "python3" / 绝对路径
+    mode = "thumb",          -- block-character images in preview
+    python = "python",
     open_with = "float",
-    float_hd = "never",      -- ② 可先关高清，仅 █
+    float_hd = "never",      -- tier ②: blocks only in float first
     float_scale = "fill",
   },
 })
 ```
 
-此时可用：
+Then you get:
 
-- 预览图片缩略、`gi` float 大图（█）
-- 代码块高亮（有 TS 时更清晰）
-- 侧栏源码光标 → 预览 `_` 标记
+- Preview images as block characters, `gi` float (blocks)
+- Code highlight (clearer with TS)
+- Side-source cursor → preview `_` mark
 
 ---
 
-### ③ 完整功能安装（高清 + 全体验）
+### ③ Full (HD + complete experience)
 
-在 ② 的基础上再配：
+On top of ②:
 
-| 依赖 | 作用 |
-|------|------|
-| **WezTerm / Kitty / Ghostty** | 终端图形协议；float 高清、`gh` 页内临时高清 |
-| 真彩终端 + 足够色域 | █ 与高清观感更好 |
-| （可选）chafa | `image.backend = "auto"` 时可作为缩略备选 |
+| Dependency | Role |
+|------------|------|
+| **WezTerm / Kitty / Ghostty** | Graphics protocol; float HD, `gh` temporary in-page HD |
+| Truecolor terminal | Better blocks + HD look |
+| (Optional) chafa | Alternate backend when `image.backend = "auto"` |
 
-#### 终端
+#### Terminals
 
-- **WezTerm**：推荐；float / `gh` 走 iTerm 协议叠层  
-- **Kitty / Ghostty**：Kitty 协议  
-- **Alacritty 等**：一般无图形协议 → 仅 █，无像素高清  
-- **tmux 内**：默认关高清；需 `image.hd_tmux = true` / `graphics_tmux = true`（且 tmux 需放行图形序列）  
-- **SSH**：默认关高清；需 `hd_ssh` / `graphics_ssh`
+- **WezTerm**: recommended; float / `gh` via iTerm protocol overlay  
+- **Kitty / Ghostty**: Kitty protocol  
+- **Alacritty etc.**: usually no graphics protocol → blocks only, no pixel HD  
+- **Inside tmux**: HD off by default; set `image.hd_tmux = true` / `graphics_tmux = true`  
+- **SSH**: HD off by default; set `hd_ssh` / `graphics_ssh`
 
-#### 完整示例 `setup`
+#### Full `setup` example
 
 ```lua
 require("mdview").setup({
   split_direction = "right",
   width = 0.45,
-  heading_conceal = true,      -- 预览隐藏 ###，保留/生成序号
+  heading_conceal = true,
   list_bullets = { "●", "○" },
   toc = true,
   toc_min_level = 1,
@@ -193,15 +180,14 @@ require("mdview").setup({
   },
   image = {
     mode = "thumb",
-    max_height = 0,            -- 0 = 高度随宽比例；>0 限制最大行数
+    max_height = 0,
     max_images = 20,
-    backend = "auto",          -- python Pillow / chafa
+    backend = "auto",
     python = "python",
     open_with = "float",
-    float_scale = "fill",      -- fill 拉伸 | fit 等比 letterbox
-    -- 预览内默认不自动高清（滚动易乱）；用 gh 临时开
+    float_scale = "fill",
+    -- preview: no auto HD (scroll glitches); use gh temporarily
     hd = "never",
-    -- float 与 gi：终端支持则像素高清
     float_hd = "always",
     hd_tmux = false,
     hd_ssh = false,
@@ -214,23 +200,23 @@ require("mdview").setup({
 })
 ```
 
-完整能力对照：
+Capability matrix:
 
-| 能力 | ① 最简 | ② 推荐 | ③ 完整 |
-|------|:------:|:------:|:------:|
-| 源/预览、TOC、表、链接、折叠 | ✓ | ✓ | ✓ |
-| 代码 TS 高亮 | — | ✓ | ✓ |
-| 图片 █ 缩略 / float █ | — | ✓ | ✓ |
-| float 像素高清（`gi`） | — | 可选 | ✓ |
-| 页内临时高清（`gh`） | — | — | ✓ |
-| 侧栏光标 `_`、跨文件预览跳转 | ✓ | ✓ | ✓ |
+| Capability | ① min | ② rec | ③ full |
+|------------|:-----:|:-----:|:------:|
+| Source/preview, TOC, tables, links, folds | ✓ | ✓ | ✓ |
+| Tree-sitter code | — | ✓ | ✓ |
+| Block-character images / float blocks | — | ✓ | ✓ |
+| Float pixel HD (`gi`) | — | optional | ✓ |
+| Temporary in-page HD (`gh`) | — | — | ✓ |
+| Side `_` cursor, cross-file preview jumps | ✓ | ✓ | ✓ |
 
-#### 自检
+#### Smoke test
 
 ```vim
 :e /path/to/nvimplugins/mdview/testdata/demo.md
 :MdSideView
-" 预览内：? 帮助 · t 目录 · c 复制代码 · gi 开图 · gh 页内高清
+" in preview: ? help · t TOC · c copy code · gi image · gh in-page HD
 ```
 
 ```bash
@@ -239,46 +225,46 @@ python -c "from PIL import Image; print('Pillow OK')"
 
 ---
 
-## 命令
+## Commands
 
-| 命令 | 作用 |
-|------|------|
-| `:MdView` | 单窗切换源 / 预览 |
-| `:MdSideView` | 侧边预览 toggle（**每 tab 仅一个**预览窗） |
-| `:MdSideView open` / `close` | 显式开/关 |
-| `:MdViewRefresh` | 强制重渲染 |
-| `:MdViewSync` | 侧边按源光标同步 |
+| Command | Action |
+|---------|--------|
+| `:MdView` | Toggle source / preview in one window |
+| `:MdSideView` | Toggle side preview (**one** preview window per tab) |
+| `:MdSideView open` / `close` | Explicit open/close |
+| `:MdViewRefresh` | Force re-render |
+| `:MdViewSync` | Sync side preview to source cursor |
 
-侧边开启后，同 tab 切换其它 **markdown** buffer 时预览会跟到该文件；非 md 则保持当前预览。
+With side open, switching to another **markdown** buffer in the same tab follows that file; non-md keeps the current preview.
 
-## 预览键位
+## Preview keys
 
-| 键 | 作用 |
-|----|------|
-| `q` | 关闭预览 / 单窗回源 |
-| `r` | 刷新 |
-| `<CR>` | TOC / 代码折叠 / details / 图片 / **md 链接→目标预览** |
-| `gi` | 图片 float 大图 |
-| `gh` | 当前页临时高清（滚动 / 焦点切换 / 改窗大小清除） |
-| `o` | 系统打开图片 |
-| `c` / `yc` | 复制光标处代码块 |
-| `gs` | 跳到源对应行 |
-| `go` | 文内 TOC 顶部 |
-| `t` | 目录 float |
-| `<C-o>` | 返回：文内跳转 → 上一篇 md 预览 |
-| `?` | 帮助 float |
+| Key | Action |
+|-----|--------|
+| `q` | Close preview / back to source |
+| `r` | Refresh |
+| `<CR>` | TOC / code fold / details / image / **md link → target preview** |
+| `gi` | Image float |
+| `gh` | Temporary in-page HD (cleared on scroll / focus / resize) |
+| `o` | System-open image |
+| `c` / `yc` | Copy code block under cursor |
+| `gs` | Jump to source line |
+| `go` | Top TOC in document |
+| `t` | TOC float |
+| `<C-o>` | Back: in-doc jump → previous md preview |
+| `?` | Help float |
 
-## 配置摘要
+## Config notes
 
-全部默认项见 `lua/mdview/config.lua`。
+All defaults: `lua/mdview/config.lua`.
 
-### 图片行为简述
+### Image behavior
 
-- **预览内**：默认仅 █ 缩略（`hd = "never"`）；需要时用 **`gh`** 临时叠高清  
-- **float / `gi`**：█ + 可选像素高清（`float_hd = "always"`）  
-- 需 **Pillow**；高清还需支持图形协议的终端  
+- **In preview**: block characters only by default (`hd = "never"`); use **`gh`** for temporary HD  
+- **float / `gi`**: blocks + optional pixel HD (`float_hd = "always"`)  
+- Needs **Pillow**; HD also needs a graphics-protocol terminal  
 
-## 目录
+## Layout
 
 ```
 mdview/
@@ -289,8 +275,9 @@ mdview/
   testdata/demo.md
   testdata/screenshots/
   README.md
+  README.zh.md
 ```
 
-## 相关
+## Related
 
-- 仓库总览：[../README.md](../README.md)
+- Repo overview: [English](../README.md) · [中文](../README.zh.md)
