@@ -191,6 +191,9 @@ function M.setup(user)
   M._apply_global_keys(cfg)
   rebind_all_preview_maps()
   M._ensure_source_maps_au()
+  pcall(function()
+    require("mdview.source_mark").ensure_au()
+  end)
   return cfg
 end
 
@@ -201,6 +204,9 @@ function M.ensure_setup()
   M._apply_global_keys(cfg)
   rebind_all_preview_maps()
   M._ensure_source_maps_au()
+  pcall(function()
+    require("mdview.source_mark").ensure_au()
+  end)
   return cfg
 end
 

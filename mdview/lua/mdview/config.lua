@@ -21,6 +21,7 @@ local M = {}
 ---@class MdViewHtmlConfig
 ---@field img boolean
 ---@field details boolean
+---@field font boolean 是否解析/渲染 <font color/style>
 ---@field details_default_open boolean
 ---@field details_max_depth number
 ---@field unknown "raw"|"hide"|"comment"
@@ -123,6 +124,7 @@ local defaults = {
   html = {
     img = true,
     details = true,
+    font = true, -- <font color / style=background> 预览 + 编辑区
     details_default_open = false,
     details_max_depth = 8,
     unknown = "raw",

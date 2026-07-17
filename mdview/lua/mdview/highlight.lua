@@ -287,6 +287,50 @@ function M.ensure()
   end
 end
 
+---动态 font 样式组缓存（名 → true）
+local font_hl_cache = {}
+
+---按 fg/bg/bold/italic 生成/复用高亮组名
+---@param fg string|nil #rrggbb
+---@param bg string|nil #rrggbb
+---@param bold boolean|nil
+---@param italic boolean|nil
+---@return string|nil hl_group
+function M.ensure_font_hl(fg, bg, bold, italic)
+  bold = bold == true
+  italic = italic == true
+  if (not fg or fg == "") and (not bg or bg == "") and not bold and not italic then
+    return nil
+  end
+  local key = (fg or "x")
+    .. "_"
+    .. (bg or "x")
+    .. (bold and "_b" or "")
+    .. (italic and "_i" or "")
+  key = key:gsub("[^%w#_]", "")
+  local name = "MdViewFont_" .. key:gsub("#", "")
+  -- 组名长度/字符限制
+  if #name > 60 then
+    name = "MdViewFont_" .. tostring(vim.fn.sha256(key):sub(1, 12))
+  end
+  local opts = { default = false }
+  if fg and fg ~= "" then
+    opts.fg = fg
+  end
+  if bg and bg ~= "" then
+    opts.bg = bg
+  end
+  if bold then
+    opts.bold = true
+  end
+  if italic then
+    opts.italic = true
+  end
+  pcall(vim.api.nvim_set_hl, 0, name, opts)
+  font_hl_cache[name] = true
+  return name
+end
+
 ---有限调色板，避免 E849
 ---@param n number
 function M.ensure_image_palette(n)

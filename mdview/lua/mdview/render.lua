@@ -76,6 +76,9 @@ local function flatten_spans(spans)
     local blen = #t -- 字节长度供 extmark col
     col = col + blen
     local hl = hl_map[sp.type]
+    if sp.type == "font" then
+      hl = highlight.ensure_font_hl(sp.fg, sp.bg, sp.bold, sp.italic)
+    end
     if hl and t ~= "" then
       local r = { col = start, end_col = col, hl = hl }
       if sp.type == "link" and sp.href then

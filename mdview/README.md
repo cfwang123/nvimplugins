@@ -14,13 +14,13 @@ Pure Lua parse + read-only preview buffer; code highlighting, TOC, tables, image
 | Area | Description |
 |------|-------------|
 | Single / side | `:MdView` source ⇄ preview; `:MdSideView` paired view + scroll sync / `_` cursor mark |
-| Style | Headings (optional auto numbers), bold, italic, `` code ``, strike, `==mark==`, links |
+| Style | Headings (optional auto numbers), bold, italic, `` code ``, strike, `==mark==` (preview + **editor yellow + conceal `==`**), links |
 | Lists / quotes / HR / tables | GFM tables; dynamic columns; images in cells; escaped `\|` |
 | Code blocks | Border, language, line numbers, gray bg, fold after 10 lines, **`c` / `yc` / [Copy]**, TS→syntax→plain |
 | TOC | Top of preview; `t` in preview / **`<leader>toc`** in editor (configurable) opens TOC float |
 | Links | Preview/editor Enter or Ctrl+LeftMouse; `#heading` / `#1. heading` anchors; md → target preview; `Ctrl-o` back |
 | Images | Block chars in preview; `gi`/Enter float; **editor** Enter/Ctrl-click on `![](…)`; `gh` page HD; `o` system open |
-| HTML | `<details>` / `<summary>`, `<img>` |
+| HTML | `<details>` / `<summary>`, `<img>`, `<font color/style>` (color / bold / italic; preview + editor) |
 | Layout | Soft-wrap to preview width; reflow on resize |
 
 ---

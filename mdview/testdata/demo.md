@@ -23,6 +23,8 @@
 
 普通段落：这是 **粗体**、*斜体*、_也是斜体_、`行内代码`、~~删除线~~、==高亮标记==。
 
+HTML 字体色：<font color='#f00' style="background:#0f0">红字绿底</font> · <font color="#00aaff">仅前景</font> · <font style="font-weight:bold;font-style:italic">粗斜体</font> · <font color="#c00" style="font-weight:bold">红粗</font>。
+
 混合：`print(**not bold**)` 与 **`粗体代码感`** 与 [Neovim 官网](https://neovim.io)。
 
 页内链接：[回到顶部](#mdview-完整功能演示) · [Quote 区](#Quote 引用) · [列表](#3. 列表)

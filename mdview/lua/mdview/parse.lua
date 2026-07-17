@@ -58,6 +58,16 @@ function M.parse_inlines(text, cfg)
         push_text("`")
         i = i + 1
       end
+    -- <font color/style>…</font>
+    elseif c == "<" and (cfg.html == nil or cfg.html.font ~= false) and html.is_font_open_at(text, i) then
+      local next_i, font_sp = html.parse_font_at(text, i)
+      if next_i and font_sp then
+        spans[#spans + 1] = font_sp
+        i = next_i
+      else
+        push_text("<")
+        i = i + 1
+      end
     -- 图片 ![alt](url)
     elseif two == "![" then
       local close = text:find("%]", i + 2)
@@ -175,7 +185,7 @@ function M.parse_inlines(text, cfg)
       while k <= n do
         local ch = text:sub(k, k)
         local t2 = text:sub(k, k + 1)
-        if ch == "`" or ch == "[" or ch == "*" or ch == "_" or ch == "!"
+        if ch == "`" or ch == "[" or ch == "*" or ch == "_" or ch == "!" or ch == "<"
           or t2 == "==" or t2 == "~~" then
           break
         end
