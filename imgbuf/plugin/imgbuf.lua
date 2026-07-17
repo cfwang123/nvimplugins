@@ -42,3 +42,19 @@ vim.api.nvim_create_user_command("ImgbufClipboard", function()
 end, {
   desc = "Preview image from system clipboard",
 })
+
+vim.api.nvim_create_user_command("ImgbufAnimTest", function(opts)
+  local imgbuf = get_mod()
+  if not imgbuf then
+    return
+  end
+  local fps = tonumber(opts.args)
+  if opts.args ~= nil and opts.args ~= "" and not fps then
+    vim.notify("imgbuf: ImgbufAnimTest 参数为 fps 数字，例如 :ImgbufAnimTest 10", vim.log.levels.ERROR)
+    return
+  end
+  require("imgbuf.animtest").start({ fps = fps or 10 })
+end, {
+  nargs = "?",
+  desc = "全刷屏动画测试（默认 10fps；q 退出 Space 暂停）",
+})

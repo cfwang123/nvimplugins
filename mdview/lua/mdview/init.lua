@@ -196,6 +196,46 @@ function M.ensure_setup()
   return cfg
 end
 
+---刷新所有已打开的预览（语言切换后调用）
+function M.refresh_all()
+  for _, st in pairs(states) do
+    if st and st.source_buf and vim.api.nvim_buf_is_valid(st.source_buf) then
+      pcall(function()
+        M.refresh(st.source_buf)
+      end)
+    end
+  end
+  for _, sess in pairs(tab_sessions) do
+    if sess and sess.source_buf and vim.api.nvim_buf_is_valid(sess.source_buf) then
+      pcall(function()
+        M.refresh(sess.source_buf)
+      end)
+    end
+  end
+end
+
+---切换中/英文界面并重绘
+function M.toggle_ui_lang()
+  local i18n = require("mdview.i18n")
+  local next_lang = i18n.toggle()
+  i18n.save_prefs()
+  if next_lang == "en" then
+    vim.notify(i18n.t("lang_to_en"), vim.log.levels.INFO)
+  else
+    vim.notify(i18n.t("lang_to_zh"), vim.log.levels.INFO)
+  end
+  -- 帮助浮层若开着，关了再用新语言重开
+  local help = require("mdview.help")
+  local help_was = help.is_open()
+  if help_was then
+    help.close_float()
+  end
+  M.refresh_all()
+  if help_was then
+    help.open_float()
+  end
+end
+
 local function preview_width(st)
   if st.preview_win and vim.api.nvim_win_is_valid(st.preview_win) then
     return vim.api.nvim_win_get_width(st.preview_win)
@@ -393,7 +433,7 @@ attach_maps = function(preview_buf)
       if st then
         return fn(st, ...)
       end
-      vim.notify("mdview: preview state missing（试 :MdViewRefresh）", vim.log.levels.WARN)
+      vim.notify(require("mdview.i18n").t("state_missing"), vim.log.levels.WARN)
     end
   end
 
@@ -458,6 +498,11 @@ attach_maps = function(preview_buf)
     require("mdview.help").toggle_float()
   end, vim.tbl_extend("force", opts, { desc = "mdview: help" }))
 
+  -- L：切换中/英文界面并刷新所有预览
+  vim.keymap.set("n", "L", function()
+    M.toggle_ui_lang()
+  end, vim.tbl_extend("force", opts, { desc = "mdview: toggle UI language" }))
+
   local function on_mouse_click()
     vim.schedule(function()
       if not vim.api.nvim_buf_is_valid(preview_buf) then
@@ -520,6 +565,32 @@ local function attach_autocmds(st)
       if st.mode == "side" then
         sync.sync_from_source(st)
       end
+    end,
+  })
+
+  ---i / a / I / A / o 等进入插入：字节列可能不变，但插入点语义变了，需立刻刷新预览 `_`
+  vim.api.nvim_create_autocmd({ "InsertEnter", "ModeChanged" }, {
+    group = g,
+    buffer = st.source_buf,
+    callback = function(args)
+      if st.mode ~= "side" or st.syncing then
+        return
+      end
+      -- ModeChanged：仅在进出插入/替换时同步（避免噪音）
+      if args.event == "ModeChanged" then
+        local match = args.match or ""
+        -- 如 n:i、v:i、n:R、i:n
+        if not (match:match(":i") or match:match(":R") or match:match("i:") or match:match("R:")) then
+          return
+        end
+      end
+      st.syncing = true
+      vim.schedule(function()
+        if st.mode == "side" then
+          sync.sync_from_source(st)
+        end
+        st.syncing = false
+      end)
     end,
   })
 
@@ -880,7 +951,7 @@ local function restore_file_nav(entry)
     return
   end
   if vim.fn.filereadable(entry.path) == 0 then
-    vim.notify("mdview: previous file gone: " .. tostring(entry.path), vim.log.levels.WARN)
+    vim.notify(require("mdview.i18n").t("prev_gone") .. tostring(entry.path), vim.log.levels.WARN)
     return
   end
   -- 用当前预览态作上下文打开旧文件
@@ -954,7 +1025,7 @@ function M._jump_back(st)
     restore_file_nav(file_entry)
     return
   end
-  vim.notify("mdview: jump list empty", vim.log.levels.INFO)
+  vim.notify(require("mdview.i18n").t("jump_empty"), vim.log.levels.INFO)
 end
 
 ---本地 md 是否像 markdown 路径
@@ -1316,7 +1387,7 @@ function M._open_href(href, st)
     if h then
       M._jump_both(st, h.source_start, h.preview_line)
     else
-      vim.notify("mdview: heading not found: " .. href, vim.log.levels.INFO)
+      vim.notify(require("mdview.i18n").t("heading_nf") .. href, vim.log.levels.INFO)
     end
     return
   end
@@ -1338,7 +1409,7 @@ function M._open_href(href, st)
       if h then
         M._jump_both(st, h.source_start, h.preview_line)
       else
-        vim.notify("mdview: heading not found: #" .. frag, vim.log.levels.INFO)
+        vim.notify(require("mdview.i18n").t("heading_nf") .. "#" .. frag, vim.log.levels.INFO)
       end
       return
     end
@@ -1377,7 +1448,7 @@ function M._open_href(href, st)
     if ok then
       return
     end
-    vim.notify("mdview: open failed: " .. tostring(err), vim.log.levels.WARN)
+    vim.notify(require("mdview.i18n").t("open_fail") .. tostring(err), vim.log.levels.WARN)
   end
   if vim.fn.has("win32") == 1 then
     vim.fn.jobstart({ "cmd", "/c", "start", "", href }, { detach = true })
@@ -1552,7 +1623,7 @@ function M._open_image_at_cursor(st)
   if path then
     image_mod.open_preview(path, config.get())
   else
-    vim.notify("mdview: no image under cursor", vim.log.levels.INFO)
+    vim.notify(require("mdview.i18n").t("no_image"), vim.log.levels.INFO)
   end
 end
 
@@ -1562,7 +1633,7 @@ function M._open_image_system_at_cursor(st)
   if path then
     image_mod.open_with_system(path)
   else
-    vim.notify("mdview: no image under cursor", vim.log.levels.INFO)
+    vim.notify(require("mdview.i18n").t("no_image"), vim.log.levels.INFO)
   end
 end
 
@@ -1580,27 +1651,27 @@ function M._toggle_page_hd(st)
       buf = cur
       st.preview_buf = cur
     else
-      vim.notify("mdview: 无预览 buffer", vim.log.levels.WARN)
+      vim.notify(require("mdview.i18n").t("no_preview_buf"), vim.log.levels.WARN)
       return
     end
   end
 
   local ok_g, graphics = pcall(require, "mdview.graphics")
   if not ok_g or not graphics then
-    vim.notify("mdview: 无法加载 graphics: " .. tostring(graphics), vim.log.levels.ERROR)
+    vim.notify(require("mdview.i18n").t("gfx_fail") .. tostring(graphics), vim.log.levels.ERROR)
     return
   end
   -- 已在显示 → 关闭
   if graphics.is_active and graphics.is_active(buf) then
     graphics.clear_buf(buf)
-    vim.notify("mdview: 已关闭页内高清", vim.log.levels.INFO)
+    vim.notify(require("mdview.i18n").t("page_hd_off"), vim.log.levels.INFO)
     return
   end
 
   local cfg = config.get()
   local imgcfg = (cfg and cfg.image) or {}
   if graphics.detect and not graphics.detect(imgcfg, "float") then
-    vim.notify("mdview: 当前终端不支持高清叠层（需 WezTerm/Kitty/Ghostty）", vim.log.levels.INFO)
+    vim.notify(require("mdview.i18n").t("page_hd_unsupported"), vim.log.levels.INFO)
     return
   end
 
@@ -1630,10 +1701,10 @@ function M._toggle_page_hd(st)
     clear_on_scroll = true, -- 滚动/改大小/焦点离开清除；移光标不关
   })
   if not ok then
-    vim.notify("mdview: 当前页没有可叠高清的图片（或编码失败）", vim.log.levels.INFO)
+    vim.notify(require("mdview.i18n").t("page_hd_none"), vim.log.levels.INFO)
   else
     pcall(vim.api.nvim_echo, {
-      { "mdview: 页内高清已开 · 滚动/焦点切换/改大小或再按 gh 关闭", "MoreMsg" },
+      { require("mdview.i18n").t("page_hd_on"), "MoreMsg" },
     }, false, {})
     -- iTerm 最多补 1 次；多次会堆叠
     vim.defer_fn(function()
@@ -1644,7 +1715,7 @@ function M._toggle_page_hd(st)
   end
 end
 
----复制后顶栏 [Copy] → [Copied]，3 秒恢复
+---复制后顶栏 [复制]/Copy] → [已复制]/Copied]，3 秒恢复
 ---@param st table
 ---@param hit table code_copy hit
 local function flash_copy_label(st, hit)
@@ -1652,19 +1723,22 @@ local function flash_copy_label(st, hit)
   if not buf or not vim.api.nvim_buf_is_valid(buf) or not hit or not hit.line then
     return
   end
+  local i18n = require("mdview.i18n")
+  local copy_lab = i18n.t("copy")
+  local copied_lab = i18n.t("copied")
   local row = hit.line -- 1-based
   local line = vim.api.nvim_buf_get_lines(buf, row - 1, row, false)[1]
-  if not line or not line:find("[Copy]", 1, true) then
+  if not line or not line:find(copy_lab, 1, true) then
     return
   end
-  local new_line = line:gsub("%[Copy%]", "[Copied]", 1)
+  local new_line = line:gsub(vim.pesc(copy_lab), copied_lab, 1)
   vim.bo[buf].modifiable = true
   pcall(vim.api.nvim_buf_set_lines, buf, row - 1, row, false, { new_line })
   vim.bo[buf].modifiable = false
 
-  -- 临时高亮 [Copied]
+  -- 临时高亮已复制
   local ns = vim.api.nvim_create_namespace("mdview_copy_flash")
-  local s, e = new_line:find("[Copied]", 1, true)
+  local s, e = new_line:find(copied_lab, 1, true)
   if s and e then
     pcall(vim.api.nvim_buf_set_extmark, buf, ns, row - 1, s - 1, {
       end_col = e,
@@ -1681,7 +1755,7 @@ local function flash_copy_label(st, hit)
       return
     end
     local cur = vim.api.nvim_buf_get_lines(buf, row - 1, row, false)[1]
-    if not cur or not cur:find("[Copied]", 1, true) then
+    if not cur or not cur:find(copied_lab, 1, true) then
       return
     end
     vim.bo[buf].modifiable = true
@@ -1706,14 +1780,15 @@ local function flash_copy_label(st, hit)
 end
 
 function M._yank_code_lines(lines, lang, st, hit)
+  local i18n = require("mdview.i18n")
   if not lines or #lines == 0 then
-    vim.notify("mdview: empty code block", vim.log.levels.INFO)
+    vim.notify(i18n.t("empty_code"), vim.log.levels.INFO)
     return
   end
   local text = table.concat(lines, "\n")
   vim.fn.setreg('"', text)
   pcall(vim.fn.setreg, "+", text)
-  vim.notify(string.format("mdview: copied %d lines (%s)", #lines, lang or "text"), vim.log.levels.INFO)
+  vim.notify(string.format(i18n.t("copied_n"), #lines, lang or "text"), vim.log.levels.INFO)
   if st and hit then
     flash_copy_label(st, hit)
   end
@@ -1732,7 +1807,7 @@ function M._yank_code_at_cursor(st)
     end
   end
   if not hit or not hit.lines then
-    vim.notify("mdview: no code block under cursor", vim.log.levels.INFO)
+    vim.notify(require("mdview.i18n").t("no_code"), vim.log.levels.INFO)
     return
   end
   -- yc：找同块的 code_copy hit 以便闪烁顶栏
@@ -2249,7 +2324,7 @@ function M.toggle_view()
 
   local source_buf = M._current_source()
   if not is_markdown_buf(source_buf) then
-    vim.notify("mdview: not a markdown buffer", vim.log.levels.INFO)
+    vim.notify(require("mdview.i18n").t("not_md"), vim.log.levels.INFO)
     return
   end
   local st = ensure_state(source_buf)
@@ -2281,7 +2356,7 @@ function M.side_open()
     source_buf = vim.b[source_buf].mdview_source or source_buf
   end
   if not is_markdown_buf(source_buf) then
-    vim.notify("mdview: open a markdown file first", vim.log.levels.INFO)
+    vim.notify(require("mdview.i18n").t("open_md_first"), vim.log.levels.INFO)
     return
   end
 

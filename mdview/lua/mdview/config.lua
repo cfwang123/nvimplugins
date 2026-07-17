@@ -73,7 +73,10 @@ local defaults = {
     sidescroll = 1,
   },
   debounce_ms = 150,
-  show_help = true, -- ? 打开帮助 float（兼容字段，现为 float）
+  show_help = true, -- ? 打开帮助 float
+  show_key_hint = true, -- 预览顶部灰色快捷键提示行
+  --- 界面语言："auto"（跟随系统）| "zh" | "en"；L 可切换并记住
+  ui_lang = "auto",
   heading_conceal = true,
   list_bullets = { "●", "○" }, -- 第1层 ●，第2层及以后 ○
   table_style = "unicode",
@@ -143,6 +146,19 @@ end
 ---@param user table|nil
 function M.setup(user)
   config = vim.tbl_deep_extend("force", vim.deepcopy(defaults), user or {})
+  local i18n = require("mdview.i18n")
+  local remembered = i18n.load_prefs()
+  local lang_opt = config.ui_lang
+  if user and (user.ui_lang == "zh" or user.ui_lang == "en" or user.ui_lang == "auto") then
+    lang_opt = user.ui_lang
+  elseif remembered then
+    lang_opt = remembered
+  end
+  if lang_opt == "zh" or lang_opt == "en" then
+    i18n.setup(lang_opt)
+  else
+    i18n.setup("auto")
+  end
   setup_done = true
   return config
 end

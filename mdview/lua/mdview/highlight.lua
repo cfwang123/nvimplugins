@@ -40,6 +40,7 @@ local links = {
   MdViewTocSep = "Comment",
   MdViewTocFloat = "", -- 纯白底
   MdViewHelp = "",
+  MdViewKeyHint = "Comment", -- 预览顶栏灰色快捷键提示
 }
 
 local function code_bg_color()
@@ -186,14 +187,14 @@ function M.setup(user_hls)
     end
   end
 
-  -- 源→预览光标位置：块浅底 + 当前行更深 + 标记色
+  -- 源→预览光标：块高亮颜色保持原样（CursorLine）；不再叠蓝色当前行
   local cur_ov = user_hls and user_hls.MdViewCursor
   if type(cur_ov) == "table" then
     vim.api.nvim_set_hl(0, "MdViewCursor", vim.tbl_extend("force", { default = false }, cur_ov))
   elseif type(cur_ov) == "string" and cur_ov ~= "" then
     vim.api.nvim_set_hl(0, "MdViewCursor", { link = cur_ov, default = false })
   else
-    -- 略深于 CursorLine，保证非焦点窗 extmark 也看得出
+    -- 与改色前一致：跟 CursorLine，保证非焦点窗 extmark 也看得出
     local ok_cl, cl = pcall(vim.api.nvim_get_hl, 0, { name = "CursorLine", link = false })
     if ok_cl and cl and cl.bg then
       vim.api.nvim_set_hl(0, "MdViewCursor", { bg = cl.bg, default = false })
@@ -201,21 +202,20 @@ function M.setup(user_hls)
       vim.api.nvim_set_hl(0, "MdViewCursor", { bg = "#2a2a3a", default = false })
     end
   end
+  -- 组名保留兼容；默认链到块高亮（同步逻辑里已不再使用蓝行）
   local cur_line_ov = user_hls and user_hls.MdViewCursorLine
   if type(cur_line_ov) == "table" then
     vim.api.nvim_set_hl(0, "MdViewCursorLine", vim.tbl_extend("force", { default = false }, cur_line_ov))
+  elseif type(cur_line_ov) == "string" and cur_line_ov ~= "" then
+    vim.api.nvim_set_hl(0, "MdViewCursorLine", { link = cur_line_ov, default = false })
   else
-    local ok_v, vis = pcall(vim.api.nvim_get_hl, 0, { name = "Visual", link = false })
-    if ok_v and vis and vis.bg then
-      vim.api.nvim_set_hl(0, "MdViewCursorLine", { bg = vis.bg, bold = true, default = false })
-    else
-      vim.api.nvim_set_hl(0, "MdViewCursorLine", { bg = "#3d4f6f", bold = true, default = false })
-    end
+    vim.api.nvim_set_hl(0, "MdViewCursorLine", { link = "MdViewCursor", default = false })
   end
   local mark_ov = user_hls and user_hls.MdViewCursorMark
   if type(mark_ov) == "table" then
     vim.api.nvim_set_hl(0, "MdViewCursorMark", vim.tbl_extend("force", { default = false }, mark_ov))
   else
+    -- 与改色前一致
     vim.api.nvim_set_hl(0, "MdViewCursorMark", { fg = "#89b4fa", bold = true, default = false })
   end
 
@@ -262,6 +262,21 @@ function M.setup(user_hls)
   set_white_float("MdViewHelpFloatBorder", { fg = "#888888" })
   set_white_float("MdViewHelpFloatTitle", { bold = true })
   vim.api.nvim_set_hl(0, "MdViewHelp", { link = "MdViewHelpFloatTitle", default = false })
+
+  -- 预览顶部按键提示：灰色弱化（勿链到 HelpFloat 白底）
+  local kh = user_hls and user_hls.MdViewKeyHint
+  if type(kh) == "table" then
+    vim.api.nvim_set_hl(0, "MdViewKeyHint", vim.tbl_extend("force", { default = false }, kh))
+  elseif type(kh) == "string" and kh ~= "" then
+    vim.api.nvim_set_hl(0, "MdViewKeyHint", { link = kh, default = false })
+  else
+    local ok_c, cmt = pcall(vim.api.nvim_get_hl, 0, { name = "Comment", link = false })
+    if ok_c and cmt and cmt.fg then
+      vim.api.nvim_set_hl(0, "MdViewKeyHint", { fg = cmt.fg, default = false })
+    else
+      vim.api.nvim_set_hl(0, "MdViewKeyHint", { fg = "#888888", default = false })
+    end
+  end
 
   defined = true
 end

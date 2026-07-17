@@ -45,8 +45,12 @@ function M.bind_preview_source(preview_buf, source_buf)
     local name = vim.api.nvim_buf_get_name(source_buf)
     label = name ~= "" and vim.fn.fnamemodify(name, ":t") or tostring(source_buf)
   end
-  -- 改名可能失败（已有同名），忽略
-  pcall(vim.api.nvim_buf_set_name, preview_buf, "mdview://" .. label .. ":" .. preview_buf)
+  -- 标签页/buffer 列表显示「文件名 [mdview]」；重名时加 buf 号
+  local shown = label .. " [mdview]"
+  local ok = pcall(vim.api.nvim_buf_set_name, preview_buf, shown)
+  if not ok then
+    pcall(vim.api.nvim_buf_set_name, preview_buf, shown .. ":" .. preview_buf)
+  end
 end
 
 ---当前 tab 内所有 mdview 预览窗

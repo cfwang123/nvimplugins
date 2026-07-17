@@ -471,13 +471,19 @@ function M.parse_lines(lines, cfg, line_offset, depth)
       local start_i = i
       local header = split_table_row(line)
       local aligns = parse_align_row(lines[i + 1])
+      local header_source = src_line(start_i)
+      -- 分隔行 |---| 也算表头区，便于光标落在分隔行时高亮表头
+      local header_source_end = src_line(start_i + 1)
       i = i + 2
       local rows = {}
+      local row_sources = {} ---@type {start:number, end_:number}[]
       while i <= n and is_table_row(lines[i]) and trim(lines[i]) ~= "" and not fence_open(lines[i]) do
         if is_hr(lines[i]) then
           break
         end
         rows[#rows + 1] = split_table_row(lines[i])
+        local rs = src_line(i)
+        row_sources[#row_sources + 1] = { start = rs, ["end"] = rs }
         i = i + 1
       end
       add({
@@ -485,8 +491,11 @@ function M.parse_lines(lines, cfg, line_offset, depth)
         source_start = src_line(start_i),
         source_end = src_line(i - 1),
         header = header,
+        header_source = header_source,
+        header_source_end = header_source_end,
         aligns = aligns,
         rows = rows,
+        row_sources = row_sources,
       })
     -- 引用
     elseif quote_prefix(line) ~= nil then
@@ -522,11 +531,16 @@ function M.parse_lines(lines, cfg, line_offset, depth)
           if #items > 0 and lines[i]:match("^%s+%S") and not fence_open(lines[i]) and not heading_atx(lines[i]) then
             local cont = lines[i]:match("^%s+(.*)$")
             items[#items].text = items[#items].text .. "\n" .. cont
+            items[#items].source_end = src_line(i)
             i = i + 1
           else
             break
           end
         else
+          -- 关闭上一 item 的 source_end（续行会延长）
+          if #items > 0 and not items[#items].source_end then
+            items[#items].source_end = src_line(i) - 1
+          end
           items[#items + 1] = {
             text = rest,
             checked = checked,
@@ -534,17 +548,27 @@ function M.parse_lines(lines, cfg, line_offset, depth)
             indent = ind,
             spans = nil, -- 稍后
             source_start = src_line(i),
+            source_end = src_line(i),
           }
           i = i + 1
         end
       end
-      for _, it in ipairs(items) do
+      -- 续行时拉长当前 item 的 source_end
+      -- （上面 cont 分支只改了 text，在此统一收尾）
+      local list_end = src_line(i - 1)
+      for ii, it in ipairs(items) do
+        if ii < #items then
+          local next_start = items[ii + 1].source_start or list_end
+          it.source_end = math.max(it.source_start or next_start, next_start - 1)
+        else
+          it.source_end = list_end
+        end
         it.spans = M.parse_inlines(it.text:gsub("\n", " "), cfg)
       end
       add({
         type = "list",
         source_start = src_line(start_i),
-        source_end = src_line(i - 1),
+        source_end = list_end,
         list_type = list_type,
         items = items,
       })

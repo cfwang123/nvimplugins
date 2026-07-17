@@ -150,14 +150,19 @@ function M.open_float(st, on_jump)
     end
   end
   if not headings or #headings == 0 then
-    vim.notify("mdview: no headings for TOC", vim.log.levels.INFO)
+    vim.notify(require("mdview.i18n").t("toc_empty"), vim.log.levels.INFO)
     return
   end
 
+  local i18n = require("mdview.i18n")
   local hp = st.result and st.result.heading_preview or {}
   local rev = st.result and st.result.rev_map or {}
   local entries = {}
-  local lines = { "◆ Outline", "  Enter 跳转 · q 关闭", "" }
+  local lines = {
+    i18n.get() == "zh" and "◆ 大纲" or "◆ Outline",
+    i18n.get() == "zh" and "  Enter 跳转 · q 关闭" or "  Enter jump · q close",
+    "",
+  }
 
   local num_by_src = {}
   if st.blocks then
@@ -236,7 +241,7 @@ function M.open_float(st, on_jump)
   })
   if not ok or not win then
     pcall(vim.api.nvim_buf_delete, buf, { force = true })
-    vim.notify("mdview: failed to open TOC float", vim.log.levels.ERROR)
+    vim.notify(require("mdview.i18n").t("toc_fail"), vim.log.levels.ERROR)
     return
   end
 

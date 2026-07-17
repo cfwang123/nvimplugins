@@ -1,58 +1,115 @@
--- 整仓安装入口：Plug 'cfwang123/nvimplugins'（或本地根目录）时把各子插件加入 rtp 并加载。
+-- 整仓入口：用户只需一行 `Plug 'cfwang123/nvimplugins'`（或本地根路径）。
+-- 本文件由 vim-plug / Neovim 自动 source，负责把各子插件加入 rtp 并加载。
 -- 分目录安装时不会用到本文件（各子目录自带 plugin/）。
+
 if vim.g.loaded_nvimplugins_bundle then
   return
 end
-vim.g.loaded_nvimplugins_bundle = true
 
-local this = debug.getinfo(1, "S").source:sub(2)
-local bundle_root = vim.fn.fnamemodify(this, ":h:h")
-
--- 默认全部启用；可在插件加载前设置：
---   vim.g.nvimplugins_enable = { "imgbuf", "mdview" }
-local default_plugins = {
-  "mdview",
-  "music",
-  "imgbuf",
-  "nvimgames",
-  "drawbuf",
-}
-
-local enable = vim.g.nvimplugins_enable
-if type(enable) ~= "table" or #enable == 0 then
-  enable = default_plugins
+local function resolve_bundle_root()
+  local src = debug.getinfo(1, "S").source
+  if type(src) == "string" and src:sub(1, 1) == "@" then
+    src = src:sub(2)
+  end
+  if type(src) == "string" and src ~= "" and src ~= ":lua" and not src:match("^%[") then
+    local root = vim.fn.fnamemodify(src, ":p:h:h")
+    if vim.fn.isdirectory(root) == 1 then
+      return root
+    end
+  end
+  -- 兜底：从 runtimepath 上找带 imgbuf 子目录的本仓根
+  for _, rtp in ipairs(vim.api.nvim_list_runtime_paths()) do
+    if vim.fn.isdirectory(rtp .. "/imgbuf/lua/imgbuf") == 1
+      or vim.fn.isdirectory(rtp .. "\\imgbuf\\lua\\imgbuf") == 1
+    then
+      return rtp
+    end
+    if vim.fn.filereadable(rtp .. "/plugin/nvimplugins.lua") == 1
+      or vim.fn.filereadable(rtp .. "\\plugin\\nvimplugins.lua") == 1
+    then
+      if vim.fn.isdirectory(rtp .. "/imgbuf") == 1 or vim.fn.isdirectory(rtp .. "\\imgbuf") == 1 then
+        return rtp
+      end
+    end
+  end
+  return nil
 end
 
-local enabled = {}
-for _, name in ipairs(enable) do
-  enabled[name] = true
+local function join(root, name)
+  root = tostring(root):gsub("[/\\]+$", "")
+  return root .. "/" .. name
 end
 
 local function source_plugin_dir(dir)
-  local files = vim.fn.glob(dir .. "/plugin/*.{lua,vim}", false, true)
+  local files = vim.fn.glob(dir .. "/plugin/*.lua", false, true)
   for _, f in ipairs(files) do
-    if f:match("%.lua$") then
-      dofile(f)
-    else
-      vim.cmd.source(vim.fn.fnameescape(f))
-    end
+    dofile(f)
+  end
+  local vimfiles = vim.fn.glob(dir .. "/plugin/*.vim", false, true)
+  for _, f in ipairs(vimfiles) do
+    vim.cmd.source(vim.fn.fnameescape(f))
   end
 end
 
-for _, name in ipairs(default_plugins) do
-  if enabled[name] then
-    local dir = vim.fs.normalize(bundle_root .. "/" .. name)
-    if vim.fn.isdirectory(dir) == 0 then
-      vim.notify("nvimplugins: 缺少子插件目录 " .. name, vim.log.levels.WARN)
-    else
-      -- prepend：保证 require 优先命中本仓；已单独 Plug 时重复无害，loaded_* 防双重加载
-      vim.opt.runtimepath:prepend(dir)
-      source_plugin_dir(dir)
+local function load_bundle()
+  if vim.g.loaded_nvimplugins_bundle then
+    return true
+  end
+
+  local bundle_root = resolve_bundle_root()
+  if not bundle_root then
+    return false
+  end
+
+  local default_plugins = {
+    "mdview",
+    "music",
+    "imgbuf",
+    "videobuf",
+    "nvimgames",
+    "drawbuf",
+    "pdfview",
+    "xlsview",
+    "tts",
+  }
+
+  local enable = vim.g.nvimplugins_enable
+  if type(enable) ~= "table" or #enable == 0 then
+    enable = default_plugins
+  end
+  local enabled = {}
+  for _, name in ipairs(enable) do
+    enabled[name] = true
+  end
+
+  local loaded_any = false
+  for _, name in ipairs(default_plugins) do
+    if enabled[name] then
+      local dir = join(bundle_root, name)
+      if vim.fn.isdirectory(dir) == 1 then
+        vim.opt.runtimepath:prepend(dir)
+        source_plugin_dir(dir)
+        loaded_any = true
+      else
+        vim.notify("nvimplugins: missing " .. name .. " under " .. bundle_root, vim.log.levels.WARN)
+      end
     end
   end
+
+  if not loaded_any then
+    return false
+  end
+
+  vim.g.loaded_nvimplugins_bundle = true
+  if vim.loader and type(vim.loader.reset) == "function" then
+    pcall(vim.loader.reset)
+  end
+  return true
 end
 
--- Neovim 0.9+ loader 会缓存「未找到」；rtp 变更后需重置，否则紧接着的 require 仍失败
-if vim.loader and type(vim.loader.reset) == "function" then
-  pcall(vim.loader.reset)
+if not load_bundle() then
+  vim.notify(
+    "nvimplugins: bundle bootstrap failed (is the repo root on runtimepath?)",
+    vim.log.levels.ERROR
+  )
 end

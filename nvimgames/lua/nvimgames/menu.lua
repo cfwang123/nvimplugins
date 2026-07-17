@@ -1,20 +1,45 @@
 ---@mod nvimgames.menu 浮动窗口选游戏
 local M = {}
 
-local GAMES = {
-  { key = "1", id = "mine", label = "扫雷 (Mine)", open = function()
-    require("nvimgames.mine").open({})
-  end },
-  { key = "2", id = "sokoban", label = "推箱子 (Sokoban)", open = function()
-    require("nvimgames.sokoban").open({})
-  end },
-  { key = "3", id = "twentyfour", label = "24点 (Game24)", open = function()
-    require("nvimgames.twentyfour").open({})
-  end },
-  { key = "4", id = "tetris", label = "俄罗斯方块 (Tetris)", open = function()
-    require("nvimgames.tetris").open({})
-  end },
-}
+local i18n = require("nvimgames.i18n")
+
+local function game_list()
+  local t = i18n.t
+  return {
+    {
+      key = "1",
+      id = "mine",
+      label = t("game_mine"),
+      open = function()
+        require("nvimgames.mine").open({})
+      end,
+    },
+    {
+      key = "2",
+      id = "sokoban",
+      label = t("game_sokoban"),
+      open = function()
+        require("nvimgames.sokoban").open({})
+      end,
+    },
+    {
+      key = "3",
+      id = "twentyfour",
+      label = t("game_twentyfour"),
+      open = function()
+        require("nvimgames.twentyfour").open({})
+      end,
+    },
+    {
+      key = "4",
+      id = "tetris",
+      label = t("game_tetris"),
+      open = function()
+        require("nvimgames.tetris").open({})
+      end,
+    },
+  }
+end
 
 local function ensure_hl()
   if not vim.o.termguicolors then
@@ -26,6 +51,7 @@ local function ensure_hl()
   vim.api.nvim_set_hl(0, "NvimGamesMenuKey", { fg = "#f9e2af", bg = "#1e1e2e", bold = true })
   vim.api.nvim_set_hl(0, "NvimGamesMenuHint", { fg = "#6c7086", bg = "#1e1e2e" })
   vim.api.nvim_set_hl(0, "NvimGamesMenuNormal", { fg = "#cdd6f4", bg = "#1e1e2e" })
+  vim.api.nvim_set_hl(0, "NvimGamesMenuBtn", { fg = "#111111", bg = "#e8e8e8", bold = true })
 end
 
 local function close_float(state)
@@ -40,46 +66,118 @@ local function close_float(state)
   end
 end
 
----居中浮动窗口选游戏：数字键进入，Esc 退出
-function M.open()
-  ensure_hl()
+local function paint_menu(state)
+  local t = i18n.t
+  local games = game_list()
+  state.games = games
 
   local lines = {
-    "  nvimgames",
+    "  " .. t("menu_title"),
     "",
   }
-  for _, g in ipairs(GAMES) do
+  for _, g in ipairs(games) do
     table.insert(lines, string.format("  %s  %s", g.key, g.label))
   end
   table.insert(lines, "")
-  table.insert(lines, "  数字选择 · Esc 退出")
+  local lang_line = "  " .. t("lang_btn")
+  table.insert(lines, lang_line)
+  table.insert(lines, "  " .. t("menu_hint"))
 
   local width = 0
   for _, l in ipairs(lines) do
     width = math.max(width, vim.fn.strwidth(l))
   end
-  width = math.max(width + 2, 28)
+  width = math.max(width + 2, 32)
   local height = #lines
 
   local ui = vim.api.nvim_list_uis()[1] or { width = 80, height = 24 }
   local row = math.max(0, math.floor((ui.height - height) / 2) - 1)
   local col = math.max(0, math.floor((ui.width - width) / 2))
 
+  vim.bo[state.buf].modifiable = true
+  vim.api.nvim_buf_set_lines(state.buf, 0, -1, false, lines)
+  vim.bo[state.buf].modifiable = false
+
+  if state.win and vim.api.nvim_win_is_valid(state.win) then
+    pcall(vim.api.nvim_win_set_config, state.win, {
+      relative = "editor",
+      row = row,
+      col = col,
+      width = width,
+      height = height,
+    })
+  end
+
+  local ns = state.ns
+  vim.api.nvim_buf_clear_namespace(state.buf, ns, 0, -1)
+  vim.api.nvim_buf_set_extmark(state.buf, ns, 0, 0, {
+    end_col = #lines[1],
+    hl_group = "NvimGamesMenuTitle",
+    hl_mode = "combine",
+  })
+  for i, g in ipairs(games) do
+    local row0 = i + 1
+    local line = lines[row0 + 1]
+    local bi = line:find(g.key, 1, true)
+    if bi then
+      vim.api.nvim_buf_set_extmark(state.buf, ns, row0, bi - 1, {
+        end_col = bi - 1 + #g.key,
+        hl_group = "NvimGamesMenuKey",
+        hl_mode = "combine",
+        priority = 200,
+      })
+    end
+    vim.api.nvim_buf_set_extmark(state.buf, ns, row0, 0, {
+      end_col = #line,
+      hl_group = "NvimGamesMenuItem",
+      hl_mode = "combine",
+      priority = 100,
+    })
+  end
+  -- lang button row
+  local lang_row = #lines - 2
+  local ll = lines[lang_row + 1]
+  local lbi = ll:find(vim.trim(t("lang_btn")), 1, true)
+  if not lbi then
+    lbi = ll:find("%[", 1, true) or 3
+  end
+  -- highlight whole lang line as button-ish
+  vim.api.nvim_buf_set_extmark(state.buf, ns, lang_row, 0, {
+    end_col = #ll,
+    hl_group = "NvimGamesMenuBtn",
+    hl_mode = "combine",
+    priority = 150,
+  })
+  state.lang_row = lang_row + 1 -- 1-based for mouse.line
+
+  local hint_row = #lines - 1
+  vim.api.nvim_buf_set_extmark(state.buf, ns, hint_row, 0, {
+    end_col = #lines[hint_row + 1],
+    hl_group = "NvimGamesMenuHint",
+    hl_mode = "combine",
+  })
+end
+
+---居中浮动窗口选游戏：数字键进入，u 切换语言，Esc 退出
+function M.open()
+  ensure_hl()
+  -- 确保语言已初始化
+  if not vim.g.nvimgames_setup_done then
+    require("nvimgames").setup()
+  end
+
   local buf = vim.api.nvim_create_buf(false, true)
   vim.bo[buf].buftype = "nofile"
   vim.bo[buf].bufhidden = "wipe"
   vim.bo[buf].swapfile = false
-  vim.bo[buf].modifiable = true
-  vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
-  vim.bo[buf].modifiable = false
   pcall(vim.api.nvim_buf_set_name, buf, "nvimgames://menu")
 
   local win = vim.api.nvim_open_win(buf, true, {
     relative = "editor",
-    row = row,
-    col = col,
-    width = width,
-    height = height,
+    row = 1,
+    col = 1,
+    width = 32,
+    height = 12,
     style = "minimal",
     border = "rounded",
     title = " nvimgames ",
@@ -96,51 +194,20 @@ function M.open()
     vim.wo[win].winhl = "Normal:NvimGamesMenuNormal,FloatBorder:NvimGamesMenuBorder,FloatTitle:NvimGamesMenuTitle"
   end)
 
-  local ns = vim.api.nvim_create_namespace("nvimgames_menu")
-  -- 标题
-  vim.api.nvim_buf_set_extmark(buf, ns, 0, 0, {
-    end_col = #lines[1],
-    hl_group = "NvimGamesMenuTitle",
-    hl_mode = "combine",
-  })
-  -- 选项行：数字高亮
-  for i, g in ipairs(GAMES) do
-    local row0 = i + 1 -- lines: title, blank, then items at index 3,4,5 → row 2,3,4
-    local line = lines[row0 + 1]
-    local key_pat = g.key
-    local bi = line:find(key_pat, 1, true)
-    if bi then
-      vim.api.nvim_buf_set_extmark(buf, ns, row0, bi - 1, {
-        end_col = bi - 1 + #key_pat,
-        hl_group = "NvimGamesMenuKey",
-        hl_mode = "combine",
-        priority = 200,
-      })
-    end
-    vim.api.nvim_buf_set_extmark(buf, ns, row0, 0, {
-      end_col = #line,
-      hl_group = "NvimGamesMenuItem",
-      hl_mode = "combine",
-      priority = 100,
-    })
-  end
-  -- 底部提示
-  local hint_row = #lines - 1
-  vim.api.nvim_buf_set_extmark(buf, ns, hint_row, 0, {
-    end_col = #lines[hint_row + 1],
-    hl_group = "NvimGamesMenuHint",
-    hl_mode = "combine",
-  })
-
-  local state = { buf = buf, win = win }
+  local state = {
+    buf = buf,
+    win = win,
+    ns = vim.api.nvim_create_namespace("nvimgames_menu"),
+    games = {},
+  }
+  paint_menu(state)
 
   local function pick(idx)
-    local g = GAMES[idx]
+    local g = state.games[idx]
     if not g then
       return
     end
     close_float(state)
-    -- 关浮窗后再开游戏，避免窗口叠乱
     vim.schedule(function()
       g.open()
     end)
@@ -150,44 +217,40 @@ function M.open()
     close_float(state)
   end
 
-  local opts = { buffer = buf, silent = true, nowait = true, noremap = true }
-  for i, g in ipairs(GAMES) do
-    vim.keymap.set("n", g.key, function()
+  local function toggle_lang()
+    i18n.toggle()
+    paint_menu(state)
+  end
+
+  for i = 1, 4 do
+    vim.keymap.set("n", tostring(i), function()
       pick(i)
-    end, opts)
+    end, { buffer = buf, silent = true, nowait = true })
   end
-  vim.keymap.set("n", "<Esc>", dismiss, opts)
-  vim.keymap.set("n", "q", dismiss, opts)
-  vim.keymap.set("n", "<C-c>", dismiss, opts)
+  vim.keymap.set("n", "u", toggle_lang, { buffer = buf, silent = true, nowait = true, desc = "toggle language" })
+  vim.keymap.set("n", "U", toggle_lang, { buffer = buf, silent = true, nowait = true })
+  vim.keymap.set("n", "<Esc>", dismiss, { buffer = buf, silent = true, nowait = true })
+  vim.keymap.set("n", "q", dismiss, { buffer = buf, silent = true, nowait = true })
 
-  -- 屏蔽误操作
-  for _, lhs in ipairs({ "i", "a", "A", "o", "O", "v", "V", "<C-v>" }) do
-    vim.keymap.set("n", lhs, "<Nop>", opts)
+  if vim.o.mouse == "" then
+    vim.o.mouse = "a"
   end
-
-  vim.api.nvim_create_autocmd("BufLeave", {
-    buffer = buf,
-    once = true,
-    callback = function()
-      close_float(state)
-    end,
-  })
-
-  return state
-end
-
-function M.games()
-  return GAMES
-end
-
-function M.open_by_id(id)
-  for _, g in ipairs(GAMES) do
-    if g.id == id then
-      g.open()
-      return true
+  vim.keymap.set("n", "<LeftMouse>", function()
+    local mp = vim.fn.getmousepos()
+    if not state.win or mp.winid ~= state.win then
+      return
     end
-  end
-  return false
+    -- click lang row
+    if state.lang_row and mp.line == state.lang_row then
+      toggle_lang()
+      return
+    end
+    -- click game rows: title=1 blank=2 items start at 3
+    local idx = mp.line - 2
+    if idx >= 1 and idx <= #state.games then
+      pick(idx)
+    end
+  end, { buffer = buf, silent = true, nowait = true })
 end
 
 return M

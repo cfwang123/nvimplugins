@@ -47,7 +47,10 @@ local default_config = {
     ["3"] = "mode_braille",
     s = "toggle_scale",
     o = "open_system",
+    L = "toggle_lang",
   },
+  --- 界面语言："auto" | "zh" | "en"；L 切换
+  ui_lang = "auto",
 }
 
 local config = vim.deepcopy(default_config)
@@ -267,22 +270,18 @@ end
 ---@param is_hd boolean|nil
 ---@return string
 local function help_line_text(cols, mode, scale, is_hd)
-  local scale_zh = scale == "fill" and "拉伸" or "等比"
-  local mode_zh = ({ block = "方块", half = "半块", braille = "点阵" })[mode] or mode
+  local i18n = require("imgbuf.i18n")
+  local scale_lab = scale == "fill" and i18n.t("scale_fill") or i18n.t("scale_fit")
+  local mode_lab = ({
+    block = i18n.t("mode_block"),
+    half = i18n.t("mode_half"),
+    braille = i18n.t("mode_braille"),
+  })[mode] or mode
   local hint
   if is_hd then
-    hint = string.format(
-      " q关闭  r刷新  s切换[%s]  o系统打开  │ HD · %s(s切等比/拉伸) ",
-      scale_zh,
-      scale_zh
-    )
+    hint = string.format(i18n.t("hint_hd"), scale_lab, scale_lab)
   else
-    hint = string.format(
-      " q关闭  r刷新  1方块  2半块  3点阵  s切换[%s]  o系统打开  │ %s · %s ",
-      scale_zh,
-      mode_zh,
-      scale_zh
-    )
+    hint = string.format(i18n.t("hint_cell"), scale_lab, mode_lab, scale_lab)
   end
   cols = math.max(8, cols or 40)
   local w = vim.fn.strwidth(hint)
@@ -535,12 +534,12 @@ local function open_system(buf)
   local st = state_by_buf[buf]
   local path = (st and st.path) or vim.b[buf].imgbuf_path
   if not path or path == "" then
-    vim.notify("imgbuf: no image path", vim.log.levels.WARN)
+    vim.notify(require("imgbuf.i18n").t("no_path"), vim.log.levels.WARN)
     return
   end
   path = vim.fn.fnamemodify(path, ":p")
   if vim.fn.filereadable(path) == 0 then
-    vim.notify("imgbuf: file not found: " .. path, vim.log.levels.ERROR)
+    vim.notify(require("imgbuf.i18n").t("not_found") .. path, vim.log.levels.ERROR)
     return
   end
   if vim.ui and vim.ui.open then
@@ -548,7 +547,7 @@ local function open_system(buf)
     if ok then
       return
     end
-    vim.notify("imgbuf: open failed: " .. tostring(err), vim.log.levels.WARN)
+    vim.notify(require("imgbuf.i18n").t("open_fail") .. tostring(err), vim.log.levels.WARN)
   end
   if vim.fn.has("win32") == 1 then
     vim.fn.jobstart({ "cmd", "/c", "start", "", path }, { detach = true })
@@ -604,6 +603,9 @@ local function map_actions(buf)
     open_system = function()
       open_system(buf)
     end,
+    toggle_lang = function()
+      M.toggle_ui_lang(buf)
+    end,
   }
 
   -- 先屏蔽滚动键，再挂动作（避免 o 被 Nop 覆盖）
@@ -641,7 +643,7 @@ local function block_writes(buf)
   vim.api.nvim_create_autocmd({ "BufWriteCmd", "FileWriteCmd", "FileAppendCmd" }, {
     buffer = buf,
     callback = function()
-      vim.notify("imgbuf: 预览为只读，不会写入原图片", vim.log.levels.WARN)
+      vim.notify(require("imgbuf.i18n").t("readonly"), vim.log.levels.WARN)
       return true
     end,
   })
@@ -735,7 +737,7 @@ function M.open(path, opts)
   opts = opts or {}
   path = vim.fn.fnamemodify(path, ":p")
   if vim.fn.filereadable(path) == 0 then
-    vim.notify("imgbuf: file not found: " .. path, vim.log.levels.ERROR)
+    vim.notify(require("imgbuf.i18n").t("not_found") .. path, vim.log.levels.ERROR)
     return nil
   end
 
@@ -1366,8 +1368,38 @@ end
 ---Apply config and side effects. Optional: defaults work without calling this.
 ---Call again anytime to change options (e.g. `setup({ mode = "half" })`).
 ---@param user? ImgbufConfig
+---切换中/英文界面并刷新当前预览
+---@param buf? integer
+function M.toggle_ui_lang(buf)
+  local i18n = require("imgbuf.i18n")
+  local next_lang = i18n.toggle()
+  i18n.save_prefs()
+  if next_lang == "en" then
+    vim.notify(i18n.t("lang_to_en"), vim.log.levels.INFO)
+  else
+    vim.notify(i18n.t("lang_to_zh"), vim.log.levels.INFO)
+  end
+  buf = buf or vim.api.nvim_get_current_buf()
+  if buf and vim.api.nvim_buf_is_valid(buf) and state_by_buf[buf] then
+    M.refresh(buf)
+  end
+end
+
 function M.setup(user)
   config = vim.tbl_deep_extend("force", default_config, user or {})
+  local i18n = require("imgbuf.i18n")
+  local remembered = i18n.load_prefs()
+  local lang_opt = config.ui_lang
+  if user and (user.ui_lang == "zh" or user.ui_lang == "en" or user.ui_lang == "auto") then
+    lang_opt = user.ui_lang
+  elseif remembered then
+    lang_opt = remembered
+  end
+  if lang_opt == "zh" or lang_opt == "en" then
+    i18n.setup(lang_opt)
+  else
+    i18n.setup("auto")
+  end
   vim.g.imgbuf_setup_done = true
 
   vim.api.nvim_create_user_command("Imgbuf", function(opts)
@@ -1376,7 +1408,7 @@ function M.setup(user)
       path = vim.fn.expand("%:p")
     end
     if path == nil or path == "" then
-      vim.notify("imgbuf: provide an image path", vim.log.levels.ERROR)
+      vim.notify(require("imgbuf.i18n").t("need_path"), vim.log.levels.ERROR)
       return
     end
     M.open(path)
@@ -1393,7 +1425,7 @@ function M.setup(user)
   vim.api.nvim_create_user_command("ImgbufMode", function(opts)
     local mode = opts.args
     if mode ~= "block" and mode ~= "half" and mode ~= "braille" then
-      vim.notify("imgbuf: mode must be block|half|braille", vim.log.levels.ERROR)
+      vim.notify(require("imgbuf.i18n").t("bad_mode"), vim.log.levels.ERROR)
       return
     end
     M.set_mode(vim.api.nvim_get_current_buf(), mode)
@@ -1415,7 +1447,7 @@ function M.setup(user)
       return
     end
     if arg ~= "fit" and arg ~= "fill" and arg ~= "stretch" then
-      vim.notify("imgbuf: scale 为 fit | fill | toggle", vim.log.levels.ERROR)
+      vim.notify(require("imgbuf.i18n").t("bad_scale"), vim.log.levels.ERROR)
       return
     end
     if arg == "stretch" then
@@ -1428,6 +1460,19 @@ function M.setup(user)
       return { "fit", "fill", "toggle" }
     end,
     desc = "等比(fit) / 填充(fill) / 切换",
+  })
+
+  ---全刷屏动画压力测试（默认 10fps，模拟视频字符画路径）
+  vim.api.nvim_create_user_command("ImgbufAnimTest", function(opts)
+    local fps = tonumber(opts.args)
+    if opts.args ~= nil and opts.args ~= "" and not fps then
+      vim.notify(require("imgbuf.i18n").t("anim_arg"), vim.log.levels.ERROR)
+      return
+    end
+    require("imgbuf.animtest").start({ fps = fps or 10 })
+  end, {
+    nargs = "?",
+    desc = "全刷屏动画测试（默认 10fps；q 退出 Space 暂停）",
   })
 
   if config.auto_open then
@@ -1449,6 +1494,12 @@ end
 
 function M.config()
   return config
+end
+
+---全刷屏动画压力测试（默认 10fps）
+---@param opts? { fps?: number, win?: integer }
+function M.anim_test(opts)
+  return require("imgbuf.animtest").start(opts or { fps = 10 })
 end
 
 return M

@@ -2,52 +2,110 @@
 
 [English](README.md) | **中文**
 
-> **About** — 面向 Neovim 的小型实验与工具插件集合：含 **mdview**（Markdown 预览）、**music**（打开音频即在 buffer 中播放）、**imgbuf**（终端图片预览）、**nvimgames**（扫雷 / 推箱子 / 24 点 / 方块）、**drawbuf**（Unicode 色块绘图）。各插件可独立安装，互不强制依赖。
+> **About** — 面向 Neovim 的小型实验与工具插件集合：含 **mdview**（Markdown 预览）、**music** / **videobuf**（音视频）、**imgbuf**（图片）、**nvimgames**（小游戏）、**drawbuf**（色块绘图）、**pdfview** / **xlsview**（文档表格预览）、**tts**（Windows 朗读）。各插件可独立安装，互不强制依赖。
 
-面向终端里「好玩、好用、少依赖」的实验与日常小工具。
+面向终端里「好玩、好用、少依赖」的实验与日常小工具。多数 UI 支持**中/英文**切换（默认跟随系统语言，可记忆）。
 
 **两种装法任选其一：**
 
 | 方式 | 说明 |
 |------|------|
-| **整仓（网络）** | `Plug 'cfwang123/nvimplugins'`，从 GitHub 拉取；根目录 `plugin/nvimplugins.lua` 自动加载全部子插件 |
+| **整仓（网络）** | 只需一行 `Plug 'cfwang123/nvimplugins'`；根目录 `plugin/nvimplugins.lua` 自动加载全部子插件 |
 | **分目录（本地路径）** | 只 `Plug` 需要的子文件夹（如 `…/mdview`） |
 
 ## 插件一览
 
 | 插件 | 简介 | 文档 |
 |------|------|------|
-| **[mdview](mdview/)** | 在 Neovim 内预览 Markdown：单窗阅读（`:MdView`）或侧边源码对照（`:MdSideView`）。纯 Lua 渲染标题/列表/GFM 表/代码块（可选 Tree-sitter 高亮）、TOC、链接与锚点跳转、图片用色块字符渲染与可选终端高清叠层。 | [EN](mdview/README.md) · [中文](mdview/README.zh.md) |
-| **[music](music/)** | 打开音频文件即在 buffer 中变成播放器：播放/暂停/进度条拖动、音量、同目录上一首/下一首与曲目列表、LRC 歌词同步高亮、会话恢复；Python 守护进程（just_playback / pygame）后台播，可隐藏 UI 不抢焦。 | [EN](music/README.md) · [中文](music/README.zh.md) |
-| **[imgbuf](imgbuf/)** | 打开图片做字符画预览（block / half / braille），默认拉伸铺满、可切等比；支持自动预览、剪贴板、文件树友好；在 WezTerm/Kitty/Ghostty 上可叠像素高清层（chafa 或 Python+Pillow）。 | [EN](imgbuf/README.md) · [中文](imgbuf/README.zh.md) |
-| **[nvimgames](nvimgames/)** | 终端小游戏合集：扫雷、推箱子（自带多关）、24 点扑克、俄罗斯方块（含特殊块与可选人机对战）；`:NvimGames` 浮动选单一键进入。 | [EN](nvimgames/README.md) · [中文](nvimgames/README.zh.md) |
-| **[drawbuf](drawbuf/)** | 用 Unicode 色块在 buffer 里画画：铅笔/橡皮/直线/矩形/椭圆/填充，真彩色调色板与可点中文状态栏，支持撤销重做、`.draw` 存盘与内置彩色演示图案。 | [EN](drawbuf/README.md) · [中文](drawbuf/README.zh.md) |
+| **[mdview](mdview/)** | Markdown 预览：单窗（`:MdView`）或侧边对照（`:MdSideView`）。标题/列表/GFM 表/代码块、TOC、链接锚点、色块图与可选高清叠层。预览内 **`L`** 切换中英文。 | [EN](mdview/README.md) · [中文](mdview/README.zh.md) |
+| **[music](music/)** | 打开音频即 buffer 播放器：播放/暂停/进度条、音量、同目录切歌与列表、LRC 歌词、会话恢复。Python 后台播，可隐藏 UI。**`Y`** 或按钮切换中英文。 | [EN](music/README.md) · [中文](music/README.zh.md) |
+| **[videobuf](videobuf/)** | 终端视频预览（字符画帧 + 控制条）；与 music 类似的守护进程模式。 | [EN](videobuf/README.md) · [中文](videobuf/README.zh.md) |
+| **[imgbuf](imgbuf/)** | 图片字符画（block/half/braille），等比/拉伸；自动预览、剪贴板；WezTerm/Kitty/Ghostty 可选像素高清。底栏 **`L`** 中英文。 | [EN](imgbuf/README.md) · [中文](imgbuf/README.zh.md) |
+| **[nvimgames](nvimgames/)** | 扫雷、推箱子、**24 点**、俄罗斯方块。`:NvimGames` 选单。各游戏内 **`u`**（或按钮）切换中英文。 | [EN](nvimgames/README.md) · [中文](nvimgames/README.zh.md) |
+| **[drawbuf](drawbuf/)** | Unicode 色块画布：铅笔/橡皮/直线/矩形/椭圆/填充、真彩色、可点状态栏、撤销、`.draw` 存盘与演示图。状态栏 **`[中英]`** 或 **`Y`** 切换语言。 | [EN](drawbuf/README.md) · [中文](drawbuf/README.zh.md) |
+| **[pdfview](pdfview/)** | PDF / Word 预览：文字样式、表格、chafa 图；Enter/点击 float 高清，`gh` 页内临时高清。**`L`** 切换中英文。 | [EN](pdfview/README.md) · [中文](pdfview/README.zh.md) |
+| **[xlsview](xlsview/)** | Excel（.xlsx/.xlsm）预览：单元格颜色/粗体/底色、多工作表、列宽适配窗口。**`L`** 切换中英文。 | [EN](xlsview/README.md) · [中文](xlsview/README.zh.md) |
+| **[tts](tts/)** | Windows SAPI 朗读：`<leader>vo` **从光标所在段起播**（播放中再按可跳段）；控制条白底；音量/滚轮/语速；系统默认输出设备；**EN/中文** 按钮或 **`L`**。 | [EN](tts/README.md) · [中文](tts/README.zh.md) |
+
+## 界面语言（中 / 英）
+
+多数插件 UI 支持中英文，默认 **`ui_lang = "auto"`**（读系统语言；识别失败多为中文）。手动切换后写入 `stdpath("data")/*-nvim-prefs.json`，下次沿用。
+
+| 插件 | 切换方式 |
+|------|----------|
+| mdview / imgbuf / pdfview / xlsview | 预览内 **`L`** |
+| tts | 控制条 **EN / 中文** 或 **`L`** |
+| music | 按钮 **中英(Y)** 或 **`Y`**（`L` 为单曲循环） |
+| drawbuf | 状态栏 **[中英]** 或 **`Y`**（`L` 为直线工具） |
+| nvimgames（含 24 点） | 底栏按钮或 **`u`** |
+
+```lua
+require("mdview").setup({ ui_lang = "auto" }) -- 或 "zh" | "en"
+require("tts").setup({ ui_lang = "zh" })
+```
 
 ## 截图
 
-| mdview（侧栏） | music | imgbuf |
-|:--------------:|:-----:|:------:|
-| ![mdview](mdview/testdata/screenshots/1.png) | ![music](images/music.png) | ![imgbuf](images/imgbuf.png) |
+**mdview**（侧栏）
 
-| 扫雷 | 推箱子 | 24点 | 俄罗斯方块 |
-|:----:|:------:|:----:|:----------:|
-| ![扫雷](images/mine.png) | ![推箱子](images/sokoban.png) | ![24点](images/twentyfour.png) | ![俄罗斯方块](images/tetris.png) |
+![mdview](mdview/testdata/screenshots/1.png)
 
-| drawbuf |
-|:-------:|
-| ![drawbuf](images/drawbuf.png) |
+**music**
 
-mdview 更多场景见 [mdview/testdata/screenshots/](mdview/testdata/screenshots/) 与演示文 [mdview/testdata/demo.md](mdview/testdata/demo.md)。
+![music](images/music.png)
+
+**imgbuf**
+
+![imgbuf](images/imgbuf.png)
+
+**nvimgames** — 扫雷
+
+![扫雷](images/mine.png)
+
+**nvimgames** — 推箱子
+
+![推箱子](images/sokoban.png)
+
+**nvimgames** — 24点
+
+![24点](images/twentyfour.png)
+
+**nvimgames** — 俄罗斯方块
+
+![俄罗斯方块](images/tetris.png)
+
+**drawbuf**
+
+![drawbuf](images/drawbuf.png)
+
+**pdfview**（PDF）
+
+![pdfview](images/pdfview-pdf.png)
+
+**tts**
+
+![tts](images/tts.png)
+
+**videobuf**
+
+![videobuf](images/videobuf.png)
+
+mdview 更多场景见 [mdview/testdata/screenshots/](mdview/testdata/screenshots/) 与演示文 [mdview/testdata/demo.md](mdview/testdata/demo.md)。  
+tts 测试稿：[tts/testdata/](tts/testdata/)（`sample.zh.txt` / `sample.en.txt`）。
 
 ## 依赖摘要
 
 | 插件 | Neovim | 其他 |
 |------|--------|------|
-| mdview | 0.9+ | 核心无额外依赖；色块字符渲染需 Pillow（或 chafa）；代码高亮可选 Tree-sitter；像素高清需图形协议终端 |
+| mdview | 0.9+ | 核心无额外依赖；色块图需 Pillow（或 chafa）；代码高亮可选 Tree-sitter；像素高清需图形协议终端 |
 | music | 0.9+ | Python3 + **just_playback**（或 pygame 回退） |
+| videobuf | 0.9+ | Python3 + 相关解码依赖（见子目录） |
 | imgbuf | 0.9+ | chafa **或** Python3 + Pillow；高清需 WezTerm/Kitty/Ghostty + Pillow |
 | nvimgames | 0.9+ | `termguicolors`；扫雷建议 `mouse=a`；推箱子自带 `data/levels.json` |
 | drawbuf | 0.9+ | `termguicolors`；建议 `mouse=a` |
+| pdfview | 0.9+ | PDF：PyMuPDF；DOCX：仅标准库；DOC：可选 LibreOffice；图片 chafa/Pillow；高清 WezTerm/Kitty/Ghostty |
+| xlsview | 0.9+ | Python3 + **openpyxl** |
+| tts | 0.9+ | **Windows** + SAPI；Python3 + **pywin32** |
 
 ## 快速安装
 
@@ -56,8 +114,9 @@ mdview 更多场景见 [mdview/testdata/screenshots/](mdview/testdata/screenshot
 
 ### 方式 A：整仓 — vim-plug 网络安装（推荐「全要」）
 
-仓库：[cfwang123/nvimplugins](https://github.com/cfwang123/nvimplugins)。  
-根目录 `plugin/nvimplugins.lua` 会把各子目录加入 `runtimepath` 并 source 各自的 `plugin/`。
+仓库：[cfwang123/nvimplugins](https://github.com/cfwang123/nvimplugins)。
+
+**安装只需一行 `Plug`**，不必在用户 init 里写 bootstrap。`plug#end()` 之后即可 `require("imgbuf")` 等（根目录 `lua/*` 代理）；命令由启动时加载的 `plugin/nvimplugins.*` 注册。
 
 #### vim-plug
 
@@ -67,33 +126,23 @@ Plug 'cfwang123/nvimplugins'
 call plug#end()
 ```
 
-首次（或更新后）执行 **`:PlugInstall`**（更新可用 `:PlugUpdate`）。
+首次执行 **`:PlugInstall`**（更新用 `:PlugUpdate`）。若改参数，再在 `plug#end()` **之后**可选写 `require("…").setup({...})`（属于配置，不是安装）。
 
-只要部分子插件时，在 `plug#end()` **之前**设置（名与目录一致）：
+可选：只启用部分子插件（在加载前设置，名与目录一致）：
 
 ```vim
-let g:nvimplugins_enable = ['mdview', 'music', 'imgbuf']
-call plug#begin()
-Plug 'cfwang123/nvimplugins'
-call plug#end()
+let g:nvimplugins_enable = ['mdview', 'music', 'imgbuf', 'tts']
 ```
+
+整仓默认启用：`mdview` · `music` · `imgbuf` · `videobuf` · `nvimgames` · `drawbuf` · `pdfview` · `xlsview` · `tts`。
 
 #### lazy.nvim
 
 ```lua
-{
-  "cfwang123/nvimplugins",
-  lazy = false,
-  -- 可选：只启用部分（须在插件加载前生效；也可用 init）
-  -- init = function()
-  --   vim.g.nvimplugins_enable = { "mdview", "music", "imgbuf" }
-  -- end,
-}
+{ "cfwang123/nvimplugins", lazy = false }
 ```
 
 ### 方式 B：分目录 — 本地路径（推荐「只要某几个」）
-
-只装需要的子目录时，对本地克隆路径使用 `Plug` / `dir`。
 
 #### vim-plug
 
@@ -102,8 +151,12 @@ call plug#begin()
 Plug '/path/to/nvimplugins/mdview'
 Plug '/path/to/nvimplugins/music'
 Plug '/path/to/nvimplugins/imgbuf'
+Plug '/path/to/nvimplugins/videobuf'
 Plug '/path/to/nvimplugins/nvimgames'
 Plug '/path/to/nvimplugins/drawbuf'
+Plug '/path/to/nvimplugins/pdfview'
+Plug '/path/to/nvimplugins/xlsview'
+Plug '/path/to/nvimplugins/tts'
 call plug#end()
 ```
 
@@ -114,8 +167,12 @@ call plug#end()
   { dir = "/path/to/nvimplugins/mdview", name = "mdview", lazy = false },
   { dir = "/path/to/nvimplugins/music", name = "music", lazy = false },
   { dir = "/path/to/nvimplugins/imgbuf", name = "imgbuf", lazy = false },
+  { dir = "/path/to/nvimplugins/videobuf", name = "videobuf", lazy = false },
   { dir = "/path/to/nvimplugins/nvimgames", name = "nvimgames", lazy = false },
   { dir = "/path/to/nvimplugins/drawbuf", name = "drawbuf", lazy = false },
+  { dir = "/path/to/nvimplugins/pdfview", name = "pdfview", lazy = false },
+  { dir = "/path/to/nvimplugins/xlsview", name = "xlsview", lazy = false },
+  { dir = "/path/to/nvimplugins/tts", name = "tts", lazy = false },
 }
 ```
 
@@ -123,18 +180,19 @@ call plug#end()
 
 ### 可选 `setup()`（分插件）
 
-**全部可选。** 插件加载后即用默认配置（命令 / 自动打开无需 `setup`）。只有要改参数时才调用 `require("…").setup({ ... })`。写在插件已进入 `rtp` 之后（例如 `plug#end()` 之后）。
+**全部可选。** 插件加载后即用默认配置。只有要改参数时才 `require("…").setup({ ... })`，写在插件已进入 `rtp` 之后（例如 `plug#end()` 之后）。
 
 ```lua
--- mdview — Markdown 预览（完整项见 mdview/README）
+-- mdview — Markdown 预览
 require("mdview").setup({
   split_direction = "right",
   width = 0.45,
-  keys = { view = "<leader>mv", side = "<leader>ms" }, -- 或 false 关闭
+  ui_lang = "auto", -- "auto" | "zh" | "en"；预览内 L 切换
+  keys = { view = "<leader>mv", side = "<leader>ms" },
   image = {
     mode = "thumb",
     python = "python",
-    float_hd = "always", -- 终端支持时 float 内像素高清
+    float_hd = "always",
   },
 })
 
@@ -143,26 +201,59 @@ require("music").setup({
   volume = 70,
   auto_open = true,
   auto_play = true,
-  toggle_key = "<M-m>", -- Alt+M 显示/隐藏
-  statusline_when_hidden = false,
+  toggle_key = "<M-m>",
+  ui_lang = "auto", -- Y 切换；L 为单曲循环
   python = "python",
 })
 
--- imgbuf — 图片字符画 + 可选高清叠层
+-- imgbuf — 图片字符画 + 可选高清
 require("imgbuf").setup({
-  backend = "auto", -- "auto" | "chafa" | "python"
-  mode = "block",   -- "block" | "half" | "braille"
-  scale = "fill",   -- "fill" | "fit"
-  hd = "always",    -- "always" | "never"
+  backend = "auto",
+  mode = "block",
+  scale = "fill",
+  hd = "always",
+  ui_lang = "auto", -- L 切换
   auto_open = true,
 })
 
--- nvimgames — 小游戏
+-- nvimgames — 小游戏（界面语言见 i18n / 游戏内 u）
 require("nvimgames").setup({
-  mine = { difficulty = "beginner" }, -- beginner | intermediate | expert
+  lang = "auto", -- "auto" | "zh" | "en"
+  mine = { difficulty = "beginner" },
   sokoban = { remember_level = true },
   twentyfour = { solvable_only = true },
   tetris = { special_score = 1000 },
+})
+
+-- pdfview — PDF / Word
+require("pdfview").setup({
+  auto_open = true,
+  ui_lang = "auto", -- L 切换
+  python = "python",
+  image = {
+    backend = "chafa",
+    open_with = "float",
+    float_hd = "always",
+  },
+})
+
+-- xlsview — Excel
+require("xlsview").setup({
+  auto_open = true,
+  ui_lang = "auto", -- L 切换
+  python = "python",
+  max_rows = 500,
+  max_cols = 64,
+})
+
+-- tts — Windows SAPI 朗读
+require("tts").setup({
+  volume = 80,
+  rate = 0,
+  ui_lang = "auto", -- 控制条 EN/中文 或 L
+  keys_play = "<leader>vo", -- 从光标段起播；播放中再按可跳段
+  keys_stop = "<leader>vs",
+  -- voice = "Huihui", -- 可选默认发音人；float 选择后会记住
 })
 
 -- drawbuf — Unicode 色块绘图
@@ -171,10 +262,24 @@ require("drawbuf").setup({
   height = 24,
   canvas_bg = "ffffff",
   statusline = true,
+  ui_lang = "auto", -- 状态栏 [中英] 或 Y
 })
 ```
 
-完整选项见各子插件 README / `lua/*/init.lua`（mdview：`lua/mdview/config.lua`）。
+完整选项见各子插件 README / `lua/*/config.lua`（或 `init.lua`）。
+
+## 常用命令与快捷键（速查）
+
+| 插件 | 命令 / 键 | 作用 |
+|------|-----------|------|
+| mdview | `<leader>mv` / `<leader>ms` · `L` | 单窗 / 侧边预览 · 中英文 |
+| music | 打开音频 · `<M-m>` · `Y` | 播放器 · 显隐 UI · 中英文 |
+| imgbuf | 打开图片 · `L` | 预览 · 中英文 |
+| nvimgames | `:NvimGames` · 游戏内 `u` | 选单 · 中英文 |
+| drawbuf | `:Draw` · `Y` | 画布 · 中英文 |
+| pdfview | 打开 pdf/docx · `L` · `gh` | 预览 · 中英文 · 页内高清 |
+| xlsview | 打开 xlsx · `n`/`p` · `L` | 预览 · 换表 · 中英文 |
+| tts | `<leader>vo` / `<leader>vs` · `L` | 从光标段播 / 停止 · 中英文 |
 
 ## 文档索引
 
@@ -182,9 +287,13 @@ require("drawbuf").setup({
 |------|------|
 | mdview | [EN](mdview/README.md) · [中文](mdview/README.zh.md) · [demo](mdview/testdata/demo.md) · [截图](mdview/testdata/screenshots/) |
 | music | [EN](music/README.md) · [中文](music/README.zh.md) |
+| videobuf | [EN](videobuf/README.md) · [中文](videobuf/README.zh.md) · [设计](videobuf/DESIGN.zh.md) |
 | imgbuf | [EN](imgbuf/README.md) · [中文](imgbuf/README.zh.md) |
 | nvimgames | [EN](nvimgames/README.md) · [中文](nvimgames/README.zh.md) |
 | drawbuf | [EN](drawbuf/README.md) · [中文](drawbuf/README.zh.md) |
+| pdfview | [EN](pdfview/README.md) · [中文](pdfview/README.zh.md) |
+| xlsview | [EN](xlsview/README.md) · [中文](xlsview/README.zh.md) |
+| tts | [EN](tts/README.md) · [中文](tts/README.zh.md) · [测试稿](tts/testdata/) |
 
 ## 许可与说明
 

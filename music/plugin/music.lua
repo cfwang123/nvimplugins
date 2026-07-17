@@ -26,7 +26,7 @@ vim.api.nvim_create_user_command("Music", function(opts)
     path = vim.fn.expand("%:p")
   end
   if path == nil or path == "" then
-    vim.notify("music: 请指定音频文件", vim.log.levels.ERROR)
+    vim.notify(require("music.i18n").t("need_file"), vim.log.levels.ERROR)
     return
   end
   music.open(path)

@@ -448,7 +448,7 @@ local function render_blocks(ctx, blocks)
       emit_line(ctx, "", b.source_end)
 
     elseif b.type == "list" then
-      local meta = begin_block(ctx, b.source_start, b.source_end)
+      -- 每个 list item 单独 block_range，便于只高亮当前项
       local bullets = cfg.list_bullets or { "●", "○" }
       -- 列表最小缩进作为 0 级基准
       local min_indent = math.huge
@@ -459,6 +459,10 @@ local function render_blocks(ctx, blocks)
         min_indent = 0
       end
       for idx, it in ipairs(b.items or {}) do
+        local src0 = it.source_start or b.source_start
+        local src1 = it.source_end or src0
+        local meta = begin_block(ctx, src0, src1)
+        meta.kind = "list_item"
         local ind = it.indent or 0
         local rel = math.max(0, ind - min_indent)
         local level = math.floor(rel / 2) + 1
@@ -485,19 +489,18 @@ local function render_blocks(ctx, blocks)
         render_inlines_wrapped(
           ctx,
           it.spans,
-          it.source_start or b.source_start,
+          src0,
           width,
           prefix,
           "MdViewListBullet"
         )
+        end_block(ctx, meta)
       end
-      end_block(ctx, meta)
       emit_line(ctx, "", b.source_end)
 
     elseif b.type == "table" then
-      local meta = begin_block(ctx, b.source_start, b.source_end)
+      -- 表内按「表头 / 数据行」分别记 block_range，整表不再记一块
       M._render_table(ctx, b)
-      end_block(ctx, meta)
       emit_line(ctx, "", b.source_end)
 
     elseif b.type == "code" then
@@ -936,7 +939,16 @@ function M._render_table(ctx, b)
     })
   end
 
-  local function emit_data_row(cells, src)
+  ---@param cells string[]
+  ---@param src number
+  ---@param src_end number|nil
+  ---@param kind string|nil
+  local function emit_data_row(cells, src, src_end, kind)
+    src = src or b.source_start
+    src_end = src_end or src
+    local row_meta = begin_block(ctx, src, src_end)
+    row_meta.kind = kind or "table_row"
+
     local prepared = {}
     local h = 1
     for c = 1, ncol do
@@ -1004,7 +1016,7 @@ function M._render_table(ctx, b)
         push_border(sep_v)
       end
       local line = table.concat(pieces)
-      local pl = emit_line(ctx, line, src or b.source_start, ext)
+      local pl = emit_line(ctx, line, src, ext)
       for _, lh in ipairs(link_hits) do
         ctx.hits[#ctx.hits + 1] = {
           line = pl,
@@ -1056,13 +1068,20 @@ function M._render_table(ctx, b)
         dcols = blk.dcols, -- 表格列显示宽
       }
     end
+    end_block(ctx, row_meta)
   end
 
   emit_border(c_tl, c_tm, c_tr, sep_h)
-  emit_data_row(header, b.source_start)
+  local hdr_src = b.header_source or b.source_start
+  local hdr_end = b.header_source_end or hdr_src
+  emit_data_row(header, hdr_src, hdr_end, "table_header")
   emit_border(c_ml, c_mm, c_mr, sep_h)
-  for _, row in ipairs(rows) do
-    emit_data_row(row, b.source_start)
+  local row_sources = b.row_sources or {}
+  for ri, row in ipairs(rows) do
+    local rs = row_sources[ri]
+    local s0 = (rs and rs.start) or b.source_start
+    local s1 = (rs and rs["end"]) or s0
+    emit_data_row(row, s0, s1, "table_row")
   end
   emit_border(c_bl, c_bm, c_br, sep_h)
 end
@@ -1098,8 +1117,8 @@ function M._render_code(ctx, b)
     return er
   end
 
-  -- 顶栏：┌─────lua [Copy]┐
-  local copy_label = "[Copy]"
+  -- 顶栏：┌─────lua [Copy]/复制]┐
+  local copy_label = require("mdview.i18n").t("copy")
   local lang_disp = lang
   local right = lang_disp .. " " .. copy_label
   local dash_w = math.max(1, width - 2 - str_width(right))
@@ -1403,11 +1422,20 @@ function M.render(blocks, opts)
   -- 自动标题序号（先于 TOC / 正文）
   assign_heading_numbers(blocks)
 
+  -- 顶部灰色快捷键提示（不写入 rev_map）
+  if cfg.show_key_hint ~= false then
+    local hint = M.help_line_text(width)
+    emit_line(ctx, hint, nil, {
+      { col = 0, end_col = #hint, hl = "MdViewKeyHint", line_hl = "MdViewKeyHint" },
+    }, { no_rev_map = true })
+    emit_line(ctx, "", nil, nil, { no_rev_map = true })
+  end
+
   -- TOC（不写入 rev_map，避免占住标题源行映射）
   if cfg.toc and cfg.toc_position ~= "none" then
     local heads = toc_mod.collect(blocks, cfg)
     if #heads > 0 then
-      local title = "◆ Contents"
+      local title = require("mdview.i18n").t("contents")
       emit_line(ctx, title, nil, { { col = 0, end_col = #title, hl = "MdViewTocTitle" } }, { no_rev_map = true })
       local toc_entries = {}
       -- 建立 source_start → auto_number
@@ -1477,12 +1505,11 @@ end
 
 local HELP_NS = vim.api.nvim_create_namespace("mdview_help")
 
----底部快捷键文案（按窗口列数截断/补空）
+---顶部/底部快捷键文案（按窗口列数截断/补空）
 ---@param cols number
 ---@return string
 function M.help_line_text(cols)
-  local hint =
-    " q关  r刷  Enter激活  t目录  go顶  ?帮助  C-o返回  gi图  o系统  yc复制  gs源码 │ mdview "
+  local hint = require("mdview.i18n").t("key_hint")
   cols = math.max(8, cols or 40)
   local w = vim.fn.strdisplaywidth(hint)
   if w < cols then
@@ -1527,13 +1554,13 @@ function M.apply_help_line(buf, result, show, cols)
   vim.api.nvim_buf_clear_namespace(buf, HELP_NS, 0, -1)
   if show then
     local hint = M.help_line_text(cols)
-    -- 在末尾插入一行，不触碰 0..base_n-1
+    -- 在末尾插入一行，不触碰 0..base_n-1（遗留底部条；默认已改顶部）
     vim.api.nvim_buf_set_lines(buf, base_n, base_n, false, { hint })
     pcall(vim.api.nvim_buf_set_extmark, buf, HELP_NS, base_n, 0, {
       end_row = base_n,
       end_col = #hint,
-      hl_group = "MdViewHelp",
-      line_hl_group = "MdViewHelp",
+      hl_group = "MdViewKeyHint",
+      line_hl_group = "MdViewKeyHint",
     })
   end
 

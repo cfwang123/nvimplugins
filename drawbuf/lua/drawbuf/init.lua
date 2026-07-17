@@ -29,24 +29,6 @@ local BLOCK_CHARS = {
   "▟", -- 3/4
 }
 
-local BLOCK_LABELS = {
-  ["█"] = "100% 全方格",
-  ["▀"] = "上半 1/2",
-  ["▄"] = "下半 1/2",
-  ["▌"] = "左半 1/2",
-  ["▐"] = "右半 1/2",
-  ["▘"] = "左上 1/4",
-  ["▝"] = "右上 1/4",
-  ["▖"] = "左下 1/4",
-  ["▗"] = "右下 1/4",
-  ["▚"] = "对角",
-  ["▞"] = "对角",
-  ["▙"] = "3/4",
-  ["▛"] = "3/4",
-  ["▜"] = "3/4",
-  ["▟"] = "3/4",
-}
-
 local default_config = {
   width = 80,
   height = 24,
@@ -69,6 +51,8 @@ local default_config = {
   -- 默认：白底纸 + 黑线
   canvas_bg = "ffffff",
   statusline = true,
+  --- 界面语言："auto" | "zh" | "en"；Y 切换
+  ui_lang = "auto",
 }
 
 local config = vim.deepcopy(default_config)
@@ -83,14 +67,17 @@ local TOOL_RECT = "rect"
 local TOOL_ELLIPSE = "ellipse"
 local TOOL_FILL = "fill"
 
-local TOOL_LABELS = {
-  [TOOL_PENCIL] = "铅笔",
-  [TOOL_ERASER] = "橡皮",
-  [TOOL_LINE] = "直线",
-  [TOOL_RECT] = "矩形",
-  [TOOL_ELLIPSE] = "椭圆",
-  [TOOL_FILL] = "填充",
-}
+local function tool_labels()
+  local i18n = require("drawbuf.i18n")
+  return {
+    [TOOL_PENCIL] = i18n.tool_label(TOOL_PENCIL),
+    [TOOL_ERASER] = i18n.tool_label(TOOL_ERASER),
+    [TOOL_LINE] = i18n.tool_label(TOOL_LINE),
+    [TOOL_RECT] = i18n.tool_label(TOOL_RECT),
+    [TOOL_ELLIPSE] = i18n.tool_label(TOOL_ELLIPSE),
+    [TOOL_FILL] = i18n.tool_label(TOOL_FILL),
+  }
+end
 
 local TOOL_ORDER = {
   TOOL_PENCIL,
@@ -506,16 +493,18 @@ local function build_status(st)
     add_text(string.rep(" ", n or 1), "DrawbufStatus", nil)
   end
 
-  local tool_name = TOOL_LABELS[st.tool] or st.tool
+  local i18n = require("drawbuf.i18n")
+  local labels = tool_labels()
+  local tool_name = labels[st.tool] or st.tool
   add_text("[" .. tool_name .. " ▾]", "DrawbufStatusBtnHot", "tool")
   add_gap(1)
-  add_text("[字符:" .. normalize_glyph(st.brush) .. " ▾]", "DrawbufStatusBtn", "brush")
+  add_text("[" .. i18n.t("char") .. ":" .. normalize_glyph(st.brush) .. " ▾]", "DrawbufStatusBtn", "brush")
   add_gap(1)
-  add_text("[前景:", "DrawbufStatus", nil)
+  add_text("[" .. i18n.t("fg") .. ":", "DrawbufStatus", nil)
   add_text("██", nil, "fg") -- hl applied specially
   add_text(" ▾]", "DrawbufStatus", "fg")
   add_gap(1)
-  add_text("[背景:", "DrawbufStatus", nil)
+  add_text("[" .. i18n.t("bg") .. ":", "DrawbufStatus", nil)
   add_text("██", nil, "bg")
   add_text(" ▾]", "DrawbufStatus", "bg")
   add_gap(2)
@@ -523,15 +512,17 @@ local function build_status(st)
   add_gap(1)
   add_text(string.format("(%d,%d)", st.cx, st.cy), "DrawbufStatus", nil)
   add_gap(2)
-  add_text("[演示 ▾]", "DrawbufStatusBtnHot", "demo")
+  add_text("[" .. i18n.t("demo") .. " ▾]", "DrawbufStatusBtnHot", "demo")
   add_gap(1)
-  add_text("[保存]", "DrawbufStatusBtn", "save")
+  add_text("[" .. i18n.t("save") .. "]", "DrawbufStatusBtn", "save")
   add_gap(1)
-  add_text("[清空]", "DrawbufStatusBtn", "clear")
+  add_text("[" .. i18n.t("clear") .. "]", "DrawbufStatusBtn", "clear")
   add_gap(1)
-  add_text("[撤销]", "DrawbufStatusBtn", "undo")
+  add_text("[" .. i18n.t("undo") .. "]", "DrawbufStatusBtn", "undo")
   add_gap(1)
-  add_text("[退出]", "DrawbufStatusBtn", "quit")
+  add_text("[" .. i18n.t("quit") .. "]", "DrawbufStatusBtn", "quit")
+  add_gap(1)
+  add_text("[" .. i18n.t("lang") .. "]", "DrawbufStatusBtn", "lang")
   add_gap(1)
   add_text("[?]", "DrawbufStatusBtn", "help")
 
@@ -836,7 +827,7 @@ local function do_paint_here(st)
     if not st.shape_drag then
       start_shape_drag(st, st.cx, st.cy, st.tool)
       st.shape_drag.from_mouse = false
-      vim.notify("drawbuf: 拖动/移动到终点，Space/松开确认，Esc 取消", vim.log.levels.INFO)
+      vim.notify(require("drawbuf.i18n").t("shape_hint"), vim.log.levels.INFO)
     else
       commit_shape_drag(st)
     end
@@ -991,9 +982,10 @@ local function parse_draw_file(lines)
 end
 
 local function save(st, path)
+  local i18n = require("drawbuf.i18n")
   path = path or st.path
   if not path or path == "" then
-    path = vim.fn.input("保存为: ", "drawing.draw", "file")
+    path = vim.fn.input(i18n.t("save_as"), "drawing.draw", "file")
     if path == nil or path == "" then
       return
     end
@@ -1001,26 +993,27 @@ local function save(st, path)
   path = vim.fn.fnamemodify(path, ":p")
   local ok, err = pcall(vim.fn.writefile, grid_to_text(st, true), path)
   if not ok then
-    vim.notify("drawbuf: 保存失败: " .. tostring(err), vim.log.levels.ERROR)
+    vim.notify(i18n.t("save_fail") .. tostring(err), vim.log.levels.ERROR)
     return
   end
   st.path = path
   st.dirty = false
-  vim.notify("drawbuf: 已保存 " .. path, vim.log.levels.INFO)
+  vim.notify(i18n.t("saved") .. path, vim.log.levels.INFO)
 end
 
 local function export_plain(st, path)
-  path = path or vim.fn.input("导出文本: ", "drawing.txt", "file")
+  local i18n = require("drawbuf.i18n")
+  path = path or vim.fn.input(i18n.t("export_as"), "drawing.txt", "file")
   if path == nil or path == "" then
     return
   end
   path = vim.fn.fnamemodify(path, ":p")
   local ok, err = pcall(vim.fn.writefile, grid_to_text(st, false), path)
   if not ok then
-    vim.notify("drawbuf: 导出失败: " .. tostring(err), vim.log.levels.ERROR)
+    vim.notify(i18n.t("export_fail") .. tostring(err), vim.log.levels.ERROR)
     return
   end
-  vim.notify("drawbuf: 已导出 " .. path, vim.log.levels.INFO)
+  vim.notify(i18n.t("exported") .. path, vim.log.levels.INFO)
 end
 
 local function clear_canvas(st)
@@ -1491,7 +1484,7 @@ end
 ---opts.on_select(idx 1-based)
 local function open_float_menu(st, canvas_buf, opts)
   close_float(st)
-  local title = opts.title or "选择"
+  local title = opts.title or require("drawbuf.i18n").t("pick")
   local items = opts.lines or {}
   local swatches = opts.swatches or {}
   local n = #items
@@ -1698,17 +1691,19 @@ local function open_float_menu(st, canvas_buf, opts)
 end
 
 local function menu_tool(st, buf)
+  local i18n = require("drawbuf.i18n")
+  local labels = tool_labels()
   local lines = {}
   local start = 1
   for i, t in ipairs(TOOL_ORDER) do
     local mark = (st.tool == t) and "●" or " "
-    table.insert(lines, string.format("%s %s", mark, TOOL_LABELS[t]))
+    table.insert(lines, string.format("%s %s", mark, labels[t] or t))
     if st.tool == t then
       start = i
     end
   end
   open_float_menu(st, buf, {
-    title = "选择工具",
+    title = i18n.t("pick_tool"),
     lines = lines,
     width = 22,
     start_index = start,
@@ -1721,6 +1716,7 @@ local function menu_tool(st, buf)
 end
 
 local function menu_brush(st, buf)
+  local i18n = require("drawbuf.i18n")
   local lines = {}
   local swatches = {}
   local fg = st.fg > 0 and st.fg or 1
@@ -1729,7 +1725,7 @@ local function menu_brush(st, buf)
   for i, ch in ipairs(config.brush_chars) do
     local mark = (st.brush == ch) and "●" or " "
     local sw = string.rep(ch, 4)
-    local label = BLOCK_LABELS[ch] or ""
+    local label = i18n.block_label(ch)
     table.insert(lines, string.format("%s %s  %s", mark, sw, label))
     table.insert(swatches, {
       row = i - 1,
@@ -1741,7 +1737,7 @@ local function menu_brush(st, buf)
     end
   end
   open_float_menu(st, buf, {
-    title = "选择字符（100% / 1/2 / 1/4）",
+    title = i18n.t("pick_char"),
     lines = lines,
     width = 30,
     swatches = swatches,
@@ -1769,8 +1765,9 @@ local function menu_demo(st, buf)
     end
     table.insert(swatches, { row = i - 1, needle = strip, hl = hl })
   end
+  local i18n = require("drawbuf.i18n")
   open_float_menu(st, buf, {
-    title = "加载演示图案（彩色）",
+    title = i18n.t("pick_demo"),
     lines = lines,
     width = 48,
     swatches = swatches,
@@ -1778,7 +1775,8 @@ local function menu_demo(st, buf)
       local d = DEMO_PATTERNS[idx]
       if d then
         load_demo(st, d)
-        vim.notify("drawbuf: 已加载「" .. d.name .. "」", vim.log.levels.INFO)
+        local endq = i18n.get() == "zh" and "」" or "»"
+        vim.notify(i18n.t("loaded") .. d.name .. endq, vim.log.levels.INFO)
       end
     end,
   })
@@ -1793,7 +1791,7 @@ local function menu_color(st, buf, field, title)
   do
     local mark = (st[field] == 0) and "●" or " "
     local sw = "████"
-    table.insert(lines, string.format("%s %s  0  无（画布底色）", mark, sw))
+    table.insert(lines, string.format("%s %s  0  %s", mark, sw, require("drawbuf.i18n").t("none_canvas")))
     -- empty-looking: dark swatch
     local hl = "DrawbufPickNone"
     if not hl_cache.pick_none then
@@ -1839,17 +1837,24 @@ local function menu_color(st, buf, field, title)
 end
 
 local function show_help()
-  vim.notify(
-    table.concat({
-      "drawbuf 操作说明:",
-      "  铅笔：鼠标拖拽绘制；右键擦除；p 连续绘制",
-      "  直线/矩形/椭圆：按下起点→拖动预览→松开确认；Esc 取消",
-      "  底部状态栏：工具 / 字符 / 前景 / 背景 / 演示 / 保存 / 清空 / 撤销 / 退出",
-      "  色块：100% █ + 1/2 + 1/4；选色 float 真彩色",
-      "  hjkl 移动  u 撤销  C 清空  s 保存  q 退出",
-    }, "\n"),
-    vim.log.levels.INFO
-  )
+  vim.notify(require("drawbuf.i18n").t("help"), vim.log.levels.INFO)
+end
+
+local function toggle_ui_lang(st, buf)
+  local i18n = require("drawbuf.i18n")
+  local next_lang = i18n.toggle()
+  i18n.save_prefs()
+  if next_lang == "en" then
+    vim.notify(i18n.t("lang_to_en"), vim.log.levels.INFO)
+  else
+    vim.notify(i18n.t("lang_to_zh"), vim.log.levels.INFO)
+  end
+  if buf and vim.api.nvim_buf_is_valid(buf) then
+    -- 状态栏文案随语言变：必须 full 重绘（增量 refresh 不会重建 status 文本）
+    st.need_full = true
+    st.status_dirty = true
+    refresh(buf, { full = true, status = true })
+  end
 end
 
 local function hit_status(st, display_col)
@@ -1874,23 +1879,27 @@ local function on_status_click(st, buf, display_col)
   elseif id == "brush" then
     menu_brush(st, buf)
   elseif id == "fg" then
-    menu_color(st, buf, "fg", "选择前景色")
+    menu_color(st, buf, "fg", require("drawbuf.i18n").t("pick_fg"))
   elseif id == "bg" then
-    menu_color(st, buf, "bg", "选择背景色")
+    menu_color(st, buf, "bg", require("drawbuf.i18n").t("pick_bg"))
   elseif id == "demo" then
     menu_demo(st, buf)
+  elseif id == "lang" then
+    toggle_ui_lang(st, buf)
   elseif id == "save" then
     save(st)
     refresh(buf)
   elseif id == "clear" then
-    local ans = vim.fn.confirm("清空整个画布？", "&是\n&否", 2)
+    local i18n = require("drawbuf.i18n")
+    local ans = vim.fn.confirm(i18n.t("confirm_clear"), i18n.t("yes_no"), 2)
     if ans == 1 then
       clear_canvas(st)
       refresh(buf)
     end
   elseif id == "quit" then
     if st.dirty then
-      local ans = vim.fn.confirm("画布未保存，关闭？", "&是\n&否", 2)
+      local i18n = require("drawbuf.i18n")
+      local ans = vim.fn.confirm(i18n.t("confirm_quit"), i18n.t("yes_no"), 2)
       if ans ~= 1 then
         return true
       end
@@ -1960,9 +1969,9 @@ local function bind(buf)
     if st.drawing then
       push_undo(st)
       paint_cell(st, st.cx, st.cy)
-      vim.notify("drawbuf: 连续绘制 开", vim.log.levels.INFO)
+      vim.notify(require("drawbuf.i18n").t("draw_on"), vim.log.levels.INFO)
     else
-      vim.notify("drawbuf: 连续绘制 关", vim.log.levels.INFO)
+      vim.notify(require("drawbuf.i18n").t("draw_off"), vim.log.levels.INFO)
     end
   end, "toggle draw")
 
@@ -1979,6 +1988,20 @@ local function bind(buf)
   map("L", function(st)
     set_tool(st, TOOL_LINE)
   end, "line")
+  -- Y：中英文界面（L 已用作直线工具）
+  -- 不用 with_st：避免二次增量 refresh 干扰 full 重绘
+  vim.keymap.set("n", "Y", function()
+    local st = state_by_buf[buf]
+    if st then
+      toggle_ui_lang(st, buf)
+    end
+  end, { buffer = buf, silent = true, nowait = true, desc = "drawbuf: toggle UI language" })
+  vim.keymap.set("n", "y", function()
+    local st = state_by_buf[buf]
+    if st then
+      toggle_ui_lang(st, buf)
+    end
+  end, { buffer = buf, silent = true, nowait = true, desc = "drawbuf: toggle UI language" })
   map("R", function(st)
     set_tool(st, TOOL_RECT)
   end, "rect")
@@ -1991,7 +2014,7 @@ local function bind(buf)
   map("<Esc>", function(st)
     if st.shape_drag then
       cancel_shape_drag(st)
-      vim.notify("drawbuf: 已取消图形绘制", vim.log.levels.INFO)
+      vim.notify(require("drawbuf.i18n").t("shape_cancel"), vim.log.levels.INFO)
     end
   end, "cancel shape")
 
@@ -2052,7 +2075,8 @@ local function bind(buf)
   map("q", function()
     local st = state_by_buf[buf]
     if st and st.dirty then
-      local ans = vim.fn.confirm("画布未保存，关闭？", "&是\n&否", 2)
+      local i18n = require("drawbuf.i18n")
+      local ans = vim.fn.confirm(i18n.t("confirm_quit"), i18n.t("yes_no"), 2)
       if ans ~= 1 then
         return
       end
@@ -2487,6 +2511,19 @@ function M.setup(user)
   -- always force block charset unless user overrides brush_chars
   if not user or not user.brush_chars then
     config.brush_chars = vim.deepcopy(BLOCK_CHARS)
+  end
+  local i18n = require("drawbuf.i18n")
+  local remembered = i18n.load_prefs()
+  local lang_opt = config.ui_lang
+  if user and (user.ui_lang == "zh" or user.ui_lang == "en" or user.ui_lang == "auto") then
+    lang_opt = user.ui_lang
+  elseif remembered then
+    lang_opt = remembered
+  end
+  if lang_opt == "zh" or lang_opt == "en" then
+    i18n.setup(lang_opt)
+  else
+    i18n.setup("auto")
   end
   vim.g.drawbuf_setup_done = true
   hl_cache = {}

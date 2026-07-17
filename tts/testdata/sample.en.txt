@@ -1,0 +1,17 @@
+TTS plugin test script (English)
+
+Paragraph one. Place the cursor anywhere in this sentence, then press leader-vo. Playback should start from this sentence.
+
+Paragraph two. Use plus to speed up and minus to slow down. Volume can be changed with the up and down arrow keys, or the mouse wheel.
+
+Paragraph three. Left and right arrows jump to the previous or next segment. Space pauses or resumes. Press v to open the voice list.
+
+Paragraph four. Closing the bottom control window should stop speech immediately and clear the yellow highlight on the source text.
+
+Paragraph five. If you start from a sentence in the middle, reading should continue to the end. Move the cursor to another sentence during playback and press the play shortcut again to jump to that segment.
+
+Extra lines for long-run highlight sync. The early bird catches the worm. Practice makes perfect. Better late than never. Actions speak louder than words. Where there is a will, there is a way. All that glitters is not gold.
+
+Note. After you pick an English voice in the float, the preference is remembered for next time. Audio should use the current Windows default playback device.
+
+Final paragraph. End of test. Press q or leader-vs to stop.

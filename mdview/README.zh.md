@@ -116,6 +116,8 @@ require("nvim-treesitter.configs").setup({
 require("mdview").setup({
   split_direction = "right",
   width = 0.45,
+  show_key_hint = true, -- 预览顶部灰色快捷键提示
+  ui_lang = "auto",     -- 界面 "auto" | "zh" | "en"；预览中按 L 切换
   code_fold_lines = 10,
   code_highlight = "auto", -- treesitter → syntax → 单色
   sync_scroll = true,
@@ -136,6 +138,7 @@ require("mdview").setup({
 
 此时可用：
 
+- 预览顶部灰色快捷键提示
 - 预览图片色块渲染、`gi` float 大图（色块）
 - 代码块高亮（有 TS 时更清晰）
 - 侧栏源码光标 → 预览 `_` 标记
@@ -220,7 +223,7 @@ require("mdview").setup({
 ```vim
 :e /path/to/nvimplugins/mdview/testdata/demo.md
 :MdSideView
-" 预览内：? 帮助 · t 目录 · c 复制代码 · gi 开图 · gh 页内高清
+" 预览顶部灰色快捷键提示；? 完整帮助 · t 目录 · c 复制 · gi/gh 图
 ```
 
 ```bash
@@ -256,6 +259,7 @@ python -c "from PIL import Image; print('Pillow OK')"
 | `go` | 文内 TOC 顶部 |
 | `t` | 目录 float |
 | `<C-o>` | 返回：文内跳转 → 上一篇 md 预览 |
+| `L` | 切换中/英文界面（顶栏提示、帮助、复制按钮等；记住偏好） |
 | `?` | 帮助 float |
 
 ## 配置摘要

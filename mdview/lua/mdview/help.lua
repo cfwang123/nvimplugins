@@ -7,28 +7,6 @@ local float_state = {
   buf = nil,
 }
 
-local HELP_LINES = {
-  "mdview 快捷键",
-  "",
-  "  q          关闭预览",
-  "  r          刷新预览",
-  "  <CR>       激活：TOC/折叠/图片/链接",
-  "  t          打开/关闭目录 TOC",
-  "  go         跳到文内目录顶部",
-  "  ?          本帮助（开/关）",
-  "  <C-o>      返回：文内跳转 / 上一篇 md 预览",
-  "  gi         打开光标处图片（float；支持高清）",
-  "  gh         临时显示当前页高清图（滚动/焦点/改大小清除）",
-  "  o          光标在图片上：系统程序打开原图",
-  "  c / yc     复制光标处代码块（c 一键）",
-  "  [Copy]     代码块顶栏按钮，点击/回车复制",
-  "  gs         跳到源文件对应行",
-  "",
-  "  gt / gT    切换 tab（系统默认）",
-  "",
-  "  q / Esc    关闭本窗口",
-}
-
 function M.close_float()
   if float_state.win and vim.api.nvim_win_is_valid(float_state.win) then
     pcall(vim.api.nvim_win_close, float_state.win, true)
@@ -51,8 +29,11 @@ function M.open_float()
   end
 
   require("mdview.highlight").ensure()
-
-  local lines = vim.deepcopy(HELP_LINES)
+  local i18n = require("mdview.i18n")
+  local lines = vim.deepcopy(i18n.t("help_lines"))
+  if type(lines) ~= "table" then
+    lines = { tostring(lines) }
+  end
   local buf = vim.api.nvim_create_buf(false, true)
   vim.bo[buf].buftype = "nofile"
   vim.bo[buf].bufhidden = "wipe"
@@ -82,13 +63,13 @@ function M.open_float()
     col = col,
     style = "minimal",
     border = "rounded",
-    title = " Help ",
+    title = i18n.t("help_title"),
     title_pos = "center",
     zindex = 55,
   })
   if not ok or not win then
     pcall(vim.api.nvim_buf_delete, buf, { force = true })
-    vim.notify("mdview: failed to open help float", vim.log.levels.ERROR)
+    vim.notify(i18n.t("help_fail"), vim.log.levels.ERROR)
     return
   end
 

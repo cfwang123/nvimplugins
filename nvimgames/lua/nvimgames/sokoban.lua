@@ -1,6 +1,7 @@
 ---@mod nvimgames.sokoban 推箱子（参考 game/sokoban/c_app）
 local M = {}
 
+local i18n = require("nvimgames.i18n")
 local ns = vim.api.nvim_create_namespace("sokoban")
 local state_by_buf = {} ---@type table<integer, table>
 local levels_cache = nil ---@type table[]|nil
@@ -106,14 +107,14 @@ local function load_levels()
   end
   local path = levels_path()
   if vim.fn.filereadable(path) == 0 then
-    vim.notify("sokoban: 找不到关卡文件 " .. path, vim.log.levels.ERROR)
+    vim.notify(i18n.t("sokoban_no_level") .. path, vim.log.levels.ERROR)
     levels_cache = {}
     return levels_cache
   end
   local text = table.concat(vim.fn.readfile(path), "\n")
   local ok, data = pcall(vim.json.decode, text)
   if not ok or type(data) ~= "table" then
-    vim.notify("sokoban: 关卡 JSON 解析失败", vim.log.levels.ERROR)
+    vim.notify(i18n.t("sokoban_bad_json"), vim.log.levels.ERROR)
     levels_cache = {}
     return levels_cache
   end
@@ -360,15 +361,15 @@ local function render(buf)
   end
   ensure_hl()
 
-  local title = string.format(
-    " 推箱子  关卡 %d/%d  %s  步数:%d  %s",
+  local title = i18n.tf(
+    "sokoban_title",
     st.level_index,
     st.level_count,
     st.level_name,
     st.moves,
-    st.won and "★ 过关！" or ""
+    st.won and i18n.t("sokoban_cleared") or ""
   )
-  local help = " hjkl/方向键移动  z撤销  r重开  n/p下/上关  g跳关  q退出 "
+  local help = i18n.t("sokoban_help")
 
   local lines = { title, "" }
   local row_marks = {} -- {row0, byte_start, byte_end, hl}
@@ -400,8 +401,13 @@ local function render(buf)
   table.insert(lines, help)
   table.insert(row_marks, { #lines - 1, 0, #help, "SokobanStatus" })
 
+  local lang_line = " " .. i18n.t("sokoban_btn_lang") .. " "
+  table.insert(lines, lang_line)
+  table.insert(row_marks, { #lines - 1, 0, #lang_line, "SokobanStatus" })
+  st.lang_row = #lines -- 1-based
+
   if st.won then
-    local tip = " ★ 过关！按 Space 进入下一关，或 r 重玩本关 "
+    local tip = i18n.t("sokoban_next")
     table.insert(lines, tip)
     table.insert(row_marks, { #lines - 1, 0, #tip, "SokobanWin" })
   end
@@ -489,7 +495,7 @@ end
 local function goto_level(st, buf, index)
   local levels = load_levels()
   if not load_level(st, levels, index) then
-    vim.notify("sokoban: 无效关卡 " .. tostring(index), vim.log.levels.WARN)
+    vim.notify(i18n.t("sokoban_bad_level") .. tostring(index), vim.log.levels.WARN)
     return
   end
   st.level_count = #levels
@@ -586,7 +592,7 @@ function M.open(opts)
     end
   end, "prev")
   map("g", function(s)
-    local input = vim.fn.input(string.format("跳转到关卡 (1-%d): ", s.level_count))
+    local input = vim.fn.input(i18n.tf("sokoban_jump", s.level_count))
     local n = tonumber(input)
     if n then
       goto_level(s, buf, n)
@@ -605,12 +611,36 @@ function M.open(opts)
     state_by_buf[buf] = nil
     pcall(vim.cmd, "bdelete!")
   end, "quit")
+  map("u", function(s)
+    i18n.toggle()
+    render(buf)
+  end, "lang")
+  map("U", function(s)
+    i18n.toggle()
+    render(buf)
+  end, "lang")
   map("?", function()
-    vim.notify(
-      "推箱子\nhjkl 移动  z 撤销  r 重开  n/p 下/上关  g 跳关\n过关后 Space 下一关  q 退出\n箱=箱子  ◎=目标  人=玩家  墙=墙",
-      vim.log.levels.INFO
-    )
+    vim.notify(i18n.t("sokoban_help_box"), vim.log.levels.INFO)
   end, "help")
+
+  if vim.o.mouse == "" then
+    vim.o.mouse = "a"
+  end
+  vim.keymap.set("n", "<LeftMouse>", function()
+    local s = state_by_buf[buf]
+    if not s or not s.lang_row then
+      return
+    end
+    local mp = vim.fn.getmousepos()
+    local w = vim.fn.bufwinid(buf)
+    if w == -1 or mp.winid ~= w then
+      return
+    end
+    if mp.line == s.lang_row then
+      i18n.toggle()
+      render(buf)
+    end
+  end, { buffer = buf, silent = true, nowait = true })
 
   -- 过关后自动提示下一关：在 move 后 check；n 已绑定
 

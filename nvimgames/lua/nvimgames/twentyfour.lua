@@ -1,6 +1,7 @@
 ---@mod nvimgames.twentyfour 计算 24 点
 local M = {}
 
+local i18n = require("nvimgames.i18n")
 local ns = vim.api.nvim_create_namespace("nvimgames_twentyfour")
 local state_by_buf = {} ---@type table<integer, table>
 local hl_ready = false
@@ -197,11 +198,11 @@ local function extract_numbers(expr)
       end
       -- 不允许小数点后接（本游戏仅整数点）
       if j <= n and expr:sub(j, j) == "." then
-        return nil, "本游戏只使用整数，不要写小数"
+        return nil, i18n.t("tf_no_decimal")
       end
       local num = tonumber(expr:sub(i, j - 1))
       if not num then
-        return nil, "数字解析失败"
+        return nil, i18n.t("tf_parse_fail")
       end
       table.insert(nums, num)
       i = j
@@ -219,7 +220,7 @@ local function validate_charset(expr)
   local s = expr
   s = s:gsub("×", "*"):gsub("÷", "/"):gsub("x", "*"):gsub("X", "*")
   if s:find("[^%d%s%+%-%*/%(%)]") then
-    return false, "只允许数字与 + - * / ( )"
+    return false, i18n.t("tf_only_ops")
   end
   return true, s
 end
@@ -233,25 +234,25 @@ local function safe_eval(expr)
   end
   expr = cleaned
   if expr:match("^%s*$") then
-    return nil, "公式为空"
+    return nil, i18n.t("tf_expr_empty")
   end
   -- 禁止连续运算符等交给 load；限制长度
   if #expr > 80 then
-    return nil, "公式过长"
+    return nil, i18n.t("tf_expr_long")
   end
   local chunk, err = load("return (" .. expr .. ")")
   if not chunk then
-    return nil, "语法错误: " .. tostring(err)
+    return nil, i18n.tf("tf_syntax", tostring(err))
   end
   local ok, result = pcall(chunk)
   if not ok then
-    return nil, "计算错误: " .. tostring(result)
+    return nil, i18n.tf("tf_calc_err", tostring(result))
   end
   if type(result) ~= "number" then
-    return nil, "结果不是数字"
+    return nil, i18n.t("tf_not_number")
   end
   if result ~= result or result == math.huge or result == -math.huge then
-    return nil, "结果无效（除零？）"
+    return nil, i18n.t("tf_invalid")
   end
   return result, nil
 end
@@ -268,12 +269,12 @@ local function judge(cards, expr)
 
   local used, eerr = extract_numbers(expr)
   if not used then
-    return false, eerr or "数字解析失败", nil
+    return false, eerr or i18n.t("tf_parse_fail"), nil
   end
 
   local need = card_values(cards)
   if #used ~= 4 then
-    return false, string.format("必须正好使用 4 个数字（当前 %d 个）", #used), nil
+    return false, i18n.tf("tf_need_4", #used), nil
   end
 
   local a, b = {}, {}
@@ -287,18 +288,18 @@ local function judge(cards, expr)
     if a[i] ~= b[i] then
       local need_s = table.concat(vim.tbl_map(tostring, need), ", ")
       local used_s = table.concat(vim.tbl_map(tostring, used), ", ")
-      return false, string.format("必须用完这 4 个数各一次：需要 [%s]，公式里是 [%s]", need_s, used_s), nil
+      return false, i18n.tf("tf_use_cards", need_s, used_s), nil
     end
   end
 
   local val, verr = safe_eval(expr)
   if not val then
-    return false, verr or "计算失败", nil
+    return false, verr or i18n.t("tf_eval_fail"), nil
   end
   if math.abs(val - 24) < 1e-6 then
-    return true, string.format("正确！= %g", val), val
+    return true, i18n.tf("tf_correct", val), val
   end
-  return false, string.format("结果是 %g，不是 24", val), val
+  return false, i18n.tf("tf_wrong_val", val), val
 end
 
 ---单张牌 5 行 × 宽约 7
@@ -316,8 +317,20 @@ local function card_lines(card)
   return { top, r1, r2, r3, bot }, SUITS[card.suit].hl
 end
 
----公式行前缀（仅此前缀之后可编辑）
-local EXPR_PREFIX = "  公式> "
+---公式行前缀（仅此前缀之后可编辑；随语言切换）
+local function expr_prefix()
+  return i18n.t("tf_expr_prefix")
+end
+
+---剥掉公式前缀（兼容中英文）
+local function strip_expr_prefix(line)
+  local p = expr_prefix()
+  if line:sub(1, #p) == p then
+    return line:sub(#p + 1)
+  end
+  local stripped = line:gsub("^%s*公式[>:：]%s*", ""):gsub("^%s*expr[>:：]%s*", "")
+  return vim.trim(stripped)
+end
 
 local function apply_win(win)
   pcall(function()
@@ -350,10 +363,11 @@ local function read_expr(st, buf)
     return st.last_expr or ""
   end
   local line = vim.api.nvim_buf_get_lines(buf, st.expr_row, st.expr_row + 1, false)[1] or ""
-  if line:sub(1, #EXPR_PREFIX) == EXPR_PREFIX then
-    return vim.trim(line:sub(#EXPR_PREFIX + 1))
+  local p = expr_prefix()
+  if line:sub(1, #p) == p then
+    return vim.trim(line:sub(#p + 1))
   end
-  return vim.trim((line:gsub("^%s*公式[>:：]%s*", "")))
+  return vim.trim(strip_expr_prefix(line))
 end
 
 ---光标移到公式行末尾，可选进入插入模式
@@ -365,9 +379,10 @@ local function focus_expr(st, buf, start_insert)
   if win == -1 then
     win = 0
   end
-  local line = vim.api.nvim_buf_get_lines(buf, st.expr_row, st.expr_row + 1, false)[1] or EXPR_PREFIX
-  if line:sub(1, #EXPR_PREFIX) ~= EXPR_PREFIX then
-    line = EXPR_PREFIX .. (st.last_expr or "")
+  local p = expr_prefix()
+  local line = vim.api.nvim_buf_get_lines(buf, st.expr_row, st.expr_row + 1, false)[1] or p
+  if line:sub(1, #p) ~= p then
+    line = p .. (st.last_expr or "")
     st.rendering = true
     vim.bo[buf].modifiable = true
     vim.api.nvim_buf_set_lines(buf, st.expr_row, st.expr_row + 1, false, { line })
@@ -388,20 +403,24 @@ local function render(buf)
   ensure_hl()
   st.rendering = true
 
+  local prefix = expr_prefix()
+
   -- 渲染前从 buffer 同步公式（开新局 / 主动清空时跳过，避免把旧输入写回来）
   if not st.skip_buf_expr_sync and st.expr_row and vim.api.nvim_buf_is_valid(buf) then
     local cur_lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
     if cur_lines[st.expr_row + 1] then
       local line = cur_lines[st.expr_row + 1]
-      if line:sub(1, #EXPR_PREFIX) == EXPR_PREFIX then
-        st.last_expr = line:sub(#EXPR_PREFIX + 1)
+      if line:sub(1, #prefix) == prefix then
+        st.last_expr = line:sub(#prefix + 1)
+      else
+        st.last_expr = strip_expr_prefix(line)
       end
     end
   end
   st.skip_buf_expr_sync = false
 
-  local title = string.format("  24 点  |  得分:%d  局数:%d  ", st.score or 0, st.rounds or 0)
-  local help = "  公式行输入  Enter 判定  出错后 Space 清空  r 新牌  h 答案  q 退出  "
+  local title = i18n.tf("tf_title", st.score or 0, st.rounds or 0)
+  local help = i18n.t("tf_help")
 
   local lines = { title, "" }
   ---@type {row:integer, col:integer, end_col:integer, hl:string}[]
@@ -439,12 +458,12 @@ local function render(buf)
     local line = table.concat(parts)
     table.insert(lines, "  " .. line)
     local row0 = #lines - 1
-    local prefix = 2
+    local pre = 2
     for _, m in ipairs(line_marks) do
       table.insert(marks, {
         row = row0,
-        col = prefix + m[1],
-        end_col = prefix + m[2],
+        col = pre + m[1],
+        end_col = pre + m[2],
         hl = m[3],
       })
     end
@@ -452,8 +471,8 @@ local function render(buf)
 
   table.insert(lines, "")
   local vals = card_values(st.cards)
-  local val_line = string.format(
-    "  点数: %s   （A=1  J=11  Q=12  K=13）",
+  local val_line = i18n.tf(
+    "tf_points",
     table.concat(vim.tbl_map(function(v)
       return rank_label(v) .. "=" .. v
     end, vals), "  ")
@@ -464,24 +483,24 @@ local function render(buf)
   table.insert(lines, "")
   -- 可编辑公式行
   st.expr_row = #lines -- 0-based
-  local expr_line = EXPR_PREFIX .. (st.last_expr or "")
+  local expr_line = prefix .. (st.last_expr or "")
   table.insert(lines, expr_line)
   table.insert(marks, {
     row = st.expr_row,
     col = 0,
-    end_col = #EXPR_PREFIX,
+    end_col = #prefix,
     hl = "TFExpr",
   })
   if #(st.last_expr or "") > 0 then
     table.insert(marks, {
       row = st.expr_row,
-      col = #EXPR_PREFIX,
+      col = #prefix,
       end_col = #expr_line,
       hl = "TFExpr",
     })
   end
 
-  local msg = st.message or "  在下方公式行输入，按 Enter 判定是否等于 24"
+  local msg = st.message or i18n.t("tf_prompt_default")
   local msg_hl = "TFStatus"
   if st.message_kind == "ok" then
     msg_hl = "TFOk"
@@ -492,7 +511,7 @@ local function render(buf)
   table.insert(marks, { row = #lines - 1, col = 0, end_col = #msg, hl = msg_hl })
 
   if st.show_answer and st.answer then
-    local ans = "  参考答案: " .. st.answer
+    local ans = i18n.tf("tf_answer", st.answer)
     table.insert(lines, ans)
     table.insert(marks, { row = #lines - 1, col = 0, end_col = #ans, hl = "TFHint" })
   end
@@ -500,6 +519,16 @@ local function render(buf)
   table.insert(lines, "")
   table.insert(lines, help)
   table.insert(marks, { row = #lines - 1, col = 0, end_col = #help, hl = "TFStatus" })
+  local lang_line = " " .. i18n.t("tf_btn_lang") .. " "
+  table.insert(lines, lang_line)
+  -- 整行高亮，便于识别可点
+  table.insert(marks, {
+    row = #lines - 1,
+    col = 0,
+    end_col = #lang_line,
+    hl = "TFOk",
+  })
+  st.lang_row = #lines -- 1-based buffer line for getmousepos().line
 
   -- 锁定行快照（公式行可改，对比时跳过 st.expr_row）
   st.locked_lines = vim.list_extend({}, lines)
@@ -540,10 +569,11 @@ local function protect_buffer(buf)
   if #lines ~= #st.locked_lines then
     if lines[st.expr_row + 1] then
       local line = lines[st.expr_row + 1]
-      if line:sub(1, #EXPR_PREFIX) == EXPR_PREFIX then
-        st.last_expr = line:sub(#EXPR_PREFIX + 1)
+      local p = expr_prefix()
+      if line:sub(1, #p) == p then
+        st.last_expr = line:sub(#p + 1)
       else
-        st.last_expr = vim.trim(line)
+        st.last_expr = vim.trim(strip_expr_prefix(line))
       end
     end
     need_rerender = true
@@ -555,17 +585,18 @@ local function protect_buffer(buf)
       end
     end
     -- 同步 / 修复公式行前缀
+    local p = expr_prefix()
     local line = lines[st.expr_row + 1] or ""
-    if line:sub(1, #EXPR_PREFIX) ~= EXPR_PREFIX then
-      st.last_expr = vim.trim((line:gsub("^%s*公式[>:：]%s*", "")))
+    if line:sub(1, #p) ~= p then
+      st.last_expr = vim.trim(strip_expr_prefix(line))
       st.rendering = true
       vim.api.nvim_buf_set_lines(buf, st.expr_row, st.expr_row + 1, false, {
-        EXPR_PREFIX .. (st.last_expr or ""),
+        p .. (st.last_expr or ""),
       })
       st.rendering = false
       focus_expr(st, buf, false)
     else
-      st.last_expr = line:sub(#EXPR_PREFIX + 1)
+      st.last_expr = line:sub(#p + 1)
     end
   end
 
@@ -579,7 +610,7 @@ local function clear_input(st, buf, msg)
   st.await_clear = false
   st.err_expr = nil
   st.skip_buf_expr_sync = true
-  st.message = msg or "  在「公式>」后输入算式，按 Enter 判定"
+  st.message = msg or i18n.t("tf_prompt")
   st.message_kind = nil
   render(buf)
   focus_expr(st, buf, true)
@@ -594,7 +625,7 @@ local function new_round(st, keep_score)
   st.await_clear = false
   st.err_expr = nil
   st.skip_buf_expr_sync = true -- 强制清空公式行，勿从旧 buffer 同步
-  st.message = "  在「公式>」后输入算式，按 Enter 判定"
+  st.message = i18n.t("tf_prompt")
   st.message_kind = nil
   st.solved = false
   st.score = st.score or 0
@@ -610,7 +641,7 @@ local function submit_expr(st, buf)
     vim.cmd("stopinsert")
   end
   if st.solved then
-    st.message = "  本局已答对，按 r 发新牌"
+    st.message = i18n.t("tf_already")
     st.message_kind = "ok"
     st.await_clear = false
     render(buf)
@@ -619,7 +650,7 @@ local function submit_expr(st, buf)
   local input = read_expr(st, buf)
   st.last_expr = input
   if input == "" then
-    st.message = "  公式为空，请在「公式>」后输入"
+    st.message = i18n.t("tf_empty_input")
     st.message_kind = "bad"
     st.await_clear = false
     render(buf)
@@ -630,13 +661,13 @@ local function submit_expr(st, buf)
   if ok then
     st.solved = true
     st.score = (st.score or 0) + 1
-    st.message = "  ★ " .. msg .. "  按 r 下一局"
+    st.message = i18n.tf("tf_ok_next", msg)
     st.message_kind = "ok"
     st.await_clear = false
     st.err_expr = nil
   else
     -- 错误提示保留公式；Space 清空
-    st.message = "  ✗ " .. msg .. "  （Space 清空输入）"
+    st.message = i18n.tf("tf_bad_space", msg)
     st.message_kind = "bad"
     st.await_clear = true
     st.err_expr = input
@@ -685,7 +716,7 @@ function M.open(opts)
   -- 进入编辑：跳到公式行
   local function go_edit(s)
     if s.solved then
-      s.message = "  本局已答对，按 r 发新牌"
+      s.message = i18n.t("tf_already")
       s.message_kind = "ok"
       render(buf)
       return
@@ -711,7 +742,7 @@ function M.open(opts)
   -- 判定失败后：Space 清空输入（插入模式下也拦截）
   map("n", "<Space>", function(s)
     if s.await_clear then
-      clear_input(s, buf, "  已清空，请重新输入")
+      clear_input(s, buf, i18n.t("tf_cleared"))
     end
   end, "clear on error")
   vim.keymap.set("i", "<Space>", function()
@@ -719,7 +750,7 @@ function M.open(opts)
     if s and s.await_clear then
       vim.schedule(function()
         if state_by_buf[buf] then
-          clear_input(s, buf, "  已清空，请重新输入")
+          clear_input(s, buf, i18n.t("tf_cleared"))
         end
       end)
       return ""
@@ -743,10 +774,10 @@ function M.open(opts)
     end
     if s.answer then
       s.show_answer = not s.show_answer
-      s.message = s.show_answer and "  已显示参考答案" or "  已隐藏参考答案"
+      s.message = s.show_answer and i18n.t("tf_show_ans") or i18n.t("tf_hide_ans")
       s.message_kind = nil
     else
-      s.message = "  本局无解或求解失败"
+      s.message = i18n.t("tf_no_ans")
       s.message_kind = "bad"
     end
     render(buf)
@@ -760,16 +791,56 @@ function M.open(opts)
     pcall(vim.cmd, "bdelete!")
   end, "quit")
 
+  local function do_toggle_lang(s)
+    if vim.fn.mode():match("[iR]") then
+      pcall(vim.cmd, "stopinsert")
+    end
+    i18n.toggle()
+    s.message = i18n.t("lang_switched")
+    s.message_kind = nil
+    render(buf)
+  end
+
+  -- 中英文：仅 u
+  map("n", "u", do_toggle_lang, "lang")
+
   map("n", "?", function()
-    vim.notify(
-      "24点\n在「公式>」后直接输入算式，Enter 判定\n"
-        .. "出错后 Space 清空输入；r 新牌会清空公式\n"
-        .. "A=1 J=11 Q=12 K=13；四则运算 + - * / ()\n"
-        .. "i 编辑  r 新牌  h 答案  q 退出\n"
-        .. "例: (8/(3-8/3))",
-      vim.log.levels.INFO
-    )
+    vim.notify(i18n.t("tf_help_box"), vim.log.levels.INFO)
   end, "help")
+
+  if vim.o.mouse == "" then
+    vim.o.mouse = "a"
+  end
+
+  ---点击底栏「中文/EN」切换语言（n/i 松开时判定，不抢其它行的鼠标）
+  local function on_lang_release()
+    local s = state_by_buf[buf]
+    if not s or not s.lang_row then
+      return
+    end
+    local mp = vim.fn.getmousepos()
+    local w = vim.fn.bufwinid(buf)
+    if w == -1 or mp.winid ~= w then
+      return
+    end
+    if mp.line == s.lang_row then
+      do_toggle_lang(s)
+    end
+  end
+  for _, mode in ipairs({ "n", "i" }) do
+    vim.keymap.set(mode, "<LeftRelease>", on_lang_release, {
+      buffer = buf,
+      silent = true,
+      nowait = true,
+      desc = "twentyfour: click lang button",
+    })
+    vim.keymap.set(mode, "<2-LeftMouse>", on_lang_release, {
+      buffer = buf,
+      silent = true,
+      nowait = true,
+      desc = "twentyfour: double-click lang",
+    })
+  end
 
   -- 插入时若光标跑到非公式行，拉回
   vim.api.nvim_create_autocmd({ "CursorMoved", "CursorMovedI" }, {
@@ -789,8 +860,9 @@ function M.open(opts)
         return
       end
       -- 不允许删到前缀里：光标不得小于前缀长度
-      if col < #EXPR_PREFIX then
-        pcall(vim.api.nvim_win_set_cursor, 0, { s.expr_row + 1, #EXPR_PREFIX })
+      local p = expr_prefix()
+      if col < #p then
+        pcall(vim.api.nvim_win_set_cursor, 0, { s.expr_row + 1, #p })
       end
     end,
   })

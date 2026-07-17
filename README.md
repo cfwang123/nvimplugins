@@ -2,52 +2,110 @@
 
 **English** | [中文](README.zh.md)
 
-> **About** — Small experimental Neovim plugins: **mdview** (Markdown preview), **music** (open audio and play in a buffer), **imgbuf** (terminal image preview), **nvimgames** (Minesweeper / Sokoban / 24-point / Tetris), **drawbuf** (Unicode block drawing). Each plugin installs independently; no hard dependencies.
+> **About** — Small experimental Neovim plugins: **mdview** (Markdown preview), **music** / **videobuf** (audio/video), **imgbuf** (images), **nvimgames** (mini-games), **drawbuf** (block drawing), **pdfview** / **xlsview** (document previews), **tts** (Windows SAPI speech). Each plugin installs independently; no hard dependencies.
 
-Focused on fun, practical, low-dependency terminal tooling.
+Focused on fun, practical, low-dependency terminal tooling. Most UIs support **Chinese / English** (default: follow system language; preference is remembered).
 
 **Two install styles (pick one):**
 
 | Style | Description |
 |-------|-------------|
-| **Whole repo (network)** | `Plug 'cfwang123/nvimplugins'` — clone from GitHub; root `plugin/nvimplugins.lua` loads every sub-plugin |
+| **Whole repo (network)** | One line: `Plug 'cfwang123/nvimplugins'` — root `plugin/nvimplugins.lua` auto-loads all sub-plugins |
 | **Per plugin (local path)** | Plug only the subfolders you need (e.g. `…/mdview`) |
 
 ## Plugins
 
 | Plugin | Overview | Docs |
 |--------|----------|------|
-| **[mdview](mdview/)** | Markdown preview inside Neovim: single-window reading (`:MdView`) or side-by-side source (`:MdSideView`). Pure Lua rendering for headings/lists/GFM tables/code blocks (optional Tree-sitter), TOC, link & anchor jumps, images rendered with block characters, and optional terminal HD overlays. | [EN](mdview/README.md) · [中文](mdview/README.zh.md) |
-| **[music](music/)** | Open an audio file and turn the buffer into a player: play/pause, scrubbable progress bar, volume, prev/next in the same folder, track list, LRC lyrics sync, session restore. Python daemon backend (`just_playback` / pygame); hide UI without stealing focus. | [EN](music/README.md) · [中文](music/README.zh.md) |
-| **[imgbuf](imgbuf/)** | Open images as character-art previews (block / half / braille); fill or fit scaling; auto-open, clipboard, file-tree friendly; optional pixel HD overlay on WezTerm/Kitty/Ghostty (chafa or Python+Pillow). | [EN](imgbuf/README.md) · [中文](imgbuf/README.zh.md) |
-| **[nvimgames](nvimgames/)** | Terminal mini-games: Minesweeper, Sokoban (bundled levels), 24-point poker, Tetris (special pieces + optional vs AI). Launch from `:NvimGames` float menu. | [EN](nvimgames/README.md) · [中文](nvimgames/README.zh.md) |
-| **[drawbuf](drawbuf/)** | Draw with Unicode block characters in a buffer: pencil/eraser/line/rect/ellipse/fill, truecolor palette, clickable status bar, undo/redo, `.draw` files, and built-in demo pictures. | [EN](drawbuf/README.md) · [中文](drawbuf/README.zh.md) |
+| **[mdview](mdview/)** | Markdown preview: single-window (`:MdView`) or side-by-side (`:MdSideView`). Headings/lists/GFM tables/code, TOC, anchors, block-character images, optional terminal HD. **`L`** toggles UI language. | [EN](mdview/README.md) · [中文](mdview/README.zh.md) |
+| **[music](music/)** | Open audio → buffer player: play/pause, scrub bar, volume, folder prev/next + list, LRC lyrics, session restore. Python daemon; hide UI without focus steal. **`Y`** or button toggles language (`L` = loop). | [EN](music/README.md) · [中文](music/README.zh.md) |
+| **[videobuf](videobuf/)** | Terminal video preview (character frames + control bar); daemon-style backend similar to music. | [EN](videobuf/README.md) · [中文](videobuf/README.zh.md) |
+| **[imgbuf](imgbuf/)** | Image as character art (block/half/braille); fill/fit; auto-open, clipboard; optional pixel HD on WezTerm/Kitty/Ghostty. **`L`** toggles language. | [EN](imgbuf/README.md) · [中文](imgbuf/README.zh.md) |
+| **[nvimgames](nvimgames/)** | Minesweeper, Sokoban, **24-point**, Tetris. `:NvimGames` menu. In-game **`u`** (or button) toggles language. | [EN](nvimgames/README.md) · [中文](nvimgames/README.zh.md) |
+| **[drawbuf](drawbuf/)** | Unicode block canvas: pencil/eraser/line/rect/ellipse/fill, truecolor, clickable status bar, undo, `.draw` files, demos. Status **[EN/中]** or **`Y`** for language (`L` = line tool). | [EN](drawbuf/README.md) · [中文](drawbuf/README.zh.md) |
+| **[pdfview](pdfview/)** | PDF / Word preview: text styles, tables, chafa images; Enter/click float HD; `gh` temporary page HD. **`L`** toggles language. | [EN](pdfview/README.md) · [中文](pdfview/README.zh.md) |
+| **[xlsview](xlsview/)** | Excel (.xlsx/.xlsm) preview: cell color/bold/fill, multi-sheet, width-fit columns. **`L`** toggles language. | [EN](xlsview/README.md) · [中文](xlsview/README.zh.md) |
+| **[tts](tts/)** | Windows SAPI TTS: `<leader>vo` starts from the **segment at the cursor** (press again to jump while playing); white control bar; volume wheel / rate; system default audio device; **EN/中文** button or **`L`**. | [EN](tts/README.md) · [中文](tts/README.zh.md) |
+
+## UI language (zh / en)
+
+Most plugin UIs support Chinese and English. Default is **`ui_lang = "auto"`** (system UI culture; fallback often Chinese). Manual switches are saved under `stdpath("data")/*-nvim-prefs.json`.
+
+| Plugin | Toggle |
+|--------|--------|
+| mdview / imgbuf / pdfview / xlsview | **`L`** in preview |
+| tts | Control bar **EN / 中文** or **`L`** |
+| music | Button **EN/中(Y)** or **`Y`** (`L` = single-track loop) |
+| drawbuf | Status **[EN/中]** or **`Y`** (`L` = line tool) |
+| nvimgames (incl. 24-point) | Footer button or **`u`** |
+
+```lua
+require("mdview").setup({ ui_lang = "auto" }) -- or "zh" | "en"
+require("tts").setup({ ui_lang = "en" })
+```
 
 ## Screenshots
 
-| mdview (side) | music | imgbuf |
-|:--------------:|:-----:|:------:|
-| ![mdview](mdview/testdata/screenshots/1.png) | ![music](images/music.png) | ![imgbuf](images/imgbuf.png) |
+**mdview** (side)
 
-| Minesweeper | Sokoban | 24-point | Tetris |
-|:-----------:|:-------:|:--------:|:------:|
-| ![mine](images/mine.png) | ![sokoban](images/sokoban.png) | ![24](images/twentyfour.png) | ![tetris](images/tetris.png) |
+![mdview](mdview/testdata/screenshots/1.png)
 
-| drawbuf |
-|:-------:|
-| ![drawbuf](images/drawbuf.png) |
+**music**
 
-More mdview shots: [mdview/testdata/screenshots/](mdview/testdata/screenshots/) and demo [mdview/testdata/demo.md](mdview/testdata/demo.md).
+![music](images/music.png)
+
+**imgbuf**
+
+![imgbuf](images/imgbuf.png)
+
+**nvimgames** — Minesweeper
+
+![mine](images/mine.png)
+
+**nvimgames** — Sokoban
+
+![sokoban](images/sokoban.png)
+
+**nvimgames** — 24-point
+
+![24](images/twentyfour.png)
+
+**nvimgames** — Tetris
+
+![tetris](images/tetris.png)
+
+**drawbuf**
+
+![drawbuf](images/drawbuf.png)
+
+**pdfview** (PDF)
+
+![pdfview](images/pdfview-pdf.png)
+
+**tts**
+
+![tts](images/tts.png)
+
+**videobuf**
+
+![videobuf](images/videobuf.png)
+
+More mdview shots: [mdview/testdata/screenshots/](mdview/testdata/screenshots/) and demo [mdview/testdata/demo.md](mdview/testdata/demo.md).  
+TTS samples: [tts/testdata/](tts/testdata/) (`sample.zh.txt` / `sample.en.txt`).
 
 ## Dependencies (summary)
 
 | Plugin | Neovim | Other |
 |--------|--------|-------|
-| mdview | 0.9+ | Core needs nothing extra; block-character images need Pillow (or chafa); code highlight optional Tree-sitter; pixel HD needs a graphics-protocol terminal |
+| mdview | 0.9+ | Core needs nothing extra; block images need Pillow (or chafa); code highlight optional Tree-sitter; pixel HD needs a graphics-protocol terminal |
 | music | 0.9+ | Python3 + **just_playback** (or pygame fallback) |
+| videobuf | 0.9+ | Python3 + decode stack (see subdirectory) |
 | imgbuf | 0.9+ | chafa **or** Python3 + Pillow; HD needs WezTerm/Kitty/Ghostty + Pillow |
 | nvimgames | 0.9+ | `termguicolors`; Minesweeper benefits from `mouse=a`; Sokoban ships `data/levels.json` |
 | drawbuf | 0.9+ | `termguicolors`; `mouse=a` recommended |
+| pdfview | 0.9+ | PDF: PyMuPDF; DOCX: stdlib only; DOC: optional LibreOffice; images chafa/Pillow; HD: WezTerm/Kitty/Ghostty |
+| xlsview | 0.9+ | Python3 + **openpyxl** |
+| tts | 0.9+ | **Windows** + SAPI; Python3 + **pywin32** |
 
 ## Quick install
 
@@ -58,7 +116,7 @@ Do **not** mix whole-repo and per-plugin installs for the same plugins. Double-l
 
 Recommended when you want **all** sub-plugins. GitHub: [cfwang123/nvimplugins](https://github.com/cfwang123/nvimplugins).
 
-Root `plugin/nvimplugins.lua` adds each subfolder to `runtimepath` and sources their `plugin/` files.
+**Install is one line only** — no bootstrap in your init. After `plug#end()`, `require("imgbuf")` etc. work immediately (root `lua/*` proxies). Commands load via `plugin/nvimplugins.*` on startup.
 
 #### vim-plug
 
@@ -68,33 +126,23 @@ Plug 'cfwang123/nvimplugins'
 call plug#end()
 ```
 
-Then run **`:PlugInstall`** once (or after updates: `:PlugUpdate`).
+Then run **`:PlugInstall`** once (later: `:PlugUpdate`). Optional `require("…").setup({...})` lines are configuration only, not install.
 
-To enable only some plugins, set this **before** `plug#end()` (names match directory names):
+Optional subset (before load; names match directories):
 
 ```vim
-let g:nvimplugins_enable = ['mdview', 'music', 'imgbuf']
-call plug#begin()
-Plug 'cfwang123/nvimplugins'
-call plug#end()
+let g:nvimplugins_enable = ['mdview', 'music', 'imgbuf', 'tts']
 ```
+
+Default bundle: `mdview` · `music` · `imgbuf` · `videobuf` · `nvimgames` · `drawbuf` · `pdfview` · `xlsview` · `tts`.
 
 #### lazy.nvim
 
 ```lua
-{
-  "cfwang123/nvimplugins",
-  lazy = false,
-  -- optional subset (must apply before plugin load; or use init)
-  -- init = function()
-  --   vim.g.nvimplugins_enable = { "mdview", "music", "imgbuf" }
-  -- end,
-}
+{ "cfwang123/nvimplugins", lazy = false }
 ```
 
 ### Style B: per plugin (local path)
-
-Use when you only need a few plugins. Point `Plug` / `dir` at the cloned subfolders (or a local checkout).
 
 #### vim-plug
 
@@ -103,8 +151,12 @@ call plug#begin()
 Plug '/path/to/nvimplugins/mdview'
 Plug '/path/to/nvimplugins/music'
 Plug '/path/to/nvimplugins/imgbuf'
+Plug '/path/to/nvimplugins/videobuf'
 Plug '/path/to/nvimplugins/nvimgames'
 Plug '/path/to/nvimplugins/drawbuf'
+Plug '/path/to/nvimplugins/pdfview'
+Plug '/path/to/nvimplugins/xlsview'
+Plug '/path/to/nvimplugins/tts'
 call plug#end()
 ```
 
@@ -115,8 +167,12 @@ call plug#end()
   { dir = "/path/to/nvimplugins/mdview", name = "mdview", lazy = false },
   { dir = "/path/to/nvimplugins/music", name = "music", lazy = false },
   { dir = "/path/to/nvimplugins/imgbuf", name = "imgbuf", lazy = false },
+  { dir = "/path/to/nvimplugins/videobuf", name = "videobuf", lazy = false },
   { dir = "/path/to/nvimplugins/nvimgames", name = "nvimgames", lazy = false },
   { dir = "/path/to/nvimplugins/drawbuf", name = "drawbuf", lazy = false },
+  { dir = "/path/to/nvimplugins/pdfview", name = "pdfview", lazy = false },
+  { dir = "/path/to/nvimplugins/xlsview", name = "xlsview", lazy = false },
+  { dir = "/path/to/nvimplugins/tts", name = "tts", lazy = false },
 }
 ```
 
@@ -124,18 +180,19 @@ Per-plugin install details live in each subdirectory README (mdview has tiers �
 
 ### Optional `setup()` (per plugin)
 
-**All optional.** Loading the plugin applies defaults (commands / auto-open work without any `setup`). Call `require("…").setup({ ... })` only when you want to override options. Place it **after** the plugin is on `rtp` (e.g. after `plug#end()`).
+**All optional.** Loading the plugin applies defaults. Call `require("…").setup({ ... })` only to override options, **after** the plugin is on `rtp` (e.g. after `plug#end()`).
 
 ```lua
--- mdview — Markdown preview (see mdview/README for full options)
+-- mdview — Markdown preview
 require("mdview").setup({
   split_direction = "right",
   width = 0.45,
-  keys = { view = "<leader>mv", side = "<leader>ms" }, -- or false to disable
+  ui_lang = "auto", -- "auto" | "zh" | "en"; L in preview
+  keys = { view = "<leader>mv", side = "<leader>ms" },
   image = {
     mode = "thumb",
     python = "python",
-    float_hd = "always", -- pixel HD in float when terminal supports it
+    float_hd = "always",
   },
 })
 
@@ -144,26 +201,59 @@ require("music").setup({
   volume = 70,
   auto_open = true,
   auto_play = true,
-  toggle_key = "<M-m>", -- Alt+M show/hide
-  statusline_when_hidden = false,
+  toggle_key = "<M-m>",
+  ui_lang = "auto", -- Y toggles language; L = loop
   python = "python",
 })
 
--- imgbuf — image character art + optional HD overlay
+-- imgbuf — character art + optional HD
 require("imgbuf").setup({
-  backend = "auto", -- "auto" | "chafa" | "python"
-  mode = "block",   -- "block" | "half" | "braille"
-  scale = "fill",   -- "fill" | "fit"
-  hd = "always",    -- "always" | "never"
+  backend = "auto",
+  mode = "block",
+  scale = "fill",
+  hd = "always",
+  ui_lang = "auto", -- L
   auto_open = true,
 })
 
 -- nvimgames — mini-games
 require("nvimgames").setup({
-  mine = { difficulty = "beginner" }, -- beginner | intermediate | expert
+  lang = "auto", -- "auto" | "zh" | "en"
+  mine = { difficulty = "beginner" },
   sokoban = { remember_level = true },
   twentyfour = { solvable_only = true },
   tetris = { special_score = 1000 },
+})
+
+-- pdfview — PDF / Word
+require("pdfview").setup({
+  auto_open = true,
+  ui_lang = "auto", -- L
+  python = "python",
+  image = {
+    backend = "chafa",
+    open_with = "float",
+    float_hd = "always",
+  },
+})
+
+-- xlsview — Excel
+require("xlsview").setup({
+  auto_open = true,
+  ui_lang = "auto", -- L
+  python = "python",
+  max_rows = 500,
+  max_cols = 64,
+})
+
+-- tts — Windows SAPI speech
+require("tts").setup({
+  volume = 80,
+  rate = 0,
+  ui_lang = "auto", -- bar EN/中文 or L
+  keys_play = "<leader>vo", -- from cursor segment; press again to jump
+  keys_stop = "<leader>vs",
+  -- voice = "Huihui", -- optional default; float choice is remembered
 })
 
 -- drawbuf — Unicode block drawing
@@ -172,10 +262,24 @@ require("drawbuf").setup({
   height = 24,
   canvas_bg = "ffffff",
   statusline = true,
+  ui_lang = "auto", -- status [EN/中] or Y
 })
 ```
 
-Full option lists: each plugin’s README / `lua/*/init.lua` (mdview: `lua/mdview/config.lua`).
+Full option lists: each plugin’s README / `lua/*/config.lua` (or `init.lua`).
+
+## Quick commands / keys
+
+| Plugin | Command / key | Action |
+|--------|---------------|--------|
+| mdview | `<leader>mv` / `<leader>ms` · `L` | Single / side preview · language |
+| music | open audio · `<M-m>` · `Y` | Player · toggle UI · language |
+| imgbuf | open image · `L` | Preview · language |
+| nvimgames | `:NvimGames` · `u` in-game | Menu · language |
+| drawbuf | `:Draw` · `Y` | Canvas · language |
+| pdfview | open pdf/docx · `L` · `gh` | Preview · language · page HD |
+| xlsview | open xlsx · `n`/`p` · `L` | Preview · sheet · language |
+| tts | `<leader>vo` / `<leader>vs` · `L` | Play from cursor segment / stop · language |
 
 ## Doc index
 
@@ -183,9 +287,13 @@ Full option lists: each plugin’s README / `lua/*/init.lua` (mdview: `lua/mdvie
 |--------|-------|
 | mdview | [EN](mdview/README.md) · [中文](mdview/README.zh.md) · [demo](mdview/testdata/demo.md) · [screenshots](mdview/testdata/screenshots/) |
 | music | [EN](music/README.md) · [中文](music/README.zh.md) |
+| videobuf | [EN](videobuf/README.md) · [中文](videobuf/README.zh.md) · [design](videobuf/DESIGN.zh.md) |
 | imgbuf | [EN](imgbuf/README.md) · [中文](imgbuf/README.zh.md) |
 | nvimgames | [EN](nvimgames/README.md) · [中文](nvimgames/README.zh.md) |
 | drawbuf | [EN](drawbuf/README.md) · [中文](drawbuf/README.zh.md) |
+| pdfview | [EN](pdfview/README.md) · [中文](pdfview/README.zh.md) |
+| xlsview | [EN](xlsview/README.md) · [中文](xlsview/README.zh.md) |
+| tts | [EN](tts/README.md) · [中文](tts/README.zh.md) · [samples](tts/testdata/) |
 
 ## License / notes
 

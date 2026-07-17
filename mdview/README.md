@@ -252,6 +252,7 @@ With side open, switching to another **markdown** buffer in the same tab follows
 | `go` | Top TOC in document |
 | `t` | TOC float |
 | `<C-o>` | Back: in-doc jump → previous md preview |
+| `L` | Toggle Chinese / English UI (hint bar, help, Copy labels; persisted) |
 | `?` | Help float |
 
 ## Config notes

@@ -1,6 +1,7 @@
 ---@mod nvimgames.tetris 俄罗斯方块（特殊★ / 人机对战垃圾攻击）
 local M = {}
 
+local i18n = require("nvimgames.i18n")
 local ns = vim.api.nvim_create_namespace("nvimgames_tetris")
 local state_by_buf = {} ---@type table<integer, table>
 local hl_ready = false
@@ -79,7 +80,22 @@ local SHAPES = {
 
 -- 画面箭头：明确表示当前朝向（占 2 显示列）
 local SPECIAL_ARROWS = { [0] = "↓ ", [1] = "← ", [2] = "↑ ", [3] = "→ " }
-local SPECIAL_DIR_NAME = { [0] = "下", [1] = "左", [2] = "上", [3] = "右" }
+local function special_dir_name(rot)
+  local keys = {
+    [0] = "tetris_dir_down",
+    [1] = "tetris_dir_left",
+    [2] = "tetris_dir_up",
+    [3] = "tetris_dir_right",
+  }
+  return i18n.t(keys[rot] or "tetris_dir_down")
+end
+
+local function side_label(side)
+  if side.is_ai then
+    return i18n.t("tetris_label_ai")
+  end
+  return i18n.t("tetris_label_you")
+end
 
 local BAG_KINDS = { "I", "O", "T", "S", "Z", "J", "L" }
 
@@ -490,7 +506,7 @@ local function finish_lock(sess, side, special_filled, from_special)
     side.lines = side.lines + cleared
     add_score(side, score_for_lines(cleared, side.level or 1))
     side.level = 1 + math.floor(side.lines / (config.lines_per_level or 10))
-    sess.message = string.format("  %s 消除 %d 行！", side.label, cleared)
+    sess.message = i18n.tf("tetris_cleared", side_label(side), cleared)
   end
 
   if special_filled > 0 then
@@ -504,13 +520,13 @@ local function finish_lock(sess, side, special_filled, from_special)
     local opp = other_side(sess, side)
     if g > 0 and opp and not opp.game_over then
       opp.pending_garbage = (opp.pending_garbage or 0) + g
-      sess.message = string.format(
-        "  %s 清 %d（行%d+填%d）→ 惩罚 %s %d 行垃圾",
-        side.label,
+      sess.message = i18n.tf(
+        "tetris_punish",
+        side_label(side),
         punish,
         cleared,
         special_filled,
-        opp.label,
+        side_label(opp),
         g
       )
     end
@@ -521,7 +537,7 @@ local function finish_lock(sess, side, special_filled, from_special)
     local g = side.pending_garbage
     side.pending_garbage = 0
     inject_garbage(side, g)
-    sess.message = string.format("  %s 遭受 %d 行垃圾干扰！", side.label, g)
+    sess.message = i18n.tf("tetris_garbage", side_label(side), g)
   end
 
   -- 特殊块：下落+填充/消除全部完成后，特殊计分从 0 重新开始
@@ -543,20 +559,20 @@ local function finish_lock(sess, side, special_filled, from_special)
     if p.game_over and not a.game_over then
       sess.winner = "ai"
       sess.game_over = true
-      sess.message = "  电脑获胜！按 r 再战  m 单人  q 退出"
+      sess.message = i18n.t("tetris_ai_win")
     elseif a.game_over and not p.game_over then
       sess.winner = "player"
       sess.game_over = true
-      sess.message = "  你赢了！按 r 再战  m 单人  q 退出"
+      sess.message = i18n.t("tetris_you_win")
     elseif p.game_over and a.game_over then
       sess.winner = "draw"
       sess.game_over = true
-      sess.message = "  双双出局… 按 r 再战"
+      sess.message = i18n.t("tetris_draw")
     end
   else
     if side.game_over then
       sess.game_over = true
-      sess.message = "  ★ GAME OVER  按 r 重开  v 人机  q 退出"
+      sess.message = i18n.t("tetris_over")
     end
   end
 end
@@ -580,10 +596,10 @@ local function start_special_fill_anim(sess, side, hit)
     side.board[board_idx(hit.x, hit.y)] = "X:" .. tostring(rot)
   end
 
-  local dname = SPECIAL_DIR_NAME[rot] or "下"
+  local dname = special_dir_name(rot)
   if rot == 2 then
     -- 向上：仅 1 格，无填充动画
-    sess.message = string.format("  %s 特殊↑ 仅 1 格（不能向上填充）", side.label)
+    sess.message = i18n.tf("tetris_special_up", side_label(side))
     finish_lock(sess, side, 0, true)
     if sess.buf and vim.api.nvim_buf_is_valid(sess.buf) then
       render(sess.buf)
@@ -591,8 +607,8 @@ local function start_special_fill_anim(sess, side, hit)
     return
   end
 
-  local axis = (rot == 0) and "下方列" or "侧向行"
-  sess.message = string.format("  %s 特殊%s 填充%s前方…", side.label, dname, axis)
+  local axis = (rot == 0) and i18n.t("tetris_axis_col") or i18n.t("tetris_axis_row")
+  sess.message = i18n.tf("tetris_special_fill", side_label(side), dname, axis)
 
   if #cells == 0 then
     finish_lock(sess, side, 0, true)
@@ -635,13 +651,7 @@ local function start_special_fill_anim(sess, side, hit)
       end
       local c = cells[idx]
       side.board[board_idx(c.x, c.y)] = "F"
-      sess.message = string.format(
-        "  %s 特殊%s 填格 %d/%d",
-        side.label,
-        dname,
-        idx,
-        #cells
-      )
+      sess.message = i18n.tf("tetris_special_cell", side_label(side), dname, idx, #cells)
       if sess.buf and vim.api.nvim_buf_is_valid(sess.buf) then
         render(sess.buf)
       end
@@ -1089,7 +1099,7 @@ local function paint_next_preview(kind)
 
   local lines = {}
   -- 顶边固定显示宽 PREVIEW_BOX_W：┌──下一──┐
-  local label = "下一"
+  local label = i18n.t("tetris_next")
   local lab_w = vim.fn.strwidth(label)
   local pad = math.max(0, PREVIEW_INNER_W - lab_w)
   local pad_l = math.floor(pad / 2)
@@ -1158,37 +1168,29 @@ render = function(buf)
   ensure_hl()
 
   local p = sess.player
-  local mode_tag = sess.versus and "人机对战" or "单人"
+  local mode_tag = sess.versus and i18n.t("tetris_mode_versus") or i18n.t("tetris_mode_solo")
   local need = config.special_score or 1000
   local function special_meter_text(side)
     if side.special_ready or (side.piece and side.piece.kind == "X") or side.special_lock or side.animating then
-      return "就绪/使用中"
+      return i18n.t("tetris_special_ready")
     end
     return string.format("%d/%d", side.special_progress or 0, need)
   end
-  local title = string.format(
-    "  俄罗斯方块 [%s]  你:%d分/%d行 特殊↓:%s  ",
-    mode_tag,
-    p.score,
-    p.lines,
-    special_meter_text(p)
-  )
+  local title = i18n.tf("tetris_title", mode_tag, p.score, p.lines, special_meter_text(p))
   if sess.versus and sess.ai then
     title = title
-      .. string.format(
-        "电脑:%d分 特殊:%s 待攻你/它:%d/%d  ",
+      .. i18n.tf(
+        "tetris_title_ai",
         sess.ai.score,
         special_meter_text(sess.ai),
         p.pending_garbage or 0,
         sess.ai.pending_garbage or 0
       )
   else
-    title = title .. string.format("级:%d  ", p.level)
+    title = title .. i18n.tf("tetris_title_level", p.level)
   end
 
-  local help = sess.versus
-      and "  hjkl移动 空格硬降 z/x转  p暂停  r重开  m单人  q退出 | 消越多罚越重 "
-    or "  hjkl移动 空格硬降 z/x转  p暂停  r重开  v人机  q退出  "
+  local help = sess.versus and i18n.t("tetris_help_vs") or i18n.t("tetris_help")
 
   local out = { title, "" }
   ---@type {row:integer,col:integer,end_col:integer,hl:string}[]
@@ -1247,11 +1249,11 @@ render = function(buf)
     local mid = " │ "
 
     -- 标题行：你 [空对齐预览宽] | 电脑
-    local head = pad_line(" 你", board_w)
+    local head = pad_line(i18n.t("tetris_you"), board_w)
       .. gap
       .. pad_line("", prev_w)
       .. mid
-      .. pad_line(" 电脑", board_w)
+      .. pad_line(i18n.t("tetris_ai"), board_w)
       .. gap
       .. pad_line("", prev_w)
     table.insert(out, head)
@@ -1301,7 +1303,7 @@ render = function(buf)
     end
   else
     -- 单人：场地 | 4×4 下一
-    local head = pad_line(" 你", board_w) .. "  " .. pad_line("", prev_w)
+    local head = pad_line(i18n.t("tetris_you"), board_w) .. "  " .. pad_line("", prev_w)
     table.insert(out, head)
     table.insert(marks, { row = #out - 1, col = 0, end_col = #head, hl = "TetrisHint" })
     emit_side_by_side(b1, m1, n1_lines, n1_marks, board_w, prev_w, "  ")
@@ -1310,7 +1312,7 @@ render = function(buf)
   table.insert(out, "")
   local msg = sess.message or ""
   if sess.paused then
-    msg = "  已暂停  按 p 继续"
+    msg = i18n.t("tetris_paused")
   end
   table.insert(out, msg)
   local mhl = "TetrisHint"
@@ -1326,6 +1328,10 @@ render = function(buf)
   table.insert(marks, { row = #out - 1, col = 0, end_col = #msg, hl = mhl })
   table.insert(out, help)
   table.insert(marks, { row = #out - 1, col = 0, end_col = #help, hl = "TetrisStatus" })
+  local lang_line = " " .. i18n.t("tetris_btn_lang") .. " "
+  table.insert(out, lang_line)
+  table.insert(marks, { row = #out - 1, col = 0, end_col = #lang_line, hl = "TetrisStatus" })
+  sess.lang_row = #out -- 1-based for mouse.line
 
   vim.bo[buf].modifiable = true
   vim.api.nvim_buf_clear_namespace(buf, ns, 0, -1)
@@ -1446,21 +1452,18 @@ local function new_game(sess, versus)
   sess.game_over = false
   sess.winner = nil
   sess.shared_seq = {} -- 对战共用出块序列
-  sess.player = make_side("你", false)
+  sess.player = make_side(i18n.t("tetris_label_you"), false)
   if sess.versus then
-    sess.ai = make_side("电脑", true)
+    sess.ai = make_side(i18n.t("tetris_label_ai"), true)
     -- 先保证共享序列足够，再双方各自从同一序列起点取块
     ensure_shared_seq(sess, 14)
     reset_side(sess, sess.player)
     reset_side(sess, sess.ai)
-    sess.message = "  人机对战！双方方块顺序相同；消越多罚越重；右侧显示下一块"
+    sess.message = i18n.t("tetris_start_versus")
   else
     sess.ai = nil
     reset_side(sess, sess.player)
-    sess.message = string.format(
-      "  单人  每 %d 分出 1 个特殊↓（用完后重新计分）  右侧=下一  v 人机",
-      config.special_score or 1000
-    )
+    sess.message = i18n.tf("tetris_start_solo", config.special_score or 1000)
   end
 end
 
@@ -1600,9 +1603,9 @@ function M.open(opts)
     s.paused = not s.paused
     if s.paused then
       stop_timer(s)
-      s.message = "  已暂停  按 p 继续"
+      s.message = i18n.t("tetris_paused")
     else
-      s.message = "  继续"
+      s.message = i18n.t("tetris_resume")
       start_timers(s, buf)
     end
   end, "pause")
@@ -1628,18 +1631,58 @@ function M.open(opts)
     pcall(vim.cmd, "bdelete!")
   end, "quit")
 
-  map("?", function(s)
-    vim.notify(
-      "俄罗斯方块\n"
-        .. "操作: hjkl/方向  空格硬降  z/x 旋转  p 暂停  r 重开  q 退出\n"
-        .. "v 人机对战  m 单人\n"
-        .. "对战: 惩罚=三角数(清行+特殊格)，2→1 3→3 4→6 5→10…；对方落地后顶入垃圾\n"
-        .. "特殊↓←↑→: 箭头=朝向；↓填下 ←→填侧；↑仅1格；每 "
-        .. tostring(config.special_score or 1000)
-        .. " 分 1 个，落地消除后重新计分",
-      vim.log.levels.INFO
-    )
+  map("u", function(s)
+    i18n.toggle()
+    s.message = i18n.t("lang_switched")
+    if s.player then
+      s.player.label = i18n.t("tetris_label_you")
+    end
+    if s.ai then
+      s.ai.label = i18n.t("tetris_label_ai")
+    end
+  end, "lang")
+  map("U", function(s)
+    i18n.toggle()
+    s.message = i18n.t("lang_switched")
+    if s.player then
+      s.player.label = i18n.t("tetris_label_you")
+    end
+    if s.ai then
+      s.ai.label = i18n.t("tetris_label_ai")
+    end
+  end, "lang")
+
+  map("?", function()
+    vim.notify(i18n.t("tetris_help_box"), vim.log.levels.INFO)
   end, "help")
+
+  if vim.o.mouse == "" then
+    vim.o.mouse = "a"
+  end
+  vim.keymap.set("n", "<LeftMouse>", function()
+    local s = state_by_buf[buf]
+    if not s or not s.lang_row then
+      return
+    end
+    local mp = vim.fn.getmousepos()
+    local w = vim.fn.bufwinid(buf)
+    if w == -1 or mp.winid ~= w then
+      return
+    end
+    if mp.line == s.lang_row then
+      i18n.toggle()
+      s.message = i18n.t("lang_switched")
+      if s.player then
+        s.player.label = i18n.t("tetris_label_you")
+      end
+      if s.ai then
+        s.ai.label = i18n.t("tetris_label_ai")
+      end
+      if vim.api.nvim_buf_is_valid(buf) then
+        render(buf)
+      end
+    end
+  end, { buffer = buf, silent = true, nowait = true })
 
   vim.api.nvim_create_autocmd("BufWipeout", {
     buffer = buf,

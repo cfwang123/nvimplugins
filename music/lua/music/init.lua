@@ -47,6 +47,8 @@ local default_config = {
   toggle_key = "<M-m>", -- Alt+M
   statusline_when_hidden = false, -- 隐藏 UI 时显示 [歌名,1:22/3:33]
   python = "python",
+  --- 界面语言："auto" | "zh" | "en"；Y 切换（L 为单曲循环）
+  ui_lang = "auto",
 }
 
 local config = vim.deepcopy(default_config)
@@ -659,14 +661,15 @@ local function progress_segments(pos, dur, width)
 end
 
 local function status_label(status)
+  local i18n = require("music.i18n")
   if status == "playing" then
-    return "播放中", "MusicStatusPlay"
+    return i18n.t("playing"), "MusicStatusPlay"
   elseif status == "paused" then
-    return "已暂停", "MusicStatusPause"
+    return i18n.t("paused"), "MusicStatusPause"
   elseif status == "stopped" then
-    return "已停止", "MusicStatusStop"
+    return i18n.t("stopped"), "MusicStatusStop"
   end
-  return "就绪", "MusicMeta"
+  return i18n.t("idle"), "MusicMeta"
 end
 
 local function norm_path(p)
@@ -742,10 +745,11 @@ local function build_ui(buf, st)
 
   ---Current lyric line(s) with karaoke progress (CN+EN same timestamp → 2 lines).
   local function push_current_lyrics()
+    local i18n = require("music.i18n")
     local texts, progress = lyrics.get_current_display(pos)
     if not texts or #texts == 0 then
       local L = new_line()
-      L:gap(1):add("(无歌词)", "MusicLyricRest")
+      L:gap(1):add(i18n.t("no_lyrics"), "MusicLyricRest")
       push(L)
       return
     end
@@ -768,33 +772,36 @@ local function build_ui(buf, st)
 
   -- 操作行：上一首PgUp, 暂停Space, ... 列表f, q关闭（无方括号，逗号分隔，可点击）
   local function push_primary_btns()
+    local i18n = require("music.i18n")
     local L = new_line()
     L:gap(1)
-    L:btn("上一首", "PgUp", "MusicBtn", "prev")
+    L:btn(i18n.t("prev"), "PgUp", "MusicBtn", "prev")
     L:sep(", ")
     if playing then
-      L:btn("暂停", "Space", "MusicBtn", "toggle")
+      L:btn(i18n.t("pause"), "Space", "MusicBtn", "toggle")
     else
-      L:btn("播放", "Space", "MusicBtn", "toggle")
+      L:btn(i18n.t("play"), "Space", "MusicBtn", "toggle")
     end
     L:sep(", ")
-    L:btn("下一首", "PgDn", "MusicBtn", "next")
+    L:btn(i18n.t("next"), "PgDn", "MusicBtn", "next")
     L:sep(", ")
-    L:btn("停止", "x", "MusicBtn", "stop")
+    L:btn(i18n.t("stop"), "x", "MusicBtn", "stop")
     L:sep(", ")
     if pst.loop then
-      L:btn("循环:开", "L", "MusicBtnLoopOn", "loop")
+      L:btn(i18n.t("loop_on"), "L", "MusicBtnLoopOn", "loop")
     else
-      L:btn("循环:关", "L", "MusicBtnLoopOff", "loop")
+      L:btn(i18n.t("loop_off"), "L", "MusicBtnLoopOff", "loop")
     end
     L:sep(", ")
-    L:btn("重播", "r", "MusicBtn", "restart")
+    L:btn(i18n.t("restart"), "r", "MusicBtn", "restart")
     L:sep(", ")
-    L:btn("歌词", "g", "MusicBtn", "lyrics")
+    L:btn(i18n.t("lyrics"), "g", "MusicBtn", "lyrics")
     L:sep(", ")
-    L:btn("列表", "f", "MusicBtn", "playlist")
+    L:btn(i18n.t("list"), "f", "MusicBtn", "playlist")
     L:sep(", ")
-    L:btn("关闭", "q", "MusicBtn", "close")
+    L:btn(i18n.t("lang"), "Y", "MusicBtn", "lang")
+    L:sep(", ")
+    L:btn(i18n.t("close"), "q", "MusicBtn", "close")
     push(L)
   end
 
@@ -813,7 +820,7 @@ local function build_ui(buf, st)
       :add("/", "MusicMeta")
       :add(fmt_time(dur), "MusicTime")
       :gap(2)
-      :add(string.format("音量%d%%", pst.volume or config.volume), "MusicMeta")
+      :add(string.format("%s%d%%", require("music.i18n").t("volume"), pst.volume or config.volume), "MusicMeta")
       :gap(2)
       :add(string.format("%d/%d", st.index, #st.siblings), "MusicMeta")
     push(L)
@@ -1043,7 +1050,7 @@ local function seek_from_hit(buf, st, hit, col)
   local pst = player.get_state()
   local dur = pst.duration
   if not dur or dur <= 0 then
-    vim.notify("music: 未知时长，无法跳转", vim.log.levels.WARN)
+    vim.notify(require("music.i18n").t("no_duration"), vim.log.levels.WARN)
     return
   end
   local bar_d0 = hit.bar_d0 or hit.d0
@@ -1084,7 +1091,8 @@ local function run_action(buf, st, action, hit, col)
     render(buf)
   elseif action == "loop" then
     local on = player.set_loop()
-    vim.notify("music: 单曲循环 " .. (on and "开" or "关"), vim.log.levels.INFO)
+    local i18n = require("music.i18n")
+    vim.notify(on and i18n.t("loop_notify_on") or i18n.t("loop_notify_off"), vim.log.levels.INFO)
     render(buf)
   elseif action == "restart" then
     player.play(st.path, 0)
@@ -1095,6 +1103,8 @@ local function run_action(buf, st, action, hit, col)
     M.toggle_lyrics()
   elseif action == "playlist" then
     M.toggle_playlist()
+  elseif action == "lang" then
+    M.toggle_ui_lang(buf)
   elseif action == "seek" then
     seek_from_hit(buf, st, hit, col)
   end
@@ -1162,7 +1172,7 @@ function M.toggle_playlist()
   local buf = active_buf
   local st = buf and state_by_buf[buf]
   if not st then
-    vim.notify("music: 没有播放中的曲目", vim.log.levels.INFO)
+    vim.notify(require("music.i18n").t("no_playing"), vim.log.levels.INFO)
     return
   end
   local mwin = music_win_of(buf)
@@ -1628,9 +1638,13 @@ local function bind(buf)
   end), "music: restart")
   map("L", function()
     local on = player.set_loop()
-    vim.notify("music: 单曲循环 " .. (on and "开" or "关"), vim.log.levels.INFO)
+    local i18n = require("music.i18n")
+    vim.notify(on and i18n.t("loop_notify_on") or i18n.t("loop_notify_off"), vim.log.levels.INFO)
     paint(buf)
   end, "music: loop")
+  map("Y", function()
+    M.toggle_ui_lang(buf)
+  end, "music: toggle UI language")
   map("g", function()
     M.toggle_lyrics()
   end, "music: toggle lyrics")
@@ -1882,11 +1896,11 @@ function M.open(path, opts)
   path = vim.fn.expand(path or "")
   path = vim.fn.fnamemodify(path, ":p")
   if path == "" or vim.fn.filereadable(path) ~= 1 then
-    vim.notify("music: 文件不存在: " .. tostring(path), vim.log.levels.ERROR)
+    vim.notify(require("music.i18n").t("not_found") .. tostring(path), vim.log.levels.ERROR)
     return nil
   end
   if not is_audio(path) then
-    vim.notify("music: 不是支持的音频: " .. path, vim.log.levels.WARN)
+    vim.notify(require("music.i18n").t("not_audio") .. path, vim.log.levels.WARN)
   end
 
   local existing_win, existing_buf = find_music_win()
@@ -2065,7 +2079,7 @@ function M.show_ui()
     })
   end
 
-  vim.notify("music: 没有可恢复的播放记录（先打开音频文件）", vim.log.levels.INFO)
+  vim.notify(require("music.i18n").t("no_session"), vim.log.levels.INFO)
   return nil
 end
 
@@ -2200,9 +2214,39 @@ local function scrub_all_music_winhl()
   end
 end
 
+---切换中/英文界面
+---@param buf? integer
+function M.toggle_ui_lang(buf)
+  local i18n = require("music.i18n")
+  local next_lang = i18n.toggle()
+  i18n.save_prefs()
+  if next_lang == "en" then
+    vim.notify(i18n.t("lang_to_en"), vim.log.levels.INFO)
+  else
+    vim.notify(i18n.t("lang_to_zh"), vim.log.levels.INFO)
+  end
+  buf = buf or active_buf
+  if buf and vim.api.nvim_buf_is_valid(buf) then
+    paint(buf)
+  end
+end
+
 ---@param user? MusicConfig
 function M.setup(user)
   config = vim.tbl_deep_extend("force", default_config, user or {})
+  local i18n = require("music.i18n")
+  local remembered = i18n.load_prefs()
+  local lang_opt = config.ui_lang
+  if user and (user.ui_lang == "zh" or user.ui_lang == "en" or user.ui_lang == "auto") then
+    lang_opt = user.ui_lang
+  elseif remembered then
+    lang_opt = remembered
+  end
+  if lang_opt == "zh" or lang_opt == "en" then
+    i18n.setup(lang_opt)
+  else
+    i18n.setup("auto")
+  end
   rebuild_ext()
   player.setup({
     backend = config.backend,

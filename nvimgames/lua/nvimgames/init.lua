@@ -2,6 +2,7 @@
 local M = {}
 
 local default_config = {
+  lang = "auto", ---@type "zh"|"en"|"auto"
   mine = {},
   sokoban = {},
   twentyfour = {},
@@ -10,9 +11,15 @@ local default_config = {
 
 local config = vim.deepcopy(default_config)
 
----@param user? { mine?: table, sokoban?: table, twentyfour?: table, tetris?: table }
+---@param user? { lang?: "zh"|"en"|"auto", mine?: table, sokoban?: table, twentyfour?: table, tetris?: table }
 function M.setup(user)
   config = vim.tbl_deep_extend("force", default_config, user or {})
+  local i18n = require("nvimgames.i18n")
+  if config.lang == "zh" or config.lang == "en" then
+    i18n.setup(config.lang)
+  else
+    i18n.setup(nil)
+  end
   require("nvimgames.mine").setup(config.mine)
   require("nvimgames.sokoban").setup(config.sokoban)
   require("nvimgames.twentyfour").setup(config.twentyfour)
@@ -42,6 +49,12 @@ end
 
 function M.config()
   return config
+end
+
+function M.toggle_lang()
+  local i18n = require("nvimgames.i18n")
+  i18n.toggle()
+  return i18n.get()
 end
 
 return M

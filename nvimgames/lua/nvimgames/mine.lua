@@ -1,6 +1,8 @@
 ---@mod nvimgames.mine Windows-style Minesweeper for Neovim
 local M = {}
 
+local i18n = require("nvimgames.i18n")
+
 ---@class MineDifficulty
 ---@field name string
 ---@field cols number
@@ -12,9 +14,9 @@ local M = {}
 ---@field difficulties table<string, MineDifficulty>
 
 local DIFFICULTIES = {
-  beginner = { name = "初级", cols = 9, rows = 9, mines = 10 },
-  intermediate = { name = "中级", cols = 16, rows = 16, mines = 40 },
-  expert = { name = "高级", cols = 30, rows = 16, mines = 99 },
+  beginner = { name_key = "mine_diff_beginner", cols = 9, rows = 9, mines = 10 },
+  intermediate = { name_key = "mine_diff_intermediate", cols = 16, rows = 16, mines = 40 },
+  expert = { name_key = "mine_diff_expert", cols = 30, rows = 16, mines = 99 },
 }
 
 local default_config = {
@@ -26,6 +28,17 @@ local config = vim.deepcopy(default_config)
 local ns = vim.api.nvim_create_namespace("mine")
 local state_by_buf = {} ---@type table<integer, table>
 local hl_ready = false
+
+local function get_diff_label(id)
+  local d = (config.difficulties and config.difficulties[id]) or DIFFICULTIES[id]
+  if d and d.name_key then
+    return i18n.t(d.name_key)
+  end
+  if d and d.name then
+    return d.name
+  end
+  return id
+end
 
 -- Classic Windows Minesweeper number colors
 local NUM_COLORS = {
@@ -276,7 +289,7 @@ local function new_game(st, diff_key)
   st.cols = d.cols
   st.rows = d.rows
   st.mines = d.mines
-  st.diff_name = d.name
+  st.diff_name = get_diff_label(diff_key)
   local total = st.cols * st.rows
   st.mine = {}
   st.count = {}
@@ -405,19 +418,26 @@ local function render(buf)
   end
   table.insert(lines, bot)
 
+  local dname = get_diff_label(st.diff_key or config.difficulty)
+  st.diff_name = dname
   local status
   if st.status == "won" then
-    status = " 状态: 胜利！点击 🙂 再来一局"
+    status = i18n.t("mine_won")
   elseif st.status == "lost" then
-    status = " 状态: 踩雷… 点击 🙂 重开"
+    status = i18n.t("mine_lost")
   elseif st.status == "ready" then
-    status = string.format(" %s %dx%d  雷:%d  | 左键开 右键旗  中键/双键:弦开  1/2/3难度  q退出", st.diff_name, st.cols, st.rows, st.mines)
+    status = i18n.tf("mine_ready", dname, st.cols, st.rows, st.mines)
   else
-    status = string.format(" %s  剩余雷:%d  用时:%ds  | 左键开 右键旗  q退出", st.diff_name, st.mines - count_flags(st), st.seconds)
+    status = i18n.tf("mine_playing", dname, st.mines - count_flags(st), st.seconds)
   end
   table.insert(lines, "")
   table.insert(lines, status)
-  table.insert(lines, " [初级] [中级] [高级]   [重开]")
+  local b1 = i18n.t("mine_diff_beginner")
+  local b2 = i18n.t("mine_diff_intermediate")
+  local b3 = i18n.t("mine_diff_expert")
+  local br = i18n.t("restart")
+  local bl = vim.trim(i18n.t("lang_btn"))
+  table.insert(lines, i18n.tf("mine_footer", b1, b2, b3, br, bl))
 
   vim.bo[buf].modifiable = true
   vim.api.nvim_buf_clear_namespace(buf, ns, 0, -1)
@@ -543,7 +563,12 @@ local function render(buf)
     hl_group = "MineStatus",
     hl_mode = "combine",
   })
-  for _, label in ipairs({ "初级", "中级", "高级", "重开" }) do
+  local b1 = i18n.t("mine_diff_beginner")
+  local b2 = i18n.t("mine_diff_intermediate")
+  local b3 = i18n.t("mine_diff_expert")
+  local br = i18n.t("restart")
+  local bl = vim.trim(i18n.t("lang_btn"))
+  for _, label in ipairs({ b1, b2, b3, br, bl }) do
     mark_sub(foot2, fl, label, "MineBtn")
   end
 
@@ -551,21 +576,19 @@ local function render(buf)
   st.footer_row = foot2 + 1 -- 1-based line number
   st.footer_hits = {}
   local function add_hit(id, label)
-    local dstart = vim.fn.strdisplaywidth(fl:sub(1, (fl:find(label, 1, true) or 1) - 1)) + 1
-    local dend = dstart + vim.fn.strdisplaywidth(label) - 1
-    -- find by byte then convert carefully
     local bi = fl:find(label, 1, true)
     if bi then
       local prefix = fl:sub(1, bi - 1)
-      dstart = vim.fn.strwidth(prefix) + 1
-      dend = dstart + vim.fn.strwidth(label) - 1
+      local dstart = vim.fn.strwidth(prefix) + 1
+      local dend = dstart + vim.fn.strwidth(label) - 1
       table.insert(st.footer_hits, { id = id, c0 = dstart, c1 = dend })
     end
   end
-  add_hit("beginner", "初级")
-  add_hit("intermediate", "中级")
-  add_hit("expert", "高级")
-  add_hit("restart", "重开")
+  add_hit("beginner", b1)
+  add_hit("intermediate", b2)
+  add_hit("expert", b3)
+  add_hit("restart", br)
+  add_hit("lang", bl)
 
   vim.bo[buf].modifiable = false
   vim.bo[buf].modified = false
@@ -887,11 +910,18 @@ function M.open(opts)
   map("3", function(s)
     restart(s, buf, "expert")
   end, "expert")
+  map("u", function(s)
+    i18n.toggle()
+    s.diff_name = get_diff_label(s.diff_key or config.difficulty)
+    render(buf)
+  end, "lang")
+  map("U", function(s)
+    i18n.toggle()
+    s.diff_name = get_diff_label(s.diff_key or config.difficulty)
+    render(buf)
+  end, "lang")
   map("?", function()
-    vim.notify(
-      "扫雷 Mine\n左键:开格  右键:插旗  中键:弦开\n1/2/3:初/中/高  r:重开  hjkl:选择  空格:开  m:旗  c:弦  q:退出",
-      vim.log.levels.INFO
-    )
+    vim.notify(i18n.t("mine_help"), vim.log.levels.INFO)
   end, "help")
   map("h", function(s)
     s.sel_x = clamp((s.sel_x or 1) - 1, 1, s.cols)
@@ -987,6 +1017,12 @@ function M.open(opts)
     end
     if fid == "restart" then
       restart(st, buf)
+      return ""
+    end
+    if fid == "lang" then
+      i18n.toggle()
+      st.diff_name = get_diff_label(st.diff_key or config.difficulty)
+      render(buf)
       return ""
     end
 
