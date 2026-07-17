@@ -58,17 +58,22 @@ function M.parse_inlines(text, cfg)
         push_text("`")
         i = i + 1
       end
-    -- <font color/style>…</font>
-    elseif c == "<" and (cfg.html == nil or cfg.html.font ~= false) and html.is_font_open_at(text, i) then
-      local next_i, font_sp = html.parse_font_at(text, i)
-      if next_i and font_sp then
-        spans[#spans + 1] = font_sp
-        i = next_i
+    -- <font color/style>…</font>；其它 `<`（如 <500ms、<etag>）必须前进，否则会死循环
+    elseif c == "<" then
+      if (cfg.html == nil or cfg.html.font ~= false) and html.is_font_open_at(text, i) then
+        local next_i, font_sp = html.parse_font_at(text, i)
+        if next_i and font_sp then
+          spans[#spans + 1] = font_sp
+          i = next_i
+        else
+          push_text("<")
+          i = i + 1
+        end
       else
         push_text("<")
         i = i + 1
       end
-    -- 图片 ![alt](url)
+    -- 图片 ![alt](url)；单独的 `!`（如 !=、!flag）必须前进，否则会死循环
     elseif two == "![" then
       local close = text:find("%]", i + 2)
       if close and text:sub(close + 1, close + 1) == "(" then
@@ -86,6 +91,9 @@ function M.parse_inlines(text, cfg)
         push_text("!")
         i = i + 1
       end
+    elseif c == "!" then
+      push_text("!")
+      i = i + 1
     -- 链接 [text](url)
     elseif c == "[" then
       local close = text:find("%]", i + 1)
@@ -180,7 +188,7 @@ function M.parse_inlines(text, cfg)
         i = i + 1
       end
     else
-      -- 连续普通文本
+      -- 连续普通文本（在 special 字符前停下，交由上面分支处理）
       local k = i
       while k <= n do
         local ch = text:sub(k, k)
@@ -191,8 +199,14 @@ function M.parse_inlines(text, cfg)
         end
         k = k + 1
       end
-      push_text(text:sub(i, k - 1))
-      i = k
+      if k > i then
+        push_text(text:sub(i, k - 1))
+        i = k
+      else
+        -- 兜底：未知/未消费字符也前进，避免死循环
+        push_text(c)
+        i = i + 1
+      end
     end
   end
 
