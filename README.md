@@ -2,7 +2,7 @@
 
 **English** | [中文](README.zh.md)
 
-> **About** — Small experimental Neovim plugins: **mdview** (Markdown preview), **pdfview** / **xlsview** (document previews), **tts** (Windows SAPI speech), **imgbuf** (images), **music** (audio + Windows MIDI), **nvimgames** (mini-games), **drawbuf** (block drawing), **videobuf** (video), **es** (Everything file search), **qrbuf** (QR codes), **httpbuf** (HTTP scratch), **weather** (forecast). Each plugin installs independently; no hard dependencies.
+> **About** — Small experimental Neovim plugins: **mdview** (Markdown preview), **pdfview** / **xlsview** (document previews), **tts** (Windows SAPI speech), **imgbuf** (images), **music** (audio + Windows MIDI), **nvimgames** (mini-games), **drawbuf** (block drawing), **videobuf** (video), **es** (Everything file search), **qrbuf** (QR codes), **httpbuf** (HTTP scratch), **weather** (forecast), **ntemoji** (NERDTree emoji icons). Each plugin installs independently; no hard dependencies.
 
 Focused on fun, practical, low-dependency terminal tooling. Most UIs support **Chinese / English** (default: follow system language; preference is remembered).
 
@@ -19,7 +19,7 @@ Focused on fun, practical, low-dependency terminal tooling. Most UIs support **C
 |--------|----------|------|
 | **[mdview](mdview/)** | Markdown preview: single-window (`:MdView`) or side-by-side (`:MdSideView`). Headings/lists/GFM tables/code, TOC, anchors, block-character images, optional terminal HD. **`L`** toggles UI language. | [EN](mdview/README.md) · [中文](mdview/README.zh.md) |
 | **[pdfview](pdfview/)** | PDF / Word preview: text styles, tables, chafa images; Enter/click float HD; `gh` temporary page HD. **`L`** toggles language. | [EN](pdfview/README.md) · [中文](pdfview/README.zh.md) |
-| **[xlsview](xlsview/)** | Excel (.xlsx/.xlsm) preview: cell color/bold/fill, multi-sheet, width-fit columns. **`L`** toggles language. | [EN](xlsview/README.md) · [中文](xlsview/README.zh.md) |
+| **[xlsview](xlsview/)** | Excel (.xlsx/.xlsm) preview: styles, multi-sheet, natural column width + h-scroll, **cell motion / Ctrl-v cell-block / y yank**. **`L`** language. | [EN](xlsview/README.md) · [中文](xlsview/README.zh.md) |
 | **[tts](tts/)** | Windows SAPI TTS: `<leader>vo` starts from the **segment at the cursor** (press again to jump while playing); white control bar; volume wheel / rate; system default audio device; **EN/中文** button or **`L`**. | [EN](tts/README.md) · [中文](tts/README.zh.md) |
 | **[imgbuf](imgbuf/)** | Image as character art (block/half/braille); fill/fit; auto-open, clipboard; optional pixel HD on WezTerm/Kitty/Ghostty. **`L`** toggles language. | [EN](imgbuf/README.md) · [中文](imgbuf/README.zh.md) |
 | **[music](music/)** | Open audio → buffer player: play/pause, scrub, volume, folder prev/next + list, LRC lyrics. **Windows MIDI** (`.mid` / presets via **winmm.dll**): `:MusicMidi` / `<leader>mx`. **`Y`** toggles language (`L` = loop). | [EN](music/README.md) · [中文](music/README.zh.md) |
@@ -29,8 +29,8 @@ Focused on fun, practical, low-dependency terminal tooling. Most UIs support **C
 | **[es](es/)** | Windows **Everything** file search (`es.exe`): `:ES` / `<leader>es` live float picker. | [EN](es/README.md) · [中文](es/README.zh.md) |
 | **[qrbuf](qrbuf/)** | Text → terminal **QR code** float: `:QrBuf` / `<leader>qr`, selection supported. | [EN](qrbuf/README.md) · [中文](qrbuf/README.zh.md) |
 | **[httpbuf](httpbuf/)** | Lightweight **HTTP** request editor + response view: `:HttpBuf` / `<leader>http`, curl or Python. | [EN](httpbuf/README.md) · [中文](httpbuf/README.zh.md) |
-| **[weather](weather/)** | Statusline **city / weather / temp** + `:Weather` / `<leader>we` 10-day table; Open-Meteo public HTTP, hourly cache. | [EN](weather/README.md) · [中文](weather/README.zh.md) |
-| **[ntemoji](ntemoji/)** | **NERDTree** emoji icons (no Nerd Font / no vim-devicons). | [EN](ntemoji/README.md) · [中文](ntemoji/README.zh.md) |
+| **[weather](weather/)** | Statusline **city / weather / temp** + `:Weather` / `<leader>we` 10-day table (shows **fetch time**); Open-Meteo public HTTP, hourly cache. | [EN](weather/README.md) · [中文](weather/README.zh.md) |
+| **[ntemoji](ntemoji/)** | **NERDTree** emoji icons (no Nerd Font / no vim-devicons; brackets concealed). | [EN](ntemoji/README.md) · [中文](ntemoji/README.zh.md) |
 
 ## UI language (zh / en)
 
@@ -126,6 +126,7 @@ TTS samples: [tts/testdata/](tts/testdata/) (`sample.zh.txt` / `sample.en.txt`).
 | qrbuf | 0.9+ | Python3 (stdlib, `scripts/qrgen.py`) |
 | httpbuf | 0.9+ | **curl** or Python3 (stdlib urllib) |
 | weather | 0.9+ | Python3 + network (Open-Meteo public HTTP, no key) |
+| ntemoji | 0.9+ | [NERDTree](https://github.com/preservim/nerdtree); do **not** load vim-devicons together |
 
 **Startup check**: on load, only **required** pip packages are checked; if missing you get an install prompt. Install opens a log float with live pip output and notifies when done.  
 - Full check (incl. recommended): `:NvimpluginsDeps` (optional plugin names)  
@@ -144,7 +145,7 @@ After whole-repo install:
 | **`<leader>hh`** | Help float (`g:nvimplugins_keys_help` to change) |
 | **`:NvimpluginsHelp`** | Same |
 
-Lists **commands** and **current keymaps** per plugin; lines with **▶** run on **Enter / click** (commands that need args are pre-filled on the cmdline).
+Lists **commands** and **current keymaps** for **loaded** plugins only (unloaded plugins are hidden). Lines with **▶** run on **Enter / click** (commands that need args are pre-filled on the cmdline).
 
 ## Quick install
 
@@ -254,6 +255,9 @@ require("xlsview").setup({
   python = "python",
   max_rows = 500,
   max_cols = 64,
+  fit_to_window = false, -- natural col width + h-scroll
+  min_col_width = 6,
+  max_col_width = 28,
 })
 
 -- tts — Windows SAPI speech
@@ -276,13 +280,14 @@ require("imgbuf").setup({
   auto_open = true,
 })
 
--- music — buffer audio player
+-- music — buffer audio + Windows MIDI
 require("music").setup({
   volume = 70,
   auto_open = true,
   auto_play = true,
   toggle_key = "<M-m>",
-  ui_lang = "auto", -- Y toggles language; L = loop
+  keys_midi = "<leader>mx", -- MIDI player / presets
+  ui_lang = "auto", -- Y toggles language; L = loop (audio)
   python = "python",
 })
 
@@ -313,13 +318,16 @@ Full option lists: each plugin’s README / `lua/*/config.lua` (or `init.lua`).
 |--------|---------------|--------|
 | mdview | `<leader>mv` / `<leader>ms` · `L` | Single / side preview · language |
 | pdfview | open pdf/docx · `L` · `gh` | Preview · language · page HD |
-| xlsview | open xlsx · `n`/`p` · `L` | Preview · sheet · language |
+| xlsview | open xlsx · `n`/`p` · arrows · `Ctrl-v`/`y` · `L` | Preview · cells · block yank · language |
 | tts | `<leader>vo` / `<leader>vs` · `L` | Play from cursor segment / stop · language |
 | imgbuf | open image · `L` | Preview · language |
 | music | open audio · `<M-m>` · `Y` | Player · toggle UI · language |
 | music | `:Music` / `:MusicMidi` / `<leader>mx` · `Y` | Audio + Windows MIDI |
+| weather | `:Weather` / `<leader>we` · `L` | 10-day popup · language |
+| ntemoji | (auto with NERDTree) | Emoji icons |
 | nvimgames | `:NvimGames` · `u` in-game | Menu · language |
 | drawbuf | `:Draw` · `Y` | Canvas · language |
+| bundle | `<leader>hh` | Help (loaded plugins only) |
 
 ## Doc index
 
@@ -331,10 +339,14 @@ Full option lists: each plugin’s README / `lua/*/config.lua` (or `init.lua`).
 | tts | [EN](tts/README.md) · [中文](tts/README.zh.md) · [samples](tts/testdata/) |
 | imgbuf | [EN](imgbuf/README.md) · [中文](imgbuf/README.zh.md) |
 | music | [EN](music/README.md) · [中文](music/README.zh.md) |
-
 | nvimgames | [EN](nvimgames/README.md) · [中文](nvimgames/README.zh.md) |
 | drawbuf | [EN](drawbuf/README.md) · [中文](drawbuf/README.zh.md) |
 | videobuf | [EN](videobuf/README.md) · [中文](videobuf/README.zh.md) · [design](videobuf/DESIGN.zh.md) |
+| es | [EN](es/README.md) · [中文](es/README.zh.md) |
+| qrbuf | [EN](qrbuf/README.md) · [中文](qrbuf/README.zh.md) |
+| httpbuf | [EN](httpbuf/README.md) · [中文](httpbuf/README.zh.md) |
+| weather | [EN](weather/README.md) · [中文](weather/README.zh.md) |
+| ntemoji | [EN](ntemoji/README.md) · [中文](ntemoji/README.zh.md) |
 
 ## License / notes
 

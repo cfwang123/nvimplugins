@@ -17,9 +17,9 @@ Pure Lua parse + read-only preview buffer; code highlighting, TOC, tables, image
 | Style | Headings (optional auto numbers), bold, italic, `` code ``, strike, `==mark==`, links |
 | Lists / quotes / HR / tables | GFM tables; dynamic columns; images in cells; escaped `\|` |
 | Code blocks | Border, language, line numbers, gray bg, fold after 10 lines, **`c` / `yc` / [Copy]**, TS→syntax→plain |
-| TOC | Top of preview; `t` opens TOC float |
-| Links | Enter/click; `#heading` / `#1. heading` anchors; md files → target preview; `Ctrl-o` back |
-| Images | Block-character render in preview; `gi`/Enter float; `gh` temporary in-page HD; `o` system open |
+| TOC | Top of preview; `t` in preview / **`<leader>toc`** in editor (configurable) opens TOC float |
+| Links | Preview/editor Enter or Ctrl+LeftMouse; `#heading` / `#1. heading` anchors; md → target preview; `Ctrl-o` back |
+| Images | Block chars in preview; `gi`/Enter float; **editor** Enter/Ctrl-click on `![](…)`; `gh` page HD; `o` system open |
 | HTML | `<details>` / `<summary>`, `<img>` |
 | Layout | Soft-wrap to preview width; reflow on resize |
 
@@ -68,12 +68,13 @@ Default global maps (if free):
 |-----|---------|
 | `<leader>mv` | `:MdView` |
 | `<leader>ms` | `:MdSideView` |
+| `<leader>toc` | TOC float from editor/preview (`keys.toc`) |
 
 Disable default keys:
 
 ```lua
 require("mdview").setup({
-  keys = { view = false, side = false },
+  keys = { view = false, side = false, toc = false },
 })
 ```
 
@@ -120,6 +121,7 @@ require("mdview").setup({
   keys = {
     view = "<leader>mv",
     side = "<leader>ms",
+    toc = "<leader>toc",     -- TOC float from editor (false to disable)
   },
   image = {
     mode = "thumb",          -- block-character images in preview
@@ -177,6 +179,7 @@ require("mdview").setup({
   keys = {
     view = "<leader>mv",
     side = "<leader>ms",
+    toc = "<leader>toc",
   },
   image = {
     mode = "thumb",
@@ -234,6 +237,7 @@ python -c "from PIL import Image; print('Pillow OK')"
 | `:MdSideView open` / `close` | Explicit open/close |
 | `:MdViewRefresh` | Force re-render |
 | `:MdViewSync` | Sync side preview to source cursor |
+| `:MdViewToc` | Toggle TOC float (editor or preview) |
 
 With side open, switching to another **markdown** buffer in the same tab follows that file; non-md keeps the current preview.
 
@@ -251,10 +255,21 @@ With side open, switching to another **markdown** buffer in the same tab follows
 | `c` / `yc` | Copy code block under cursor |
 | `gs` | Jump to source line |
 | `go` | Top TOC in document |
-| `t` | TOC float |
+| `t` | TOC float (preview only; editor uses `<leader>toc`) |
 | `<C-o>` | Back: in-doc jump → previous md preview |
 | `L` | Toggle Chinese / English UI (hint bar, help, Copy labels; persisted) |
 | `?` | Help float |
+
+## Editor (Markdown source)
+
+Works without opening preview (auto-mapped on `markdown` buffers once the plugin loads):
+
+| Key | Action |
+|-----|--------|
+| `<CR>` | On `![alt](path)` → image float; on `[text](url)` → jump (`#` anchor / external md **source** / web) |
+| `Ctrl`+LeftMouse | Same |
+| `<C-o>` | Jump back (Vim jumplist; in-doc anchors and external md) |
+| `<CR>` elsewhere | Default Vim behavior |
 
 ## Config notes
 

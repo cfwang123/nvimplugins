@@ -120,9 +120,14 @@ local function catalog()
         { cmd = "MdSideView", desc_zh = "侧边预览", desc_en = "Side preview" },
         { cmd = "MdViewRefresh", desc_zh = "刷新", desc_en = "Refresh" },
         { cmd = "MdViewSync", desc_zh = "同步滚动位置", desc_en = "Sync scroll" },
+        { cmd = "MdViewToc", desc_zh = "TOC 大纲浮窗", desc_en = "TOC outline float" },
       },
       keys = {
-        { default = "-", desc_zh = "预览内 L 切换中英；? 帮助", desc_en = "In preview: L lang; ? help" },
+        { default = "<leader>mv", desc_zh = "单窗预览", desc_en = "Single-window preview" },
+        { default = "<leader>ms", desc_zh = "侧边预览", desc_en = "Side preview" },
+        { default = "<leader>toc", desc_zh = "编辑窗/预览 TOC", desc_en = "TOC from editor/preview" },
+        { default = "t", desc_zh = "预览内 TOC", desc_en = "TOC in preview" },
+        { default = "L", desc_zh = "预览内中英", desc_en = "In preview: language" },
       },
     },
     {
@@ -453,13 +458,16 @@ function M.open()
   add(string.rep("─", 78))
 
   for _, item in ipairs(catalog()) do
+    -- 未加载的子插件不显示（整仓元项 nvimplugins 始终显示）
     local loaded = item.plugin == "nvimplugins" or vim.g["loaded_" .. item.plugin]
-    local mark = loaded and "●" or "○"
+    if not loaded then
+      goto continue
+    end
     local title = t(item.title_zh, item.title_en)
     local desc = t(item.desc_zh, item.desc_en)
     add("")
     add(
-      string.format("%s [%s] %s — %s", mark, item.plugin, title, desc),
+      string.format("● [%s] %s — %s", item.plugin, title, desc),
       nil
     )
     -- 命令
@@ -493,10 +501,11 @@ function M.open()
         end
       end
     end
+    ::continue::
   end
 
   add("")
-  add(t("  图例: ● 已加载  ○ 未加载  ▶ 可点击/回车执行", "  Legend: ● loaded  ○ not loaded  ▶ click/Enter to run"))
+  add(t("  图例: ● 已加载  ▶ 可点击/回车执行（未加载的插件已隐藏）", "  Legend: ● loaded  ▶ click/Enter to run (unloaded plugins hidden)"))
 
   local buf = vim.api.nvim_create_buf(false, true)
   vim.bo[buf].buftype = "nofile"

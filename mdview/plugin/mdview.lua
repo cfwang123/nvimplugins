@@ -58,6 +58,13 @@ vim.api.nvim_create_user_command("MdViewSync", function()
   end
 end, { desc = "mdview: sync side preview to source cursor" })
 
+vim.api.nvim_create_user_command("MdViewToc", function()
+  local m = get_mod()
+  if m then
+    m.toggle_toc()
+  end
+end, { desc = "mdview: toggle TOC float (edit or preview)" })
+
 -- 启动时检测推荐 pip 依赖（Pillow）并提示安装
 do
   local _dep_plugin = "mdview"

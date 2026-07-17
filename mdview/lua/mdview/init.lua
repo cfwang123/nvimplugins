@@ -157,6 +157,10 @@ function M._apply_global_keys(cfg)
   map(keys.side, function()
     M.toggle_side()
   end, "mdview: MdSideView（侧边预览）")
+
+  map(keys.toc, function()
+    M.toggle_toc()
+  end, "mdview: TOC outline float")
 end
 
 ---给已打开的预览 buffer 重绑快捷键（插件热更新后）
@@ -186,6 +190,7 @@ function M.setup(user)
   M._ensure_tab_follow()
   M._apply_global_keys(cfg)
   rebind_all_preview_maps()
+  M._ensure_source_maps_au()
   return cfg
 end
 
@@ -195,6 +200,7 @@ function M.ensure_setup()
   M._ensure_tab_follow()
   M._apply_global_keys(cfg)
   rebind_all_preview_maps()
+  M._ensure_source_maps_au()
   return cfg
 end
 
@@ -310,6 +316,131 @@ function M.refresh(source_buf)
   if st.mode == "side" then
     sync.sync_from_source(st)
   end
+end
+
+---是否像 Markdown 源缓冲（编辑窗）
+---@param buf integer
+---@return boolean
+local function is_markdown_source_buf(buf)
+  if not buf or not vim.api.nvim_buf_is_valid(buf) then
+    return false
+  end
+  if window.is_preview_buf(buf) then
+    return false
+  end
+  local ft = vim.bo[buf].filetype or ""
+  if ft == "markdown" or ft == "md" or ft == "pandoc" then
+    return true
+  end
+  local name = vim.api.nvim_buf_get_name(buf):lower()
+  return name:match("%.md$") ~= nil
+    or name:match("%.markdown$") ~= nil
+    or name:match("%.mdx$") ~= nil
+end
+
+---仅跳转源码窗到标题行（用 nG 写入 jumplist，便于 <C-o> 返回）
+---@param st table
+---@param source_line number
+local function jump_source_only(st, source_line)
+  if not source_line or source_line < 1 then
+    return
+  end
+  local src = st.source_buf
+  if not src or not vim.api.nvim_buf_is_valid(src) then
+    return
+  end
+  local max_src = vim.api.nvim_buf_line_count(src)
+  local line = math.max(1, math.min(source_line, max_src))
+  local swin = st.source_win
+  if not swin or not vim.api.nvim_win_is_valid(swin) or vim.api.nvim_win_get_buf(swin) ~= src then
+    swin = nil
+    for _, w in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
+      if vim.api.nvim_win_get_buf(w) == src then
+        swin = w
+        break
+      end
+    end
+  end
+  if not swin then
+    -- 当前窗就是源则用当前窗
+    if vim.api.nvim_get_current_buf() == src then
+      swin = vim.api.nvim_get_current_win()
+    end
+  end
+  if swin and vim.api.nvim_win_is_valid(swin) then
+    st.source_win = swin
+    pcall(vim.api.nvim_set_current_win, swin)
+    -- nG 是 jump 命令，会进入 jumplist；set_cursor 不会
+    pcall(vim.api.nvim_win_call, swin, function()
+      vim.cmd("normal! " .. line .. "Gzz")
+    end)
+  end
+end
+
+---打开 / 关闭 TOC float。
+---可在预览窗（同 `t`）或 Markdown 编辑窗调用；编辑窗会按当前 buffer 解析标题。
+function M.toggle_toc()
+  M.ensure_setup()
+  local toc = require("mdview.toc")
+  if toc.is_open() then
+    toc.close_float()
+    return
+  end
+
+  local cur_buf = vim.api.nvim_get_current_buf()
+  local cfg = config.get()
+  if cfg.toc == false then
+    vim.notify(require("mdview.i18n").t("toc_empty"), vim.log.levels.INFO)
+    return
+  end
+
+  -- 预览窗：与 buffer-local `t` 相同
+  if window.is_preview_buf(cur_buf) then
+    local st = st_from_preview(cur_buf)
+    if not st then
+      return
+    end
+    toc.toggle_float(st, function(entry)
+      M._jump_both(st, entry.source_start, entry.preview_line, true)
+    end)
+    return
+  end
+
+  if not is_markdown_source_buf(cur_buf) then
+    vim.notify(require("mdview.i18n").t("need_markdown"), vim.log.levels.INFO)
+    return
+  end
+
+  -- 编辑窗：用当前 buffer 解析标题（不依赖预览是否已开）
+  local blocks = parse.parse_buf(cur_buf, cfg)
+  local headings = toc.collect(blocks, cfg)
+  local live = get_state(cur_buf)
+  ---@type table
+  local st = {
+    source_buf = cur_buf,
+    source_win = vim.api.nvim_get_current_win(),
+    blocks = blocks,
+    headings = headings,
+    -- 若已有预览会话，带上以便跳转时双窗同步
+    preview_buf = live and live.preview_buf,
+    preview_win = live and live.preview_win,
+    result = live and live.result,
+    jump_stack = live and live.jump_stack,
+    mode = live and live.mode,
+  }
+
+  toc.open_float(st, function(entry)
+    local jump_st = live or st
+    jump_st.source_buf = cur_buf
+    if not jump_st.source_win or not vim.api.nvim_win_is_valid(jump_st.source_win) then
+      jump_st.source_win = st.source_win
+    end
+    if jump_st.preview_win and vim.api.nvim_win_is_valid(jump_st.preview_win) and jump_st.result then
+      M._jump_both(jump_st, entry.source_start, entry.preview_line, true)
+    else
+      jump_source_only(jump_st, entry.source_start)
+    end
+  end)
 end
 
 function M._current_source()
@@ -1628,17 +1759,88 @@ local function uri_decode(s)
   return s
 end
 
-function M._open_href(href, st)
+---编辑窗打开本地 md 源码（不切预览）；可选 #fragment
+---:edit 会进 jumplist，便于 <C-o> 回到原文件
+---@param st table
+---@param abs string
+---@param frag string|nil
+---@return boolean
+local function open_md_as_source_edit(st, abs, frag)
+  abs = vim.fn.fnamemodify(abs, ":p")
+  if vim.fn.filereadable(abs) == 0 then
+    return false
+  end
+
+  local win = st.source_win
+  if (not win or not vim.api.nvim_win_is_valid(win)) and st.source_buf then
+    for _, w in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
+      if vim.api.nvim_win_get_buf(w) == st.source_buf then
+        win = w
+        break
+      end
+    end
+  end
+  if not win or not vim.api.nvim_win_is_valid(win) then
+    win = vim.api.nvim_get_current_win()
+  end
+  st.source_win = win
+
+  local edit_ok = pcall(function()
+    vim.api.nvim_win_call(win, function()
+      -- 不用 keepalt：保留 jumplist / alternate 以便 <C-o>
+      vim.cmd("edit " .. vim.fn.fnameescape(abs))
+    end)
+  end)
+  if not edit_ok then
+    vim.api.nvim_set_current_win(win)
+    vim.cmd.edit(vim.fn.fnameescape(abs))
+  else
+    pcall(vim.api.nvim_set_current_win, win)
+  end
+
+  local new_buf = vim.api.nvim_win_get_buf(win)
+  local line = find_heading_line_in_buf(new_buf, frag) or 1
+  -- 用 set_cursor 落锚点，避免再记一次 jumplist（一次 <C-o> 回原文件）
+  pcall(vim.api.nvim_win_set_cursor, win, { line, 0 })
+  pcall(vim.fn.win_execute, win, "normal! zz")
+  return true
+end
+
+---页内锚点跳转（源码 / 双窗）
+---@param st table
+---@param source_line number
+---@param preview_line number|nil
+---@param opts? { from_source?: boolean }
+local function jump_anchor(st, source_line, preview_line, opts)
+  opts = opts or {}
+  if opts.from_source then
+    -- 源码 nG 写入 jumplist；预览仅同步光标（不 push 自定义栈）
+    jump_source_only(st, source_line)
+    local pwin = st.preview_win
+    if pwin and vim.api.nvim_win_is_valid(pwin) and st.result and preview_line then
+      pcall(vim.api.nvim_win_set_cursor, pwin, { preview_line, 0 })
+    end
+    return
+  end
+  M._jump_both(st, source_line, preview_line)
+end
+
+---@param href string
+---@param st table
+---@param opts? { from_source?: boolean } from_source=编辑窗：md 开源码、<C-o> 可回
+function M._open_href(href, st, opts)
   if not href or href == "" then
     return
   end
+  opts = opts or {}
+  local from_source = opts.from_source == true
   href = vim.trim(href)
 
   -- 页内锚点 [Quote](#Quote)
   if href:sub(1, 1) == "#" then
     local h = anchor.find_heading(st.headings, href)
     if h then
-      M._jump_both(st, h.source_start, h.preview_line)
+      jump_anchor(st, h.source_start, h.preview_line, opts)
     else
       vim.notify(require("mdview.i18n").t("heading_nf") .. href, vim.log.levels.INFO)
     end
@@ -1647,7 +1849,7 @@ function M._open_href(href, st)
 
   local is_url = href:match("^[%w+.-]+://") or href:match("^mailto:")
 
-  -- 相对/本地路径（可带 #fragment）→ md 打开预览
+  -- 相对/本地路径（可带 #fragment）
   if not is_url then
     local file_part, frag = href:match("^(.-)#(.+)$")
     if not file_part then
@@ -1660,7 +1862,7 @@ function M._open_href(href, st)
     if file_part == "" and frag then
       local h = anchor.find_heading(st.headings, frag)
       if h then
-        M._jump_both(st, h.source_start, h.preview_line)
+        jump_anchor(st, h.source_start, h.preview_line, opts)
       else
         vim.notify(require("mdview.i18n").t("heading_nf") .. "#" .. frag, vim.log.levels.INFO)
       end
@@ -1685,9 +1887,16 @@ function M._open_href(href, st)
     end
     if abs and vim.fn.filereadable(abs) == 1 then
       if path_looks_markdown(abs) then
-        -- 始终打开目标文件的 md 预览（非源码窗）
-        if M._open_md_file(st, abs, frag) then
-          return
+        if from_source then
+          -- 编辑窗：打开目标 md 源码（非预览）
+          if open_md_as_source_edit(st, abs, frag) then
+            return
+          end
+        else
+          -- 预览窗：打开目标 md 预览
+          if M._open_md_file(st, abs, frag) then
+            return
+          end
         end
       end
       if open_local_other_file(st, abs) then
@@ -2785,6 +2994,309 @@ function M.sync_now()
   local st = get_state(source_buf)
   if st and st.mode == "side" then
     sync.sync_from_source(st)
+  end
+end
+
+---去掉 markdown 目标里的可选 title：path "t" / path 't' / <path>
+---@param s string|nil
+---@return string
+local function clean_md_dest(s)
+  s = vim.trim(s or "")
+  if s == "" then
+    return s
+  end
+  local angled = s:match("^<([^>]+)>$")
+  if angled then
+    s = vim.trim(angled)
+  end
+  -- path + 可选 title
+  local bare = s:match('^(%S+)%s+".-"%s*$')
+    or s:match("^(%S+)%s+'.-'%s*$")
+    or s:match("^(%S+)%s+%b()%s*$")
+  if bare then
+    return bare
+  end
+  return s
+end
+
+---在一行文本上找所有 ![alt](src) / [label](href)，返回 0-based 字节区间
+---@param text string
+---@return { kind: "image"|"link", target: string, col0: integer, col1: integer }[]
+local function find_md_markup_spans(text)
+  local spans = {}
+  if not text or text == "" then
+    return spans
+  end
+  local i = 1
+  local n = #text
+  while i <= n do
+    local two = text:sub(i, i + 1)
+    if two == "![" then
+      local close = text:find("%]", i + 2)
+      if close and text:sub(close + 1, close + 1) == "(" then
+        local endp = text:find("%)", close + 2)
+        if endp then
+          local src = clean_md_dest(text:sub(close + 2, endp - 1))
+          -- 覆盖整个 ![…](…)（含括号），col1 为闭区间末字节+1（0-based 半开）
+          spans[#spans + 1] = {
+            kind = "image",
+            target = src,
+            col0 = i - 1,
+            col1 = endp, -- endp 是 1-based 的 ')' 位置 → 0-based 半开 end = endp
+          }
+          i = endp + 1
+        else
+          i = i + 1
+        end
+      else
+        i = i + 1
+      end
+    elseif text:sub(i, i) == "[" then
+      local close = text:find("%]", i + 1)
+      if close and text:sub(close + 1, close + 1) == "(" then
+        local endp = text:find("%)", close + 2)
+        if endp then
+          local href = clean_md_dest(text:sub(close + 2, endp - 1))
+          spans[#spans + 1] = {
+            kind = "link",
+            target = href,
+            col0 = i - 1,
+            col1 = endp,
+          }
+          i = endp + 1
+        else
+          i = i + 1
+        end
+      else
+        i = i + 1
+      end
+    else
+      i = i + 1
+    end
+  end
+  return spans
+end
+
+---检测源 buffer 指定行列是否落在图片/链接语法上
+---@param buf integer
+---@param row integer 1-based
+---@param col integer 0-based byte
+---@return { kind: "image"|"link", target: string }|nil
+function M._detect_source_markup_at(buf, row, col)
+  if not buf or not vim.api.nvim_buf_is_valid(buf) or not row or row < 1 then
+    return nil
+  end
+  col = col or 0
+  if col < 0 then
+    col = 0
+  end
+  local lines = vim.api.nvim_buf_get_lines(buf, row - 1, row, false)
+  local text = lines[1]
+  if not text then
+    return nil
+  end
+  -- 光标在行尾时仍允许点在最后一字符上
+  local maxc = #text
+  if col > maxc then
+    col = maxc
+  end
+  local hit
+  for _, sp in ipairs(find_md_markup_spans(text)) do
+    if col >= sp.col0 and col < sp.col1 then
+      hit = sp
+      -- 图片优先（后写的若重叠会覆盖；![] 先于 [] 扫描，同位置图已先入）
+      if sp.kind == "image" then
+        return { kind = "image", target = sp.target }
+      end
+    end
+  end
+  if hit then
+    return { kind = hit.kind, target = hit.target }
+  end
+  return nil
+end
+
+---为源 buffer 准备带 headings 的持久 state（可无预览）
+---@param buf integer
+---@return table
+local function ensure_source_activate_st(buf)
+  local st = ensure_state(buf)
+  local win = vim.api.nvim_get_current_win()
+  if not st.source_win or not vim.api.nvim_win_is_valid(st.source_win) then
+    st.source_win = win
+  elseif vim.api.nvim_win_get_buf(win) == buf then
+    st.source_win = win
+  end
+  -- 每次从源激活时刷新 headings（标题可能刚改过）
+  local cfg = config.get()
+  local blocks = parse.parse_buf(buf, cfg)
+  local rev = st.result and st.result.rev_map or nil
+  st.headings = anchor.collect_headings(blocks, rev)
+  return st
+end
+
+---打开源码里的图片目标
+---@param src string
+---@param buf integer
+---@return boolean
+local function open_source_image(src, buf)
+  if not src or src == "" then
+    return false
+  end
+  -- 远程图 → 系统/浏览器
+  if src:match("^[%w+.-]+://") then
+    if vim.ui and vim.ui.open then
+      local ok = pcall(vim.ui.open, src)
+      if ok then
+        return true
+      end
+    end
+    if vim.fn.has("win32") == 1 then
+      vim.fn.jobstart({ "cmd", "/c", "start", "", src }, { detach = true })
+    elseif vim.fn.has("mac") == 1 then
+      vim.fn.jobstart({ "open", src }, { detach = true })
+    else
+      vim.fn.jobstart({ "xdg-open", src }, { detach = true })
+    end
+    return true
+  end
+  local md_path = vim.api.nvim_buf_get_name(buf)
+  local abs = select(1, image_mod.resolve_path(src, md_path))
+  if abs and vim.fn.filereadable(abs) == 1 then
+    -- 离开 mapping 上下文再开 float（expr/CR 里直接 open_win 会失败）
+    local cfg = config.get()
+    vim.schedule(function()
+      image_mod.open_preview(abs, cfg)
+    end)
+    return true
+  end
+  vim.notify(require("mdview.i18n").t("no_image") .. (abs and (": " .. abs) or ""), vim.log.levels.INFO)
+  return false
+end
+
+---激活编辑窗光标处的图片 / 链接。命中并处理后返回 true（未命中返回 false，便于 <CR> 透传）
+---@param row integer|nil
+---@param col integer|nil
+---@return boolean
+function M._activate_source_at(row, col)
+  M.ensure_setup()
+  local buf = vim.api.nvim_get_current_buf()
+  if not is_markdown_source_buf(buf) then
+    return false
+  end
+  if not row or not col then
+    local cur = vim.api.nvim_win_get_cursor(0)
+    row, col = cur[1], cur[2]
+  end
+  local hit = M._detect_source_markup_at(buf, row, col)
+  if not hit then
+    return false
+  end
+  if hit.kind == "image" then
+    return open_source_image(hit.target, buf)
+  end
+  if hit.kind == "link" then
+    local st = ensure_source_activate_st(buf)
+    M._open_href(hit.target, st, { from_source = true })
+    return true
+  end
+  return false
+end
+
+function M._activate_source_at_cursor()
+  return M._activate_source_at(nil, nil)
+end
+
+local SOURCE_MAPS_VER = 2
+local source_maps_au = false
+
+---给 Markdown 源 buffer 绑 Enter / Ctrl+左键
+---@param buf integer
+local function attach_source_maps(buf)
+  if not buf or not vim.api.nvim_buf_is_valid(buf) then
+    return
+  end
+  if not is_markdown_source_buf(buf) then
+    return
+  end
+  if vim.b[buf].mdview_source_maps_ver == SOURCE_MAPS_VER then
+    return
+  end
+  vim.b[buf].mdview_source_maps_ver = SOURCE_MAPS_VER
+
+  local opts = { buffer = buf, silent = true, nowait = true, noremap = true }
+
+  -- 非 expr：expr 映射里 open_win / 改光标会失败或被吞
+  -- 命中则 schedule 激活；未命中用 normal! 执行默认 <CR>
+  vim.keymap.set("n", "<CR>", function()
+    local cur = vim.api.nvim_win_get_cursor(0)
+    local row, col = cur[1], cur[2]
+    if not M._detect_source_markup_at(buf, row, col) then
+      local n = vim.v.count1
+      vim.cmd("normal! " .. n .. "\r")
+      return
+    end
+    vim.schedule(function()
+      if not vim.api.nvim_buf_is_valid(buf) then
+        return
+      end
+      if vim.api.nvim_get_current_buf() ~= buf then
+        return
+      end
+      M._activate_source_at(row, col)
+    end)
+  end, vim.tbl_extend("force", opts, {
+    desc = "mdview: Enter open image/link in editor",
+  }))
+
+  -- Ctrl+左键：先落点再激活（此前已验证可用）
+  vim.keymap.set(
+    "n",
+    "<C-LeftMouse>",
+    "<LeftMouse><Cmd>lua require('mdview')._activate_source_at_cursor()<CR>",
+    vim.tbl_extend("force", opts, {
+      desc = "mdview: Ctrl-click open image/link in editor",
+    })
+  )
+
+  M.ensure_mouse()
+end
+
+---安装源 buffer 键位 autocmd（幂等）
+function M._ensure_source_maps_au()
+  if source_maps_au then
+    -- 仍扫一遍已打开 buffer（热更新后版本号可能变）
+    for _, b in ipairs(vim.api.nvim_list_bufs()) do
+      if vim.api.nvim_buf_is_loaded(b) and is_markdown_source_buf(b) then
+        -- 允许热更新时强制重绑
+        if vim.b[b].mdview_source_maps_ver ~= SOURCE_MAPS_VER then
+          attach_source_maps(b)
+        end
+      end
+    end
+    return
+  end
+  source_maps_au = true
+  local g = vim.api.nvim_create_augroup("mdview_source_maps", { clear = true })
+  vim.api.nvim_create_autocmd("FileType", {
+    group = g,
+    pattern = { "markdown", "md", "pandoc" },
+    callback = function(ev)
+      attach_source_maps(ev.buf)
+    end,
+  })
+  vim.api.nvim_create_autocmd({ "BufEnter", "BufWinEnter" }, {
+    group = g,
+    callback = function(ev)
+      if is_markdown_source_buf(ev.buf) then
+        attach_source_maps(ev.buf)
+      end
+    end,
+  })
+  for _, b in ipairs(vim.api.nvim_list_bufs()) do
+    if vim.api.nvim_buf_is_loaded(b) and is_markdown_source_buf(b) then
+      attach_source_maps(b)
+    end
   end
 end
 

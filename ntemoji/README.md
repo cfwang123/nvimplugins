@@ -58,9 +58,11 @@ require("ntemoji").setup({
 ## Notes
 
 - NERDTree always wraps flags as `[…]`. ntemoji **conceals** those brackets by default (`conceal_brackets = true`).
-- If **vim-devicons** is still loaded, ntemoji **skips** and prints a warning.
-- Airline statusline icons are **not** handled here (by design). Use text-only airline sections or a Nerd Font if you need those.
-- Whole-repo bundle includes `ntemoji` by default.
+- **Auto-disable**: if **vim-devicons** is loaded or present on `runtimepath`, ntemoji **does not enable** (no flags, no conceal). Remove `Plug 'ryanoasis/vim-devicons'` to use ntemoji.
+  - Optional: `let g:ntemoji_notify_skip = 1` to print a one-line notice when skipped.
+  - Force (not recommended): `let g:ntemoji_force = 1`.
+- Airline statusline icons are **not** handled here (by design).
+- Whole-repo bundle includes `ntemoji` by default (`plugin/nvimplugins.lua`).
 
 ## Layout
 

@@ -5,8 +5,19 @@ if exists('g:loaded_ntemoji_nerdtree_plugin')
 endif
 let g:loaded_ntemoji_nerdtree_plugin = 1
 
+" 已装 vim-devicons → 整插件不启用
+if ntemoji#devicons_present()
+  let g:ntemoji_enabled = 0
+  finish
+endif
+
 " Ensure lua module defaults
 silent! lua require('ntemoji').ensure_setup()
+
+" setup 后可能因 devicons 关闭
+if get(g:, 'ntemoji_enabled', 1) == 0
+  finish
+endif
 
 if exists('g:NERDTreePathNotifier')
   call ntemoji#register()

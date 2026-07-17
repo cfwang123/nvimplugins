@@ -13,27 +13,36 @@ local function get_mod()
   return m
 end
 
--- 默认启用；NERDTree 加载 nerdtree_plugin 时也会 ensure
-get_mod()
+-- 默认尝试启用；若检测到 vim-devicons 会自动关闭
+local mod = get_mod()
+if mod and not mod.is_enabled() then
+  -- 已装 devicons：不挂后续 autocmd
+  return
+end
 
--- NERDTree 晚于本插件加载时再注册
+-- NERDTree / 其它插件可能更晚加载，VimEnter 再检测一次
 vim.api.nvim_create_autocmd("VimEnter", {
   group = vim.api.nvim_create_augroup("NtemojiBoot", { clear = true }),
   callback = function()
     local m = get_mod()
-    if m then
-      m.ensure_listeners()
+    if not m then
+      return
     end
+    if m.devicons_present() then
+      -- 后加载的 devicons：确保不启用
+      vim.g.ntemoji_enabled = 0
+      return
+    end
+    m.ensure_listeners()
   end,
 })
 
--- 打开 NERDTree 时再试一次（PathNotifier 通常已存在）
 vim.api.nvim_create_autocmd("FileType", {
   pattern = "nerdtree",
   group = vim.api.nvim_create_augroup("NtemojiFT", { clear = true }),
   callback = function()
     local m = get_mod()
-    if m then
+    if m and m.is_enabled() then
       m.ensure_listeners()
     end
   end,

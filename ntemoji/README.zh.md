@@ -57,9 +57,11 @@ require("ntemoji").setup({
 ## 说明
 
 - NERDTree 会把 flag 渲染成 `[图标]`；ntemoji 默认用 **conceal 隐藏中括号**（`conceal_brackets = true`）。
-- 若仍加载 **vim-devicons**，ntemoji **自动跳过**并提示警告。
+- **自动不启用**：若已安装/加载 **vim-devicons**（`runtimepath` 上有插件，或已 `loaded_webdevicons`），ntemoji **整插件关闭**（不写 flag、不做 conceal）。要用 ntemoji 请去掉 `Plug 'ryanoasis/vim-devicons'`。
+  - 可选：`let g:ntemoji_notify_skip = 1` 跳过时提示一行。
+  - 强制启用（不推荐）：`let g:ntemoji_force = 1`。
 - **不**接管 airline 状态栏图标（有意为之）。
-- 整仓安装时默认启用 `ntemoji`。
+- 整仓安装时默认带上 `ntemoji`（见 `plugin/nvimplugins.lua`）。
 
 ## 目录
 

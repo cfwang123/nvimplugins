@@ -552,7 +552,11 @@ function M.open_float(abs_path, cfg)
   })
   if not ok_win or not win then
     pcall(vim.api.nvim_buf_delete, buf, { force = true })
-    vim.notify("mdview: failed to open image float", vim.log.levels.ERROR)
+    vim.notify(
+      "mdview: failed to open image float"
+        .. (ok_win == false and win and (": " .. tostring(win)) or ""),
+      vim.log.levels.ERROR
+    )
     return false
   end
 

@@ -17,9 +17,9 @@
 | 样式 | 标题（可自动序号）、粗体、斜体、`` code ``、删除线、`==mark==`、链接 |
 | 列表 / 引用 / HR / 表 | GFM 表；列宽动态；表内图；单元格 `\|` 转义 |
 | 代码块 | 边框、语言、行号、灰底、默认 10 行折叠、**`c` / `yc` / [Copy]**、TS→syntax→单色 |
-| TOC | 预览顶目录；`t` 打开目录 float |
-| 链接 | Enter/点击；`#标题` / `#1. 标题` 锚点；md 文件→目标预览；`Ctrl-o` 返回 |
-| 图片 | 预览内用色块字符渲染；`gi`/Enter float；`gh` 临时页内高清；`o` 系统打开 |
+| TOC | 预览顶目录；预览内 `t` / 编辑窗 **`<leader>toc`**（可配）打开目录 float |
+| 链接 | 预览/编辑窗 Enter 或 Ctrl+左键；`#标题` / `#1. 标题` 锚点；md 文件→目标预览；`Ctrl-o` 返回 |
+| 图片 | 预览内色块渲染；预览 `gi`/Enter float；**编辑窗**在 `![](…)` 上 Enter/Ctrl+左键预览；`gh` 页内高清；`o` 系统打开 |
 | HTML | `<details>` / `<summary>`、`<img>` |
 | 排版 | 按预览宽度软折行，变宽自动重排 |
 
@@ -66,13 +66,14 @@ vim.opt.rtp:prepend("/path/to/nvimplugins/mdview")
 | 键 | 命令 |
 |----|------|
 | `<leader>mv` | `:MdView` |
+| `<leader>toc` | 编辑窗 / 预览弹出 TOC float（`keys.toc`，可改/关） |
 | `<leader>ms` | `:MdSideView` |
 
 关闭默认键：
 
 ```lua
 require("mdview").setup({
-  keys = { view = false, side = false },
+  keys = { view = false, side = false, toc = false },
 })
 ```
 
@@ -125,6 +126,7 @@ require("mdview").setup({
   keys = {
     view = "<leader>mv",
     side = "<leader>ms",
+    toc = "<leader>toc",     -- 编辑窗弹出 TOC（false 关闭）
   },
   image = {
     mode = "thumb",          -- 预览内色块字符渲染
@@ -183,6 +185,7 @@ require("mdview").setup({
   keys = {
     view = "<leader>mv",
     side = "<leader>ms",
+    toc = "<leader>toc",
   },
   image = {
     mode = "thumb",
@@ -241,6 +244,7 @@ python -c "from PIL import Image; print('Pillow OK')"
 | `:MdSideView open` / `close` | 显式开/关 |
 | `:MdViewRefresh` | 强制重渲染 |
 | `:MdViewSync` | 侧边按源光标同步 |
+| `:MdViewToc` | 弹出 / 关闭 TOC（编辑窗或预览） |
 
 侧边开启后，同 tab 切换其它 **markdown** buffer 时预览会跟到该文件；非 md 则保持当前预览。
 
@@ -258,10 +262,21 @@ python -c "from PIL import Image; print('Pillow OK')"
 | `c` / `yc` | 复制光标处代码块 |
 | `gs` | 跳到源对应行 |
 | `go` | 文内 TOC 顶部 |
-| `t` | 目录 float |
+| `t` | 目录 float（仅预览；编辑窗用 `<leader>toc`） |
 | `<C-o>` | 返回：文内跳转 → 上一篇 md 预览 |
 | `L` | 切换中/英文界面（顶栏提示、帮助、复制按钮等；记住偏好） |
 | `?` | 帮助 float |
+
+## 编辑窗（Markdown 源）
+
+无需打开预览也可使用（插件加载后对 `markdown` buffer 自动绑定）：
+
+| 键 | 作用 |
+|----|------|
+| `<CR>` | 光标在 `![alt](path)` **之内** → 打开图片预览 float；在 `[text](url)` 之内 → 跳转（`#` 文内锚点 / 外部 md **源码** / 网页） |
+| `Ctrl`+鼠标左键 | 同上 |
+| `<C-o>` | 跳转后返回（Vim jumplist；文内锚点与外部 md 均适用） |
+| 非图片/链接处的 `<CR>` | 保持 Vim 默认行为 |
 
 ## 配置摘要
 

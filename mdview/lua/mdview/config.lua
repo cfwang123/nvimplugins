@@ -51,7 +51,7 @@ local M = {}
 ---@field html MdViewHtmlConfig
 ---@field highlights table|nil
 ---@field auto_side_open boolean
----@field keys { view?: string|false, side?: string|false } 全局快捷键；false 关闭该项
+---@field keys { view?: string|false, side?: string|false, toc?: string|false } 全局快捷键；false 关闭该项
 
 local defaults = {
   split_direction = "right",
@@ -60,6 +60,7 @@ local defaults = {
   keys = {
     view = "<leader>mv", -- :MdView 单窗预览
     side = "<leader>ms", -- :MdSideView 侧边预览
+    toc = "<leader>toc", -- 编辑窗 / 任意处：弹出 TOC float
   },
   winopts = {
     number = false,

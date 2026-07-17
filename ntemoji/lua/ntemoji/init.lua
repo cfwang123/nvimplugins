@@ -205,16 +205,57 @@ function M.get_config()
   return config
 end
 
+---是否检测到 vim-devicons（已加载或在 runtimepath 上）
+---@return boolean
+function M.devicons_present()
+  if vim.g.ntemoji_force == 1 then
+    return false
+  end
+  local ok, present = pcall(vim.fn["ntemoji#devicons_present"])
+  if ok then
+    return present == 1 or present == true
+  end
+  -- 无 autoload 时的兜底
+  if vim.g.loaded_webdevicons == 1 then
+    return true
+  end
+  if vim.fn.exists("*WebDevIconsGetFileTypeSymbol") == 1 then
+    return true
+  end
+  local files = vim.api.nvim_get_runtime_file("plugin/webdevicons.vim", true)
+  if files and #files > 0 then
+    return true
+  end
+  files = vim.api.nvim_get_runtime_file("nerdtree_plugin/webdevicons.vim", true)
+  return files and #files > 0
+end
+
 ---@param user? NtemojiConfig
 function M.setup(user)
   config = vim.tbl_deep_extend("force", vim.deepcopy(default_config), user or {})
   setup_done = true
-  -- 导出给 Vim 侧读取
-  vim.g.ntemoji_enabled = config.enabled and 1 or 0
+  -- 已装 devicons → 整插件关闭
+  if config.enabled and M.devicons_present() then
+    config.enabled = false
+    vim.g.ntemoji_enabled = 0
+    if not vim.g.ntemoji_skipped_devicons then
+      vim.g.ntemoji_skipped_devicons = 1
+      -- 安静跳过：不刷屏；需要提示可设 g:ntemoji_notify_skip = 1
+      if vim.g.ntemoji_notify_skip == 1 then
+        vim.schedule(function()
+          vim.notify("ntemoji: vim-devicons detected, disabled", vim.log.levels.INFO)
+        end)
+      end
+    end
+  else
+    vim.g.ntemoji_enabled = config.enabled and 1 or 0
+  end
   vim.g.ntemoji_before = config.before
   vim.g.ntemoji_after = config.after
   vim.g.ntemoji_conceal_brackets = config.conceal_brackets and 1 or 0
-  M.ensure_listeners()
+  if config.enabled then
+    M.ensure_listeners()
+  end
   return config
 end
 
@@ -226,35 +267,37 @@ end
 
 ---注册 NERDTree 监听（可重复调用）
 function M.ensure_listeners()
-  if not config.enabled then
+  if not setup_done then
+    M.ensure_setup()
+  end
+  if not config.enabled or vim.g.ntemoji_enabled == 0 then
+    return false
+  end
+  -- 再次检测（devicons 可能后于 ntemoji 加载）
+  if M.devicons_present() then
+    config.enabled = false
+    vim.g.ntemoji_enabled = 0
+    listeners_ok = false
     return false
   end
   if listeners_ok then
     return true
   end
-  -- 若仍加载 webdevicons，避免双重图标
-  if vim.g.loaded_webdevicons == 1 or vim.g.webdevicons_enable == 1 then
-    if not vim.g.ntemoji_warned_devicons then
-      vim.g.ntemoji_warned_devicons = 1
-      vim.schedule(function()
-        vim.notify(
-          "ntemoji: 检测到 vim-devicons，已跳过（请卸掉 devicons 后重开 NERDTree）",
-          vim.log.levels.WARN
-        )
-      end)
-    end
-    return false
-  end
   if vim.g.NERDTreePathNotifier == nil then
     return false
   end
-  local ok = pcall(function()
-    vim.fn["ntemoji#register"]()
+  local ok, ret = pcall(function()
+    return vim.fn["ntemoji#register"]()
   end)
-  if ok then
+  if ok and (ret == 1 or ret == true) then
     listeners_ok = true
+    return true
   end
-  return listeners_ok
+  return false
+end
+
+function M.is_enabled()
+  return config.enabled and vim.g.ntemoji_enabled ~= 0 and not M.devicons_present()
 end
 
 return M

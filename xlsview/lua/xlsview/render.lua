@@ -62,21 +62,23 @@ end
 ---@param sheet table
 ---@param width number
 ---@param cfg table
----@return string[] lines, table[] extmarks, table hits
+---@return string[] lines, table[] extmarks, table hits, table|nil nav
 local function render_sheet(sheet, width, cfg)
   local lines = {}
   local extmarks = {}
   local hits = {}
+  ---@type table|nil
+  local nav = nil
 
   if sheet.error then
     lines[1] = "error: " .. tostring(sheet.error)
-    return lines, extmarks, hits
+    return lines, extmarks, hits, nav
   end
 
   local rows = sheet.rows or {}
   if #rows == 0 then
     lines[1] = "(empty sheet)"
-    return lines, extmarks, hits
+    return lines, extmarks, hits, nav
   end
 
   local ncol = 0
@@ -85,7 +87,7 @@ local function render_sheet(sheet, width, cfg)
   end
   if ncol == 0 then
     lines[1] = "(empty sheet)"
-    return lines, extmarks, hits
+    return lines, extmarks, hits, nav
   end
 
   local style = cfg.table_style or "unicode"
@@ -96,17 +98,21 @@ local function render_sheet(sheet, width, cfg)
     local max_rn = (sheet.min_row or 1) + #rows - 1
     rn_w = math.max(3, #tostring(max_rn)) + 1
   end
-  local avail = math.max(ncol, width - border_w - rn_w)
+  local min_cw = math.max(3, tonumber(cfg.min_col_width) or 6)
+  local max_cw = math.max(min_cw, tonumber(cfg.max_col_width) or 28)
+  local fit = cfg.fit_to_window == true
+  local avail = math.max(ncol * min_cw, width - border_w - rn_w)
 
-  -- 内容需求宽
+  -- 内容需求宽（含左右各 1 格边距）
   local need = {}
   for c = 1, ncol do
-    need[c] = 1
+    need[c] = min_cw
     for r = 1, #rows do
       local cell = rows[r][c]
       local t = type(cell) == "table" and (cell.text or "") or tostring(cell or "")
-      need[c] = math.max(need[c], str_width(t) + 2)
+      need[c] = math.max(need[c], math.min(max_cw, str_width(t) + 2))
     end
+    need[c] = math.max(min_cw, math.min(max_cw, need[c]))
   end
 
   local col_w = {}
@@ -115,34 +121,57 @@ local function render_sheet(sheet, width, cfg)
     col_w[c] = need[c]
     total = total + need[c]
   end
-  if total > avail then
+
+  if fit and total > avail then
+    -- 旧行为：尽量压进窗口，但绝不低于 min_cw（不够宽则横向溢出，仍可读）
     local scale = avail / total
     for c = 1, ncol do
-      col_w[c] = math.max(1, math.floor(need[c] * scale))
+      col_w[c] = math.max(min_cw, math.floor(need[c] * scale))
     end
-  end
-  -- 钳制
-  local guard = 0
-  while sum_w(col_w) > avail and guard < 10000 do
-    guard = guard + 1
-    local best = 1
-    for c = 2, ncol do
-      if col_w[c] > col_w[best] then
-        best = c
+    local guard = 0
+    while sum_w(col_w) > avail and guard < 10000 do
+      guard = guard + 1
+      local best, best_w = nil, min_cw
+      for c = 1, ncol do
+        if col_w[c] > best_w then
+          best, best_w = c, col_w[c]
+        end
+      end
+      if not best or col_w[best] <= min_cw then
+        break
+      end
+      col_w[best] = col_w[best] - 1
+    end
+  elseif (not fit) or total < avail then
+    -- 自然列宽：不挤压；若 fit 且有余量则均分加宽（不超过 max_cw）
+    if fit then
+      local extra = avail - sum_w(col_w)
+      local i = 1
+      local guard = 0
+      while extra > 0 and guard < 100000 do
+        guard = guard + 1
+        if col_w[i] < max_cw then
+          col_w[i] = col_w[i] + 1
+          extra = extra - 1
+        end
+        local next_i = i % ncol + 1
+        if next_i == i then
+          break
+        end
+        -- 全部到顶则停
+        local any = false
+        for c = 1, ncol do
+          if col_w[c] < max_cw then
+            any = true
+            break
+          end
+        end
+        if not any then
+          break
+        end
+        i = next_i
       end
     end
-    if col_w[best] <= 1 then
-      break
-    end
-    col_w[best] = col_w[best] - 1
-  end
-  -- 余量均分
-  local extra = avail - sum_w(col_w)
-  local i = 1
-  while extra > 0 do
-    col_w[i] = col_w[i] + 1
-    extra = extra - 1
-    i = i % ncol + 1
   end
 
   local function format_cell(cell, cw, is_header)
@@ -217,6 +246,14 @@ local function render_sheet(sheet, width, cfg)
     emit(border_line(B.tl, B.t, B.tr), "XlsViewBorder")
   end
 
+  -- 导航网格：buf 行（0-based 本 sheet 内）与列字节范围
+  ---@type integer[]  -- data row index -> 0-based line in sheet body
+  local nav_line0 = {}
+  ---@type integer[]  -- col -> 0-based byte start of cell text
+  local nav_col0 = {}
+  ---@type integer[]  -- col -> 0-based byte end exclusive of cell text
+  local nav_col1 = {}
+
   local header_row = cfg.header_row ~= false
   for ri, row in ipairs(rows) do
     local pieces = {}
@@ -241,12 +278,17 @@ local function render_sheet(sheet, width, cfg)
     pieces[#pieces + 1] = B.v
     byte = byte + #B.v
     local is_hdr = header_row and ri == 1
+    nav_line0[ri] = row0
     for c = 1, ncol do
       local cell = row[c]
       local text, hl = format_cell(cell, col_w[c], is_hdr)
       local c0 = byte
       pieces[#pieces + 1] = text
       byte = byte + #text
+      if ri == 1 then
+        nav_col0[c] = c0
+        nav_col1[c] = byte
+      end
       extmarks[#extmarks + 1] = {
         row = row0,
         col = c0,
@@ -281,7 +323,15 @@ local function render_sheet(sheet, width, cfg)
     emit(border_line(B.bl, B.b, B.br), "XlsViewBorder")
   end
 
-  return lines, extmarks, hits
+  nav = {
+    nrows = #rows,
+    ncols = ncol,
+    line0 = nav_line0, -- data row (1-based) -> 0-based line within sheet body
+    col0 = nav_col0, -- col (1-based) -> 0-based byte start
+    col1 = nav_col1, -- col (1-based) -> 0-based byte end exclusive
+  }
+
+  return lines, extmarks, hits, nav
 end
 
 ---@param data table
@@ -373,9 +423,18 @@ function M.render(data, opts)
   local ir = #lines
   lines[#lines + 1] = info
   extmarks[#extmarks + 1] = { row = ir, col = 0, end_col = #info, hl = "XlsViewSheet" }
+
+  -- 列多时提示横向滚动（body 可能宽于窗口）
+  local ncols = sheet.ncols or 0
+  if ncols >= 8 and cfg.fit_to_window ~= true then
+    local scroll_hint = i18n.t("scroll_hint")
+    local shr = #lines
+    lines[#lines + 1] = scroll_hint
+    extmarks[#extmarks + 1] = { row = shr, col = 0, end_col = #scroll_hint, hl = "XlsViewMeta" }
+  end
   lines[#lines + 1] = ""
 
-  local body, bem, bhits = render_sheet(sheet, width, cfg)
+  local body, bem, bhits, sheet_nav = render_sheet(sheet, width, cfg)
   local base = #lines
   for _, ln in ipairs(body) do
     lines[#lines + 1] = ln
@@ -392,6 +451,22 @@ function M.render(data, opts)
     hits[#hits + 1] = h
   end
 
+  --- 导航：转成 buffer 1-based 行号
+  local nav = nil
+  if sheet_nav and sheet_nav.nrows and sheet_nav.nrows > 0 then
+    local buf_line = {} ---@type integer[]  data row -> 1-based buffer line
+    for r = 1, sheet_nav.nrows do
+      buf_line[r] = base + (sheet_nav.line0[r] or 0) + 1
+    end
+    nav = {
+      nrows = sheet_nav.nrows,
+      ncols = sheet_nav.ncols,
+      buf_line = buf_line,
+      col0 = sheet_nav.col0,
+      col1 = sheet_nav.col1,
+    }
+  end
+
   local hint = require("xlsview.i18n").t("hint")
   lines[#lines + 1] = ""
   local hr = #lines
@@ -404,6 +479,7 @@ function M.render(data, opts)
     hits = hits,
     sheet_index = si,
     ns = NS,
+    nav = nav,
   }
 end
 

@@ -11,6 +11,12 @@ local defaults = {
   show_grid = true,
   show_row_numbers = false, -- 左侧 Excel 行号
   freeze_hint = true,
+  --- 列宽：默认不按窗口挤压（横向滚动看全表）；true=旧行为压进窗口
+  fit_to_window = false,
+  --- 单列最小显示宽度（字符格）；fit 时也不会压到更小
+  min_col_width = 6,
+  --- 单列最大宽度（内容再长也截断到此）
+  max_col_width = 28,
   --- 界面语言："auto" | "zh" | "en"；L 切换
   ui_lang = "auto",
   winopts = {
