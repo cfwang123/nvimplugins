@@ -13,6 +13,9 @@ local default_config = {
   refresh_ms = 3600 * 1000,
   ---状态栏格式：{city} {emoji} {weather} {temp}
   status_format = "{city} {emoji} {weather} {temp}°",
+  ---statusline 是否显示 emoji。Windows 终端里 emoji 占位宽度常算错，
+  ---会把后面 music 等文字挤乱（如 02:12 / 变成 02:122/）。默认仍开，但会补齐宽度。
+  status_emoji = true,
   ui_lang = "auto",
   border = "rounded",
   ---有城市时启动自动拉取；无城市时忽略
@@ -140,6 +143,28 @@ local function cache_fresh(data)
   return (os.time() - tonumber(data.fetched_at)) < ttl
 end
 
+---statusline 用 emoji：去掉变体选择符，并补足显示宽度，避免挤坏后面的 music 进度
+---U+FE0F (emoji style) 在 Win 终端 + Nvim 里经常让 strdisplaywidth 与真实占位不一致。
+---@param emoji string
+---@return string
+local function statusline_emoji(emoji)
+  if not emoji or emoji == "" then
+    return ""
+  end
+  if config.status_emoji == false then
+    return ""
+  end
+  -- UTF-8 of U+FE0F
+  local s = emoji:gsub("\239\184\143", "")
+  -- 多数 emoji 在终端占 2 格；再固定跟 1 个 ASCII 空格作缓冲
+  local w = vim.fn.strdisplaywidth(s)
+  if w < 2 then
+    s = s .. " "
+  end
+  -- 尾部再留一格，降低后面字符被「吞半格」叠字的概率
+  return s .. " "
+end
+
 ---@param data table|nil
 local function update_statusline(data)
   if not data or not data.current then
@@ -149,6 +174,7 @@ local function update_statusline(data)
   end
   local city = data.city or state.city or ""
   local emoji, weather = i18n.weather_of(data.current.code)
+  emoji = statusline_emoji(emoji)
   local temp = data.current.temp
   if temp ~= nil then
     temp = string.format("%.0f", tonumber(temp) or 0)
@@ -156,11 +182,17 @@ local function update_statusline(data)
     temp = "?"
   end
   local fmt = config.status_format or "{city} {emoji} {weather} {temp}°"
+  if config.status_emoji == false then
+    -- 去掉可能残留的双空格
+    fmt = fmt:gsub("%s*{emoji}%s*", " ")
+  end
   local s = fmt
   s = s:gsub("{city}", city)
   s = s:gsub("{emoji}", emoji)
   s = s:gsub("{weather}", weather)
   s = s:gsub("{temp}", temp)
+  s = s:gsub("%s+", " ")
+  s = vim.trim(s)
   state.line = s
   vim.g.weather_status = s
   -- 触发状态栏刷新（含 vim-airline）

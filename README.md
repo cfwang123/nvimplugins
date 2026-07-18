@@ -30,6 +30,7 @@ Focused on fun, practical, low-dependency terminal tooling. Most UIs support **C
 | **[qrbuf](qrbuf/)** | Text → terminal **QR code** float: `:QrBuf` / `<leader>qr`, selection supported. | [EN](qrbuf/README.md) · [中文](qrbuf/README.zh.md) |
 | **[httpbuf](httpbuf/)** | Lightweight **HTTP** request editor + response view: `:HttpBuf` / `<leader>http`, curl or Python. | [EN](httpbuf/README.md) · [中文](httpbuf/README.zh.md) |
 | **[weather](weather/)** | Statusline **city / weather / temp** + `:Weather` / `<leader>we` 10-day table (shows **fetch time**); Open-Meteo public HTTP, hourly cache. | [EN](weather/README.md) · [中文](weather/README.zh.md) |
+| **[taskmgr](taskmgr/)** | Process manager float: `:Taskmgr` / `<leader>ta`, sort / column show-hide & width, CPU·mem intensity highlights, kill process. | [EN](taskmgr/README.md) · [中文](taskmgr/README.zh.md) |
 | **[ntemoji](ntemoji/)** | **NERDTree** emoji icons (no Nerd Font / no vim-devicons; brackets concealed). | [EN](ntemoji/README.md) · [中文](ntemoji/README.zh.md) |
 
 ## UI language (zh / en)
@@ -44,7 +45,7 @@ Most plugin UIs support Chinese and English. Default is **`ui_lang = "auto"`** (
 | nvimgames (incl. 24-point) | Footer button or **`u`** |
 | drawbuf | Status **[EN/中]** or **`Y`** (`L` = line tool) |
 | es | **`L`** or **`Ctrl-l`** in picker (default follows system language; remembered) |
-| qrbuf / httpbuf / weather | **`L`** in float |
+| qrbuf / httpbuf / weather / taskmgr | **`L`** in float |
 
 ```lua
 require("mdview").setup({ ui_lang = "auto" }) -- or "zh" | "en"

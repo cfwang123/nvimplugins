@@ -30,6 +30,7 @@
 | **[qrbuf](qrbuf/)** | 文本 → 终端 **二维码** 浮窗：`:QrBuf` / `<leader>qr`，支持选区。 | [EN](qrbuf/README.md) · [中文](qrbuf/README.zh.md) |
 | **[httpbuf](httpbuf/)** | 轻量 **HTTP** 请求编辑与响应查看：`:HttpBuf` / `<leader>http`，curl 或 Python。 | [EN](httpbuf/README.md) · [中文](httpbuf/README.zh.md) |
 | **[weather](weather/)** | 状态栏 **城市/天气/温度** + `:Weather` / `<leader>we` 十天表格（显示**获取时间**）；Open-Meteo 公开 HTTP，小时缓存。 | [EN](weather/README.md) · [中文](weather/README.zh.md) |
+| **[taskmgr](taskmgr/)** | 进程管理 float：`:Taskmgr` / `<leader>ta`，排序 / 列显隐与列宽、CPU·内存高占用着色、结束进程。 | [EN](taskmgr/README.md) · [中文](taskmgr/README.zh.md) |
 | **[ntemoji](ntemoji/)** | **NERDTree** emoji 图标（无需 Nerd Font / vim-devicons；自动 conceal 中括号）。 | [EN](ntemoji/README.md) · [中文](ntemoji/README.zh.md) |
 
 ## 界面语言（中 / 英）
@@ -44,7 +45,7 @@
 | nvimgames（含 24 点） | 底栏按钮或 **`u`** |
 | drawbuf | 状态栏 **[中英]** 或 **`Y`**（`L` 为直线工具） |
 | es | 浮窗内 **`L`** 或 **`Ctrl-l`**（默认跟随系统语言，可记忆） |
-| qrbuf / httpbuf / weather | 浮窗内 **`L`** |
+| qrbuf / httpbuf / weather / taskmgr | 浮窗内 **`L`** |
 
 ```lua
 require("mdview").setup({ ui_lang = "auto" }) -- 或 "zh" | "en"
@@ -126,6 +127,7 @@ tts 测试稿：[tts/testdata/](tts/testdata/)（`sample.zh.txt` / `sample.en.tx
 | qrbuf | 0.9+ | Python3（标准库，`scripts/qrgen.py`） |
 | httpbuf | 0.9+ | **curl** 或 Python3（标准库 urllib） |
 | weather | 0.9+ | Python3 + 网络（Open-Meteo 公开 HTTP，无 Key） |
+| taskmgr | 0.9+ | Python3 + **必须** psutil；支持 Win / Linux / macOS |
 | ntemoji | 0.9+ | [NERDTree](https://github.com/preservim/nerdtree)；勿与 vim-devicons 同装 |
 
 **启动自动检测**：加载后只检查**必需** pip 包；缺失时弹出安装选项。安装过程打开预览窗口显示 pip 实时输出，结束后通知结果。  
@@ -324,6 +326,7 @@ require("drawbuf").setup({
 | music | 打开音频 · `<M-m>` · `Y` | 播放器 · 显隐 UI · 中英文 |
 | music | `:Music` / `:MusicMidi` / `<leader>mx` · `Y` | 音频 + Windows MIDI |
 | weather | `:Weather` / `<leader>we` · `L` | 十天预报 · 中英文 |
+| taskmgr | `:Taskmgr` / `<leader>ta` · `L` | 进程列表 · 中英文 |
 | ntemoji | （配合 NERDTree 自动） | emoji 图标 |
 | nvimgames | `:NvimGames` · 游戏内 `u` | 选单 · 中英文 |
 | drawbuf | `:Draw` · `Y` | 画布 · 中英文 |
@@ -346,6 +349,7 @@ require("drawbuf").setup({
 | qrbuf | [EN](qrbuf/README.md) · [中文](qrbuf/README.zh.md) |
 | httpbuf | [EN](httpbuf/README.md) · [中文](httpbuf/README.zh.md) |
 | weather | [EN](weather/README.md) · [中文](weather/README.zh.md) |
+| taskmgr | [EN](taskmgr/README.md) · [中文](taskmgr/README.zh.md) |
 | ntemoji | [EN](ntemoji/README.md) · [中文](ntemoji/README.zh.md) |
 
 ## 许可与说明

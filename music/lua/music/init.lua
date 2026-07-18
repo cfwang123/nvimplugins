@@ -18,7 +18,8 @@ local playlist = require("music.playlist")
 ---@field bar_width number|nil
 ---@field fit_height boolean 上下分屏时按内容自动高度
 ---@field toggle_key string 显示/隐藏播放器 UI（后台继续播）
----@field statusline_when_hidden boolean 隐藏 UI 时状态栏显示 [歌名,进度/总长]
+---@field statusline_when_hidden boolean 隐藏 UI 时状态栏显示 歌名.mp3[1:22/3:33, 1/299]
+---@field statusline_always boolean 播放中始终写 statusline（UI 打开也显示）
 ---@field python string Python 可执行文件（默认 python）
 ---@field keys_midi string|false 打开 MIDI 播放器 / 预设（Windows）
 
@@ -49,7 +50,10 @@ local default_config = {
   bar_width = nil,
   fit_height = true,
   toggle_key = "<M-m>", -- Alt+M
-  statusline_when_hidden = false, -- 隐藏 UI 时显示 [歌名,1:22/3:33]
+  --- 隐藏播放器 UI（Alt+M）时 statusline 显示：歌名.mp3[1:22/3:33, 1/299]
+  statusline_when_hidden = false,
+  --- true：只要在播/暂停就写 statusline（不要求隐藏 UI）
+  statusline_always = false,
   python = "python",
   --- 界面语言："auto" | "zh" | "en"；Y 切换（L 为单曲循环）
   ui_lang = "auto",
@@ -215,6 +219,23 @@ local function fmt_time(sec)
     m = m % 60
     return string.format("%d:%02d:%02d", h, m, s)
   end
+  return string.format("%d:%02d", m, s)
+end
+
+---statusline 专用：分钟不补前导 0，秒仍两位 → 0:07／4:38（不是 00:07／04:38）
+local function fmt_time_stl(sec)
+  if sec == nil or sec < 0 or sec ~= sec then
+    return "--:--"
+  end
+  sec = math.floor(sec + 0.5)
+  if sec >= 3600 then
+    local h = math.floor(sec / 3600)
+    local m = math.floor((sec % 3600) / 60)
+    local s = sec % 60
+    return string.format("%d:%d:%02d", h, m, s)
+  end
+  local m = math.floor(sec / 60)
+  local s = sec % 60
   return string.format("%d:%02d", m, s)
 end
 
@@ -397,24 +418,50 @@ local function fit_music_height(buf, nlines)
   end
 end
 
----Force player height to content (e.g. after list panel closed and stole space).
-local function refit_player_after_list()
+---打开 f 列表前保存的播放器高度；关闭后原样恢复，避免把底栏顶飞。
+local list_saved_player_h = nil
+
+local function save_player_height_for_list()
+  list_saved_player_h = nil
   local buf = active_buf
   if not buf or not vim.api.nvim_buf_is_valid(buf) then
     return
   end
-  local st = state_by_buf[buf]
-  local nlines = estimate_ui_lines()
-  if st and st.paint_lines and #st.paint_lines > 0 then
-    nlines = #st.paint_lines
+  for _, win in ipairs(vim.api.nvim_list_wins()) do
+    if vim.api.nvim_win_get_buf(win) == buf and vim.api.nvim_win_is_valid(win) then
+      list_saved_player_h = vim.api.nvim_win_get_height(win)
+      return
+    end
+  end
+end
+
+---列表关闭后：恢复打开前高度（若可），且仅在上下分屏时改高度。
+---注意：播放器独占整列（右侧 vsplit 全高）时禁止 set_height，否则会把 nvim 底栏上推。
+local function refit_player_after_list()
+  local buf = active_buf
+  if not buf or not vim.api.nvim_buf_is_valid(buf) then
+    list_saved_player_h = nil
+    return
+  end
+  local nlines = list_saved_player_h
+  list_saved_player_h = nil
+  if not nlines or nlines < 3 then
+    local st = state_by_buf[buf]
+    nlines = estimate_ui_lines()
+    if st and st.paint_lines and #st.paint_lines > 0 then
+      nlines = #st.paint_lines
+    end
   end
   nlines = math.max(3, math.min(nlines, vim.o.lines - 3))
   local music_win = nil
   for _, win in ipairs(vim.api.nvim_list_wins()) do
     if vim.api.nvim_win_get_buf(win) == buf then
       music_win = music_win or win
-      pcall(vim.api.nvim_win_set_height, win, nlines)
-      pcall(vim.api.nvim_set_option_value, "winfixheight", true, { win = win })
+      -- 与 fit_music_height 一致：仅上下分屏时改高度
+      if config.fit_height ~= false and win_is_vertically_split(win) then
+        pcall(vim.api.nvim_win_set_height, win, nlines)
+        pcall(vim.api.nvim_set_option_value, "winfixheight", true, { win = win })
+      end
     end
   end
   -- 关闭列表后焦点回到播放器（q / f / Space 选歌等）
@@ -1413,12 +1460,14 @@ function M.toggle_playlist()
   end
   local mwin = music_win_of(buf)
   if playlist.is_open() then
-    playlist.close_panel() -- on_close → refit player height
+    playlist.close_panel() -- on_close → 恢复打开前高度
     if mwin and vim.api.nvim_win_is_valid(mwin) then
       pcall(vim.api.nvim_set_current_win, mwin)
     end
     return
   end
+  -- 打开前记下高度，关闭时原样恢复（避免强制改高把底栏顶上去）
+  save_player_height_for_list()
   playlist.set_on_play(function(path)
     local b = active_buf
     if b and vim.api.nvim_buf_is_valid(b) then
@@ -1756,26 +1805,37 @@ local function any_music_displayed()
   return false
 end
 
----Statusline text when UI is hidden: `[歌名,1:22/3:33]` or empty.
+---是否需要维护 statusline 文本
+local function statusline_enabled()
+  return config.statusline_always == true or config.statusline_when_hidden == true
+end
+
+---Statusline 文本：`歌名.mp3[1:22/3:33, 1/299]`；无会话时为空。
+---statusline_when_hidden：仅 UI 隐藏时返回；statusline_always：播放中始终返回。
 ---@return string
 function M.statusline()
-  if not config.statusline_when_hidden then
+  if not statusline_enabled() then
     return ""
   end
-  if any_music_displayed() then
+  if not config.statusline_always and any_music_displayed() then
     return ""
   end
   local st = active_buf and state_by_buf[active_buf]
   local pst = engine(st).get_state()
+  -- 仅在播放中显示；暂停 / 停止时清空 statusline
+  if (pst.status or "") ~= "playing" then
+    return ""
+  end
   local path = pst.path
   if (not path or path == "") and st then
     path = st.path
   end
   local name
   if path and path ~= "" then
-    name = vim.fn.fnamemodify(path, ":t:r")
+    -- 保留扩展名：歌名.mp3
+    name = vim.fn.fnamemodify(path, ":t")
     if name == "" then
-      name = vim.fn.fnamemodify(path, ":t")
+      name = path
     end
   elseif st and st.preset then
     name = st.preset
@@ -1784,40 +1844,78 @@ function M.statusline()
   else
     return ""
   end
-  return string.format("[%s,%s/%s]", name, fmt_time(pst.position or 0), fmt_time(pst.duration))
+  -- pst.position 已是 player 实时推算进度
+  local pos_sec = tonumber(pst.position) or 0
+  local dur_sec = tonumber(pst.duration)
+  -- 展示层再夹一次，避免异常大进度
+  if dur_sec and dur_sec > 0 and pos_sec > dur_sec then
+    pos_sec = dur_sec
+  end
+  local pos = fmt_time_stl(pos_sec)
+  local dur = fmt_time_stl(dur_sec)
+  local total = 0
+  local idx = 0
+  if st then
+    total = #(st.siblings or {})
+    idx = tonumber(st.index) or 0
+    if total > 0 then
+      if idx < 1 then
+        idx = 1
+      elseif idx > total then
+        idx = total
+      end
+    end
+  end
+  -- 进度/总长用全角斜杠 ／（宽 2），避免半角 / 与数字粘连成 02:122/
+  -- 也不用 |（airline/lualine 分区符）
+  if total > 0 then
+    -- Fantasy.mp3[00:24／04:31 6/58]
+    return string.format("%s[%s／%s %d/%d]", name, pos, dur, idx, total)
+  end
+  return string.format("%s[%s／%s]", name, pos, dur)
 end
 
 refresh_statusline_var = function()
-  if not config.statusline_when_hidden then
+  if not statusline_enabled() then
     if vim.g.music_statusline and vim.g.music_statusline ~= "" then
       vim.g.music_statusline = ""
-      pcall(vim.cmd, "redrawstatus")
+      pcall(vim.cmd, "redrawstatus!")
     end
     return
   end
   local text = M.statusline()
-  if vim.g.music_statusline ~= text then
+  local prev = vim.g.music_statusline
+  if prev ~= text then
     vim.g.music_statusline = text
-    pcall(vim.cmd, "redrawstatus")
+  end
+  -- 播放中每 tick 刷 statusline，进度才会推进
+  if text ~= "" or (prev and prev ~= "") then
+    pcall(vim.cmd, "redrawstatus!")
   end
 end
 
 ensure_statusline_hook = function()
-  if not config.statusline_when_hidden then
+  if not statusline_enabled() then
     return
   end
-  if vim.g.music_statusline_hooked then
-    return
+  vim.g.music_statusline = vim.g.music_statusline or ""
+  -- 注意：必须用 %{...}（结果当普通文字），不能用 %{%...%}（会再当格式串解析，
+  -- 把 "2:32/3:50" 弄成 "2:326/ 3:50" 一类乱码）。
+  -- 用 g: 变量：由 refresh_statusline_var 每 tick 写入实时进度。
+  local seg = "%{get(g:,'music_statusline','')}"
+  local stl = vim.o.statusline or ""
+  -- 去掉旧版错误的 %{%v:lua...%} / 重复片段
+  stl = stl:gsub("%%{%%v:lua%.require%('music'%)%.statusline%(%)%%}", "")
+  stl = stl:gsub("%%{%%v:lua%.require%(\"music\"%)%.statusline%(%)%%}", "")
+  stl = stl:gsub("%s*%%{get%(g:,'music_statusline',''%)}", "")
+  stl = stl:gsub("%s*%%{g:music_statusline}", "")
+  stl = vim.trim(stl)
+  if stl == "" then
+    vim.o.statusline = "%<%f %h%m%r%=" .. seg .. " %-14.(%l,%c%V%) %P"
+  else
+    vim.o.statusline = stl .. " " .. seg
   end
   vim.g.music_statusline_hooked = true
-  vim.g.music_statusline = vim.g.music_statusline or ""
-  local stl = vim.o.statusline
-  if stl == "" then
-    -- replace built-in default with equivalent + music segment
-    vim.o.statusline = "%<%f %h%m%r%=%{g:music_statusline} %-14.(%l,%c%V%) %P"
-  elseif not stl:find("music_statusline", 1, true) then
-    vim.o.statusline = stl .. "%{g:music_statusline}"
-  end
 end
 
 should_poll = function()
@@ -1827,7 +1925,7 @@ should_poll = function()
   if active_buf and vim.api.nvim_buf_is_valid(active_buf) and is_buf_displayed(active_buf) then
     return true
   end
-  if config.statusline_when_hidden then
+  if statusline_enabled() then
     local st = active_buf and state_by_buf[active_buf]
     local pst = engine(st).get_state()
     if (pst.path or (st and st.preset)) and (pst.status == "playing" or pst.status == "paused" or pst.status == "stopped") then
@@ -1886,7 +1984,7 @@ local function on_ui_hidden()
     return
   end
   save_session()
-  if config.statusline_when_hidden then
+  if statusline_enabled() then
     -- keep timer for statusline position updates
     start_poll()
     refresh_statusline_var()
@@ -2580,7 +2678,7 @@ function M.hide_ui()
     end
   end
   -- buffer kept (bufhidden=hide); player keeps running
-  if config.statusline_when_hidden then
+  if statusline_enabled() then
     start_poll()
     refresh_statusline_var()
   else

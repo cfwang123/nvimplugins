@@ -333,6 +333,21 @@ local function catalog()
       },
     },
     {
+      plugin = "taskmgr",
+      title_zh = "进程管理",
+      title_en = "Process manager",
+      desc_zh = "进程列表 / 排序 / 列宽 / 高占用着色",
+      desc_en = "Process list, sort, columns, intensity HL",
+      commands = {
+        { cmd = "Taskmgr", desc_zh = "打开进程浮窗", desc_en = "Open process float" },
+        { cmd = "TaskmgrRefresh", desc_zh = "刷新列表", desc_en = "Refresh list" },
+        { cmd = "TaskmgrClose", desc_zh = "关闭浮窗", desc_en = "Close float" },
+      },
+      keys = {
+        { field = "keys_open", default = "<leader>ta", desc_zh = "打开进程管理", desc_en = "Open process manager" },
+      },
+    },
+    {
       plugin = "nvimplugins",
       title_zh = "合集元命令",
       title_en = "Bundle meta",

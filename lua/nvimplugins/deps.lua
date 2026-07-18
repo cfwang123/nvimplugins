@@ -110,6 +110,15 @@ local SPECS = {
       },
     },
   },
+  taskmgr = {
+    plugin = "taskmgr",
+    title = "taskmgr",
+    python = true,
+    -- 唯一后端：必须安装 psutil
+    required = {
+      { import = "psutil", pip = "psutil" },
+    },
+  },
 }
 
 local state = {

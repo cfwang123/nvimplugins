@@ -75,6 +75,7 @@ local function load_bundle()
     "qrbuf",
     "httpbuf",
     "weather",
+    "taskmgr",
     "ntemoji",
   }
 

@@ -33,7 +33,52 @@ local state = {
   position = 0,
   duration = nil,
   job_id = nil,
+  ---播放中用于本地推算进度的锚点（秒，uv 时钟）；pause/stop 时清掉
+  _pos_epoch = nil,
 }
+
+local function now_sec()
+  return vim.uv.hrtime() / 1e9
+end
+
+local function clamp_pos(pos)
+  pos = tonumber(pos) or 0
+  if pos < 0 then
+    pos = 0
+  end
+  local dur = tonumber(state.duration)
+  if dur and dur > 0 and pos > dur then
+    pos = dur
+  end
+  return pos
+end
+
+---显示用进度：playing 时在上次同步点上按墙钟外推，避免 status 回包慢/卡在 0:00
+local function live_position()
+  local pos = tonumber(state.position) or 0
+  if state.status == "playing" and state._pos_epoch then
+    local dt = now_sec() - state._pos_epoch
+    if dt > 0 then
+      local dur = tonumber(state.duration)
+      if dur and dur > 0 then
+        pos = pos + dt
+      else
+        -- 尚不知总时长：最多外推 2s，防止飞到 30:02 这类离谱值
+        pos = pos + math.min(dt, 2.0)
+      end
+    end
+  end
+  return clamp_pos(pos)
+end
+
+local function mark_position(pos)
+  state.position = clamp_pos(pos)
+  if state.status == "playing" then
+    state._pos_epoch = now_sec()
+  else
+    state._pos_epoch = nil
+  end
+end
 
 ---@type fun()|nil
 local on_ended_cb = nil
@@ -92,15 +137,38 @@ local function apply_payload(msg)
     end
   end
   if msg.status then
-    state.status = msg.status
+    local prev = state.status
+    local nxt = msg.status
+    -- 先冻结进度再改 status，否则 live_position 已不算外推
+    if prev == "playing" and nxt ~= "playing" then
+      state.position = live_position()
+      state._pos_epoch = nil
+    end
+    state.status = nxt
+    if nxt == "playing" and prev ~= "playing" then
+      state._pos_epoch = now_sec()
+    elseif nxt ~= "playing" then
+      state._pos_epoch = nil
+    end
   end
-  if type(msg.position) == "number" then
-    state.position = msg.position
-  end
-  if type(msg.duration) == "number" then
-    state.duration = msg.duration
+  local incoming_dur = tonumber(msg.duration)
+  if incoming_dur and incoming_dur > 0 then
+    state.duration = incoming_dur
+    -- 时长晚到时，立刻把已漂移的 position 拉回
+    state.position = clamp_pos(state.position)
   elseif msg.duration == nil and msg.event == "status" then
     -- keep previous
+  end
+  local incoming_pos = tonumber(msg.position)
+  if incoming_pos then
+    if state.status == "playing" and state._pos_epoch then
+      local est = live_position()
+      -- 后端偶发回 0：用本地推算，但必须 clamp 到 duration
+      if incoming_pos < 0.75 and est > 1.5 and incoming_pos + 1.0 < est then
+        incoming_pos = est
+      end
+    end
+    mark_position(incoming_pos)
   end
   if type(msg.volume) == "number" then
     state.volume = msg.volume
@@ -116,6 +184,8 @@ local function apply_payload(msg)
   end
 
   if msg.event == "ended" then
+    state.position = live_position()
+    state._pos_epoch = nil
     state.status = "stopped"
     fire_status()
     fire_ended()
@@ -248,7 +318,18 @@ function M.get_config()
 end
 
 function M.get_state()
-  return state
+  -- 返回浅拷贝，position 为实时推算值（statusline / UI 进度用）
+  return {
+    backend = state.backend,
+    status = state.status,
+    path = state.path,
+    title = state.title,
+    volume = state.volume,
+    loop = state.loop,
+    position = live_position(),
+    duration = state.duration,
+    job_id = state.job_id,
+  }
 end
 
 function M.on_ended(cb)
@@ -292,12 +373,14 @@ function M.play(path, start_pos)
     return false, err
   end
   state.status = "playing"
-  state.position = start_pos or 0
+  mark_position(start_pos or 0)
   fire_status()
   return true, nil
 end
 
 function M.stop()
+  state.position = live_position()
+  state._pos_epoch = nil
   state.status = "stopped"
   send({ cmd = "stop" })
   fire_status()
@@ -309,6 +392,9 @@ function M.pause()
   end
   local ok, err = send({ cmd = "pause" })
   if ok then
+    -- 冻结当前推算进度
+    state.position = live_position()
+    state._pos_epoch = nil
     state.status = "paused"
     fire_status()
   end
@@ -325,6 +411,7 @@ function M.resume()
   local ok, err = send({ cmd = "resume" })
   if ok then
     state.status = "playing"
+    state._pos_epoch = now_sec()
     fire_status()
   end
   return ok, err
@@ -371,7 +458,7 @@ function M.seek_abs(seconds)
   if state.duration and seconds > state.duration then
     seconds = state.duration
   end
-  state.position = seconds
+  mark_position(seconds)
   local ok, err = send({ cmd = "seek", position = seconds })
   fire_status()
   return ok, err
@@ -379,7 +466,7 @@ end
 
 ---@param delta number
 function M.seek(delta)
-  return M.seek_abs((state.position or 0) + delta)
+  return M.seek_abs(live_position() + delta)
 end
 
 ---Ask daemon for fresh status (position/duration).

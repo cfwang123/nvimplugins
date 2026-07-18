@@ -13,12 +13,10 @@
 - 帧率可调；同名时间轴字幕（内嵌当前句高亮）
 - 中英文界面（控制条按钮，与 music 类似）
 
-详细设计见 [DESIGN.zh.md](./DESIGN.zh.md)。
-
 ## 依赖
 
 - Neovim 0.9+
-- Python3 + 解码依赖（见 `scripts/videod.py` 与设计文档）
+- Python3 + 解码依赖（见 `scripts/videod.py`）
 
 ## 安装
 

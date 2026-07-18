@@ -341,18 +341,37 @@ local function parse_align_row(line)
   return aligns
 end
 
+---前导空白列宽（tab 按 4 列制表位），用于列表嵌套层级
+---@param ws string
+---@return number
+local function indent_cols(ws)
+  local col = 0
+  for i = 1, #ws do
+    local ch = ws:sub(i, i)
+    if ch == "\t" then
+      col = col + (4 - (col % 4))
+    else
+      col = col + 1
+    end
+  end
+  return col
+end
+
+---识别列表行：返回 indent_cols, list_type("ul"|"ol"), marker, rest, checked|nil
+---@param line string
+---@return number|nil, string|nil, string|nil, string|nil, boolean|nil
 local function list_marker(line)
   local indent, marker, rest = line:match("^(%s*)([-*+])%s+(.*)$")
   if marker then
     local task, body = rest:match("^%[([ xX])%]%s+(.*)$")
     if task then
-      return #indent, "ul", marker, body, task:lower() == "x"
+      return indent_cols(indent), "ul", marker, body, task:lower() == "x"
     end
-    return #indent, "ul", marker, rest, nil
+    return indent_cols(indent), "ul", marker, rest, nil
   end
   indent, marker, rest = line:match("^(%s*)(%d+)%.%s+(.*)$")
   if marker then
-    return #indent, "ol", marker, rest, nil
+    return indent_cols(indent), "ol", marker, rest, nil
   end
   return nil
 end
@@ -543,16 +562,57 @@ function M.parse_lines(lines, cfg, line_offset, depth)
         source_end = src_line(i - 1),
         children = inner,
       })
-    -- 列表
+    -- 列表（支持缩进嵌套；有序项下紧跟的无缩进 ul 视为懒嵌套子项）
     elseif list_marker(line) then
       local start_i = i
       local items = {}
-      local list_type = select(2, list_marker(line))
+      local root_ind, list_type = list_marker(line)
+      root_ind = root_ind or 0
       while i <= n do
         local ind, lt, marker, rest, checked = list_marker(lines[i])
-        if not ind or lt ~= list_type then
-          -- 续行：缩进更多
-          if #items > 0 and lines[i]:match("^%s+%S") and not fence_open(lines[i]) and not heading_atx(lines[i]) then
+        if ind then
+          -- 同类型且缩进不超过根：兄弟项；更大缩进或异类型：嵌套子项
+          local is_sibling = (lt == list_type and ind <= root_ind)
+          local is_nested = false
+          if not is_sibling then
+            if ind > root_ind then
+              is_nested = true
+            elseif lt ~= list_type and #items > 0 then
+              -- 懒嵌套：如 `2. 标题` 后紧跟无缩进的 `- 子项`
+              is_nested = true
+            end
+          end
+          if is_sibling or is_nested then
+            if #items > 0 and not items[#items].source_end then
+              items[#items].source_end = src_line(i) - 1
+            end
+            local item_indent = ind
+            if is_nested and ind <= root_ind then
+              -- 懒嵌套：渲染时按缩进 1 层处理
+              item_indent = root_ind + 2
+            end
+            items[#items + 1] = {
+              text = rest,
+              checked = checked,
+              marker = marker,
+              indent = item_indent,
+              list_type = lt,
+              spans = nil, -- 稍后
+              source_start = src_line(i),
+              source_end = src_line(i),
+            }
+            i = i + 1
+          else
+            break
+          end
+        else
+          -- 续行：仅非列表标记的缩进文本（列表标记绝不能当正文吞掉）
+          if #items > 0
+            and lines[i]:match("^%s+%S")
+            and not fence_open(lines[i])
+            and not heading_atx(lines[i])
+            and not is_hr(lines[i])
+          then
             local cont = lines[i]:match("^%s+(.*)$")
             items[#items].text = items[#items].text .. "\n" .. cont
             items[#items].source_end = src_line(i)
@@ -560,25 +620,9 @@ function M.parse_lines(lines, cfg, line_offset, depth)
           else
             break
           end
-        else
-          -- 关闭上一 item 的 source_end（续行会延长）
-          if #items > 0 and not items[#items].source_end then
-            items[#items].source_end = src_line(i) - 1
-          end
-          items[#items + 1] = {
-            text = rest,
-            checked = checked,
-            marker = marker,
-            indent = ind,
-            spans = nil, -- 稍后
-            source_start = src_line(i),
-            source_end = src_line(i),
-          }
-          i = i + 1
         end
       end
       -- 续行时拉长当前 item 的 source_end
-      -- （上面 cont 分支只改了 text，在此统一收尾）
       local list_end = src_line(i - 1)
       for ii, it in ipairs(items) do
         if ii < #items then
@@ -587,7 +631,8 @@ function M.parse_lines(lines, cfg, line_offset, depth)
         else
           it.source_end = list_end
         end
-        it.spans = M.parse_inlines(it.text:gsub("\n", " "), cfg)
+        -- 保留列表续行换行，渲染时按硬换行拆行
+        it.spans = M.parse_inlines(it.text, cfg)
       end
       add({
         type = "list",
@@ -626,7 +671,8 @@ function M.parse_lines(lines, cfg, line_offset, depth)
         plines[#plines + 1] = lines[i]
         i = i + 1
       end
-      local text = table.concat(plines, " ")
+      -- 保留源码换行（不用空格拼接），渲染时按硬换行拆行
+      local text = table.concat(plines, "\n")
       add({
         type = "paragraph",
         source_start = src_line(start_i),

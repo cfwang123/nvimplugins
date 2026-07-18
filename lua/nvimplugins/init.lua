@@ -18,6 +18,7 @@ M.plugins = {
   "qrbuf",
   "httpbuf",
   "weather",
+  "taskmgr",
   "ntemoji",
 }
 

@@ -76,6 +76,9 @@ require("weather").setup({
   cache_ttl = 3600,        -- 缓存秒数
   refresh_ms = 3600 * 1000,-- 自动刷新间隔
   status_format = "{city} {emoji} {weather} {temp}°",
+  -- Windows 终端里 emoji 占位宽度常算错，会把后面 music 进度挤乱
+  -- （如 02:12／ 显示成 02:122/）。可关掉 emoji：
+  -- status_emoji = false,
   ui_lang = "auto",
   auto_start = true,       -- 仅在已配置 city 时生效
   python = "python",
@@ -84,6 +87,8 @@ require("weather").setup({
 ```
 
 **未配置 `city` 时默认不启用**（不请求网络、状态栏为空）。通过 `setup({ city = "..." })`、`:WeatherCity` 或 `:Weather 城市` 设置后启用并记忆。
+
+**与 music 状态栏同开时**：若进度时间显示粘连/错位，优先试 `status_emoji = false`，或更新本插件（已对 emoji 去变体符并补显示宽度）。
 
 ## 缓存
 

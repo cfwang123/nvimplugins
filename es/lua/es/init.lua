@@ -240,6 +240,50 @@ local function prompt_prefix()
   return ic .. " "
 end
 
+---从输入行剥离前缀，得到查询串。
+---Backspace 可能只删掉空格、半个 emoji 或整段前缀；此时绝不能把残留图标当 query，
+---否则会变成「🔍 🔍」（双图标）。
+---@param line string
+---@return string query
+---@return boolean prefix_ok  前缀是否完整
+local function extract_query_from_line(line)
+  line = line or ""
+  local pref = prompt_prefix()
+  local ic = config.icon or ICON
+  if pref ~= "" and line:sub(1, #pref) == pref then
+    return line:sub(#pref + 1), true
+  end
+  -- 图标在、空格被删：🔍query
+  if ic ~= "" and line:sub(1, #ic) == ic then
+    local rest = line:sub(#ic + 1)
+    if rest:sub(1, 1) == " " then
+      rest = rest:sub(2)
+    end
+    return rest, false
+  end
+  -- 前缀整段被删，或半截多字节被破坏：整行当 query，但去掉误入的图标字符
+  local q = line
+  if ic ~= "" then
+    -- 去掉行首图标（含后随空格）
+    while true do
+      local s, e = q:find(ic, 1, true)
+      if not s then
+        break
+      end
+      -- 仅剥行首一段
+      if s == 1 then
+        q = q:sub(e + 1)
+        if q:sub(1, 1) == " " then
+          q = q:sub(2)
+        end
+      else
+        break
+      end
+    end
+  end
+  return q, false
+end
+
 local function is_win()
   return vim.fn.has("win32") == 1 or vim.fn.has("win64") == 1
 end
@@ -1033,12 +1077,9 @@ local function sync_query_from_line()
   end
   local line1 = vim.api.nvim_buf_get_lines(state.buf, 0, 1, false)[1] or ""
   local pref = prompt_prefix()
-  local q
-  if line1:sub(1, #pref) == pref then
-    q = line1:sub(#pref + 1)
-  else
-    -- 前缀被删：恢复
-    q = line1
+  local q, prefix_ok = extract_query_from_line(line1)
+  if not prefix_ok then
+    -- 前缀被删/破坏：恢复前缀，且 q 已剥离残留图标
     state._rendering = true
     pcall(function()
       vim.bo[state.buf].modifiable = true
@@ -1047,8 +1088,9 @@ local function sync_query_from_line()
       pcall(vim.api.nvim_win_set_cursor, state.win, { 1, col })
     end)
     state._rendering = false
+    line1 = pref .. q
   end
-  -- 光标位置 → qcol
+  -- 光标位置 → qcol（以恢复后的行 + 前缀为准）
   local okc, cur = pcall(vim.api.nvim_win_get_cursor, state.win)
   if okc and cur then
     local bcol = cur[2] -- 0-based byte
@@ -1497,12 +1539,14 @@ set_query = function(q, do_search, opts)
   end
   schedule_search()
   if is_inserting() or opts.stay_insert then
-    -- 更新输入行文字（IME 外的程序化设置）
+    -- 更新输入行文字（IME 外的程序化设置）并同步光标
     local pref = prompt_prefix()
     state._rendering = true
     pcall(function()
       vim.bo[state.buf].modifiable = true
       vim.api.nvim_buf_set_lines(state.buf, 0, 1, false, { pref .. state.query })
+      local col = #pref + charcol_to_bytecol(state.query or "", state.qcol)
+      pcall(vim.api.nvim_win_set_cursor, state.win, { 1, col })
     end)
     state._rendering = false
     render({ body_only = true })
@@ -1849,12 +1893,67 @@ local function bind_keys(buf)
   nmap("<Home>", cursor_home, "cursor home")
   nmap("<End>", cursor_end, "cursor end")
 
+  ---Insert 下删除：只改 query，绝不删前缀（否则双图标）。
+  ---禁止用 expr 返回 termcode：会把内部键码以文字形式插入（显示成 <80>kb）。
+  local function cursor_at_or_in_prefix()
+    local pref = prompt_prefix()
+    local okc, cur = pcall(vim.api.nvim_win_get_cursor, state.win)
+    if not okc or not cur then
+      return true
+    end
+    return cur[2] <= #pref
+  end
+  local function insert_backspace()
+    if cursor_at_or_in_prefix() then
+      place_prompt_cursor()
+      return
+    end
+    sync_query_from_line()
+    if state.qcol <= 0 then
+      place_prompt_cursor()
+      return
+    end
+    backspace()
+  end
+  local function insert_delete_forward()
+    if cursor_at_or_in_prefix() then
+      place_prompt_cursor()
+      return
+    end
+    sync_query_from_line()
+    delete_forward()
+  end
+  local function insert_delete_word()
+    if cursor_at_or_in_prefix() then
+      place_prompt_cursor()
+      return
+    end
+    sync_query_from_line()
+    if state.qcol <= 0 then
+      place_prompt_cursor()
+      return
+    end
+    delete_word_back()
+  end
+
   nmap("<BS>", function()
-    enter_insert()
-  end, "insert")
+    if state.qcol > 0 then
+      backspace()
+    else
+      enter_insert()
+    end
+  end, "backspace / insert")
   nmap("<Del>", function()
-    enter_insert()
-  end, "insert")
+    if state.qcol < qlen() then
+      delete_forward()
+    else
+      enter_insert()
+    end
+  end, "delete / insert")
+  imap("<BS>", insert_backspace, "backspace")
+  imap("<C-h>", insert_backspace, "backspace")
+  imap("<Del>", insert_delete_forward, "delete")
+  imap("<C-w>", insert_delete_word, "delete word")
 
   -- 系统打开 / 复制路径 / 资源管理器
   local function with_path(fn)

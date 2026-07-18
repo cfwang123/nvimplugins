@@ -13,12 +13,10 @@ In-Neovim video preview/playback: character-art frames above, lyrics + control b
 - Adjustable FPS; timed lyrics (current line highlight)
 - zh/en UI (control-bar language button, similar to music)
 
-Design notes: [DESIGN.zh.md](./DESIGN.zh.md).
-
 ## Dependencies
 
 - Neovim 0.9+
-- Python3 + decode stack (see `scripts/videod.py` and the design doc)
+- Python3 + decode stack (see `scripts/videod.py`)
 
 ## Install
 

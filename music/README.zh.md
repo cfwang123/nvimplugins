@@ -46,7 +46,7 @@ pip install pygame mutagen
 | **MIDI（Windows）** | 打开 `.mid` / `.midi`；`:MusicMidi` / `<leader>mx`；内置预设 |
 | 全局单例 | 全 Neovim 仅一个播放器 buffer；其它 tab 打开会关掉旧窗口 |
 | 显隐 UI | `Alt+M`（可配）显示/隐藏；**底部分屏且不抢焦**；隐藏后后台继续播 |
-| 隐藏状态栏 | 配置 `statusline_when_hidden` 后显示 `[歌名,1:22/3:33]` |
+| 隐藏状态栏 | 配置 `statusline_when_hidden` 后显示 `歌名.mp3[1:22/3:33, 1/299]` |
 | 会话恢复 | 关闭/退出时保存文件夹、文件、进度；再次打开恢复 |
 | Dirty 刷新 | 进度/歌词按行局部重绘，不整 buffer 闪烁 |
 | 自动高度 | 仅**上下分屏**时按内容缩高度；整列只有 music 不改 |
@@ -174,16 +174,49 @@ require("music").setup({
   toggle_key = "<M-m>", -- Alt+M 显示/隐藏
   keys_midi = "<leader>mx", -- Windows MIDI 播放器
   poll_ms = 100,        -- 10f/s：进度条与歌词跟进
-  -- 隐藏播放器 UI 时，状态栏显示 [歌名,1:22/3:33]
-  statusline_when_hidden = false,
+  -- 隐藏 UI（Alt+M）时 statusline 显示：歌名.mp3[1:22/3:33, 1/299]
+  statusline_when_hidden = true,
+  -- 或：播放中始终显示（UI 打开也写 statusline）
+  -- statusline_always = true,
   python = "python",
 })
 ```
 
-`statusline_when_hidden = true` 时：
+### statusline 显示当前曲目
 
-- 会写入 `g:music_statusline`，并尽量挂到 `statusline`（内置 statusline 或已有自定义串）。
-- 也可自行接入：`%{g:music_statusline}` 或 `require('music').statusline()`（lualine 等）。
+开启其一即可（推荐 `statusline_when_hidden`）：
+
+| 选项 | 效果 |
+|------|------|
+| `statusline_when_hidden = true` | **Alt+M 隐藏**播放器后，状态栏显示当前曲 |
+| `statusline_always = true` | 只要在播/有会话就显示（UI 打开也显示） |
+
+显示格式示例：
+
+```text
+歌名.mp3[0:24／4:31 6/58]
+```
+
+含义：文件名（含扩展名）`[进度／总长 第几首/同目录总数]`。  
+分钟不补前导 0、秒两位；进度与总长用全角 `／` 分隔。  
+若前面有天气 emoji 且进度仍显示异常，可在 weather 里设 `status_emoji = false`。
+
+实现细节：
+
+- 自动写入 `g:music_statusline`，并尽量挂到 `vim.o.statusline`。
+- 自定义 statusline / **lualine** 可自行接入：
+
+```lua
+-- 原生 statusline
+vim.o.statusline = vim.o.statusline .. " %{g:music_statusline}"
+
+-- lualine
+{
+  function()
+    return require("music").statusline()
+  end,
+}
+```
 
 会话文件：`stdpath("data")/music-nvim-session.json`。
 

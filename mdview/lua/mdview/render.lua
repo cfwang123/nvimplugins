@@ -185,55 +185,87 @@ local function render_inlines_wrapped(ctx, spans, source_line, width, prefix, pr
   prefix = prefix or ""
   local text, ranges = flatten_spans(spans)
   local body_width = math.max(8, width - str_width(prefix))
-  local wrapped = wrap_text(text, body_width)
-  -- 未折行时 col 与 ranges 对齐；折行后可点击区间近似落在含起点的行
-  local byte_pos = 0
   local pad_prefix = string.rep(" ", str_width(prefix))
-  for i, wline in ipairs(wrapped) do
-    local line_prefix = (i == 1) and prefix or pad_prefix
-    local line = line_prefix .. wline
-    local er = {}
-    local line_start = byte_pos
-    local line_end = byte_pos + #wline
-    if i == 1 and prefix ~= "" and prefix_hl then
-      er[#er + 1] = { col = 0, end_col = #prefix, hl = prefix_hl }
-    end
-    local off = #line_prefix
-    for _, r in ipairs(ranges) do
-      -- 与当前展示行有交集的样式/链接
-      if r.end_col > line_start and r.col < line_end then
-        local c0 = math.max(0, r.col - line_start) + off
-        local c1 = math.min(#wline, r.end_col - line_start) + off
-        if c1 > c0 then
-          local em = { col = c0, end_col = c1, hl = r.hl }
-          if r.kind == "link" and r.href then
-            em.url = r.href
-          end
-          er[#er + 1] = em
-          if r.kind == "link" and r.href then
-            local pl_guess = #ctx.lines + 1
-            ctx.hits[#ctx.hits + 1] = {
-              line = pl_guess,
-              kind = "link",
-              href = r.href,
-              col = c0,
-              end_col = c1,
-            }
-          elseif r.kind == "image_inline" and r.src then
-            local pl_guess = #ctx.lines + 1
-            ctx.hits[#ctx.hits + 1] = {
-              line = pl_guess,
-              kind = "image_inline",
-              src = r.src,
-              col = c0,
-              end_col = c1,
-            }
-          end
+
+  -- 先按源码硬换行拆段，再在段内按宽度软折行（换行原样保留）
+  local hard_parts = {} ---@type {t:string, start:number}[]
+  do
+    local pos = 1
+    local n = #text
+    if n == 0 then
+      hard_parts[1] = { t = "", start = 0 }
+    else
+      while pos <= n do
+        local npos = text:find("\n", pos, true)
+        if not npos then
+          hard_parts[#hard_parts + 1] = { t = text:sub(pos), start = pos - 1 }
+          break
+        end
+        hard_parts[#hard_parts + 1] = { t = text:sub(pos, npos - 1), start = pos - 1 }
+        pos = npos + 1
+        if pos > n then
+          -- 尾部单独一个换行：仍输出空行以对齐源码
+          hard_parts[#hard_parts + 1] = { t = "", start = n }
+          break
         end
       end
     end
-    emit_line(ctx, line, source_line, er)
-    byte_pos = line_end
+  end
+
+  for hi, part in ipairs(hard_parts) do
+    local src = source_line and (source_line + hi - 1) or source_line
+    local wrapped = wrap_text(part.t, body_width)
+    if #wrapped == 0 then
+      wrapped = { "" }
+    end
+    local byte_pos = part.start
+    for i, wline in ipairs(wrapped) do
+      -- 硬换行段的首行才用列表符等 prefix；软折行续行与后续硬换行段用空白对齐
+      local line_prefix = (hi == 1 and i == 1) and prefix or pad_prefix
+      local line = line_prefix .. wline
+      local er = {}
+      local line_start = byte_pos
+      local line_end = byte_pos + #wline
+      if hi == 1 and i == 1 and prefix ~= "" and prefix_hl then
+        er[#er + 1] = { col = 0, end_col = #prefix, hl = prefix_hl }
+      end
+      local off = #line_prefix
+      for _, r in ipairs(ranges) do
+        -- 与当前展示行有交集的样式/链接
+        if r.end_col > line_start and r.col < line_end then
+          local c0 = math.max(0, r.col - line_start) + off
+          local c1 = math.min(#wline, r.end_col - line_start) + off
+          if c1 > c0 then
+            local em = { col = c0, end_col = c1, hl = r.hl }
+            if r.kind == "link" and r.href then
+              em.url = r.href
+            end
+            er[#er + 1] = em
+            if r.kind == "link" and r.href then
+              local pl_guess = #ctx.lines + 1
+              ctx.hits[#ctx.hits + 1] = {
+                line = pl_guess,
+                kind = "link",
+                href = r.href,
+                col = c0,
+                end_col = c1,
+              }
+            elseif r.kind == "image_inline" and r.src then
+              local pl_guess = #ctx.lines + 1
+              ctx.hits[#ctx.hits + 1] = {
+                line = pl_guess,
+                kind = "image_inline",
+                src = r.src,
+                col = c0,
+                end_col = c1,
+              }
+            end
+          end
+        end
+      end
+      emit_line(ctx, line, src, er)
+      byte_pos = line_end
+    end
   end
 end
 
@@ -461,24 +493,37 @@ local function render_blocks(ctx, blocks)
       if min_indent == math.huge then
         min_indent = 0
       end
-      for idx, it in ipairs(b.items or {}) do
+      for _, it in ipairs(b.items or {}) do
         local src0 = it.source_start or b.source_start
         local src1 = it.source_end or src0
         local meta = begin_block(ctx, src0, src1)
         meta.kind = "list_item"
         local ind = it.indent or 0
         local rel = math.max(0, ind - min_indent)
-        local level = math.floor(rel / 2) + 1
-        local bullet
-        if b.list_type == "ol" then
-          bullet = tostring(idx) .. "."
+        -- 嵌套层级：有额外缩进至少第 2 层；约 4 列更深一级（兼容 2 空格 / 1 tab）
+        local level
+        if rel <= 0 then
+          level = 1
         else
-          -- 第1层 ●，第2层及以后 ○
+          level = math.floor((rel - 1) / 4) + 2
+        end
+        local item_lt = it.list_type or b.list_type
+        local bullet
+        -- 嵌套层或本项为 ul：用圆点；顶层 ol：保留源码编号
+        if level > 1 or item_lt == "ul" then
           if level <= 1 then
             bullet = bullets[1] or "●"
           else
             bullet = bullets[2] or bullets[1] or "○"
           end
+        elseif item_lt == "ol" or b.list_type == "ol" then
+          if it.marker and tostring(it.marker):match("^%d+$") then
+            bullet = tostring(it.marker) .. "."
+          else
+            bullet = "1."
+          end
+        else
+          bullet = bullets[1] or "●"
         end
         -- 任务列表：列表符 + 复选框，如 `● ☐ todo` / `● ☑ done`
         if it.checked == true then
