@@ -2,7 +2,7 @@
 
 [English](README.md) | **中文**
 
-> **About** — 面向 Neovim 的小型实验与工具插件集合：含 **mdview**（Markdown 预览）、**pdfview** / **xlsview**（文档表格预览）、**tts**（Windows 朗读）、**imgbuf**（图片）、**music**（音频 + Windows MIDI）、**nvimgames**（小游戏）、**drawbuf**（色块绘图）、**videobuf**（视频）、**es**（Everything 搜文件）、**qrbuf**（二维码）、**httpbuf**（HTTP 调试）、**weather**（天气）、**ntemoji**（NERDTree emoji 图标）。各插件可独立安装，互不强制依赖。
+> **About** — 面向 Neovim 的小型实验与工具插件集合：含 **mdview**（Markdown 预览）、**pdfview** / **xlsview**（文档表格预览）、**tts**（Windows 朗读）、**imgbuf**（图片）、**music**（音频 + Windows MIDI）、**nvimgames**（小游戏）、**drawbuf**（色块绘图）、**videobuf**（视频）、**es**（Everything 搜文件）、**qrbuf**（二维码）、**httpbuf**（HTTP 调试）、**weather**（天气）、**taskmgr**（进程管理）、**ntemoji**（NERDTree emoji 图标）。各插件可独立安装，互不强制依赖。
 
 面向终端里「好玩、好用、少依赖」的实验与日常小工具。多数 UI 支持**中/英文**切换（默认跟随系统语言，可记忆）。
 

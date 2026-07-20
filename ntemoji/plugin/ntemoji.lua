@@ -44,6 +44,8 @@ vim.api.nvim_create_autocmd("FileType", {
     local m = get_mod()
     if m and m.is_enabled() then
       m.ensure_listeners()
+      -- 每次进入树都重挂 [] conceal（syntax/matchadd 可能被 NERDTree 冲掉）
+      pcall(vim.fn["ntemoji#apply_conceal"])
     end
   end,
 })

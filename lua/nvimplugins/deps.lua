@@ -545,7 +545,8 @@ local function append_log(buf, lines)
   local clean = {}
   for _, l in ipairs(lines) do
     if l ~= nil then
-      table.insert(clean, tostring(l):gsub("\r", ""))
+      -- 括号只取 gsub 第一个返回值，避免 (str, count) 被当成 insert(t, pos, value)
+      table.insert(clean, (tostring(l):gsub("\r", "")))
     end
   end
   if #clean == 0 then

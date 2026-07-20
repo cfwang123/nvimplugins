@@ -2,7 +2,7 @@
 
 **English** | [中文](README.zh.md)
 
-> **About** — Small experimental Neovim plugins: **mdview** (Markdown preview), **pdfview** / **xlsview** (document previews), **tts** (Windows SAPI speech), **imgbuf** (images), **music** (audio + Windows MIDI), **nvimgames** (mini-games), **drawbuf** (block drawing), **videobuf** (video), **es** (Everything file search), **qrbuf** (QR codes), **httpbuf** (HTTP scratch), **weather** (forecast), **ntemoji** (NERDTree emoji icons). Each plugin installs independently; no hard dependencies.
+> **About** — Small experimental Neovim plugins: **mdview** (Markdown preview), **pdfview** / **xlsview** (document previews), **tts** (Windows SAPI speech), **imgbuf** (images), **music** (audio + Windows MIDI), **nvimgames** (mini-games), **drawbuf** (block drawing), **videobuf** (video), **es** (Everything file search), **qrbuf** (QR codes), **httpbuf** (HTTP scratch), **weather** (forecast), **taskmgr** (process manager), **ntemoji** (NERDTree emoji icons). Each plugin installs independently; no hard dependencies.
 
 Focused on fun, practical, low-dependency terminal tooling. Most UIs support **Chinese / English** (default: follow system language; preference is remembered).
 
@@ -127,6 +127,7 @@ TTS samples: [tts/testdata/](tts/testdata/) (`sample.zh.txt` / `sample.en.txt`).
 | qrbuf | 0.9+ | Python3 (stdlib, `scripts/qrgen.py`) |
 | httpbuf | 0.9+ | **curl** or Python3 (stdlib urllib) |
 | weather | 0.9+ | Python3 + network (Open-Meteo public HTTP, no key) |
+| taskmgr | 0.9+ | Python3 + **psutil**; Win / Linux / macOS |
 | ntemoji | 0.9+ | [NERDTree](https://github.com/preservim/nerdtree); do **not** load vim-devicons together |
 
 **Startup check**: on load, only **required** pip packages are checked; if missing you get an install prompt. Install opens a log float with live pip output and notifies when done.  
