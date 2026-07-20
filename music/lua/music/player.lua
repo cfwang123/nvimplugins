@@ -3,6 +3,9 @@
 --- Not ffplay/mpv fire-and-forget — full control of position and volume.
 local M = {}
 
+--- Neovim 0.9 只有 vim.loop；0.10+ 为 vim.uv
+local uv = vim.uv or vim.loop
+
 local default_cfg = {
   backend = "python", ---@type "python"|"auto"
   volume = 70,
@@ -38,7 +41,7 @@ local state = {
 }
 
 local function now_sec()
-  return vim.uv.hrtime() / 1e9
+  return uv.hrtime() / 1e9
 end
 
 local function clamp_pos(pos)

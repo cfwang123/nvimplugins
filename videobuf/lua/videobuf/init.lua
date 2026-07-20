@@ -2,6 +2,9 @@
 --- 布局：上方 terminal 只画视频；下方普通 buffer 控制条（对齐 music，可点、不滚动）。
 local M = {}
 
+--- Neovim 0.9 只有 vim.loop；0.10+ 为 vim.uv
+local uv = vim.uv or vim.loop
+
 local player = require("videobuf.player")
 local lyrics = require("videobuf.lyrics")
 local i18n = require("videobuf.i18n")
@@ -972,7 +975,7 @@ end
 
 local function start_ui_timer()
   stop_timers()
-  ui_timer = vim.uv.new_timer()
+  ui_timer = uv.new_timer()
   if not ui_timer then
     return
   end
@@ -1175,7 +1178,7 @@ local function attach_resize()
         end)
         resize_timer = nil
       end
-      local t = vim.uv.new_timer()
+      local t = uv.new_timer()
       if not t then
         return
       end

@@ -1,6 +1,9 @@
 ---@mod videobuf.player Python videod backend (JSON-lines IPC)
 local M = {}
 
+--- Neovim 0.9 只有 vim.loop；0.10+ 为 vim.uv
+local uv = vim.uv or vim.loop
+
 local default_cfg = {
   python = "python",
   volume = 30,
@@ -152,7 +155,7 @@ end
 
 local function start_event_timer()
   stop_event_timer()
-  event_timer = vim.uv.new_timer()
+  event_timer = uv.new_timer()
   if not event_timer then
     return
   end

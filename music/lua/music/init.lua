@@ -1,6 +1,9 @@
 ---@mod music Buffer-based audio player (colorful clickable UI)
 local M = {}
 
+--- Neovim 0.9 只有 vim.loop；0.10+ 为 vim.uv
+local uv = vim.uv or vim.loop
+
 local player = require("music.player")
 local midi = require("music.midi")
 local lyrics = require("music.lyrics")
@@ -1943,7 +1946,7 @@ start_poll = function()
   if not should_poll() then
     return
   end
-  poll_timer = vim.uv.new_timer()
+  poll_timer = uv.new_timer()
   if not poll_timer then
     return
   end

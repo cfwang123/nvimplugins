@@ -7,6 +7,9 @@ local highlight = require("xlsview.highlight")
 
 local M = {}
 
+--- Neovim 0.9 只有 vim.loop；0.10+ 为 vim.uv
+local uv = vim.uv or vim.loop
+
 ---@type table<integer, table>
 local states = {}
 local auto_installed = false
@@ -983,7 +986,7 @@ local function attach_autocmds(st)
           st.resize_timer:stop()
         end)
       end
-      local timer = vim.uv.new_timer()
+      local timer = uv.new_timer()
       st.resize_timer = timer
       if timer then
         timer:start(120, 0, function()

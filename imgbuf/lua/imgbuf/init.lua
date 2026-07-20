@@ -60,6 +60,8 @@ local resize_timers = {} ---@type table<integer, uv.uv_timer_t>
 local win_preview = {} ---@type table<integer, integer>
 --- Guard against re-entrant fixups when reclaiming splits
 local reclaiming = false
+--- Neovim 0.9 只有 vim.loop；0.10+ 为 vim.uv
+local uv = vim.uv or vim.loop
 
 local function plugin_root()
   local src = debug.getinfo(1, "S").source:sub(2)
@@ -683,33 +685,47 @@ local function attach_resize(buf, win)
   vim.b[buf].imgbuf_resize_attached = true
 
   local aug = vim.api.nvim_create_augroup("ImgbufResize_" .. buf, { clear = true })
+  local function schedule_resize_refresh()
+    if not vim.api.nvim_buf_is_valid(buf) then
+      return
+    end
+    local w = vim.fn.bufwinid(buf)
+    if w == -1 then
+      return
+    end
+    -- 尺寸未变则跳过（避免 WinResized 误触反复重建）
+    local st = state_by_buf[buf]
+    local cols, rows = win_cell_size(w)
+    if st and st.last_cols == cols and st.last_rows == rows then
+      return
+    end
+    cancel_resize_timer(buf)
+    local delay = config.resize_debounce_ms or 100
+    local timer = uv and uv.new_timer and uv.new_timer() or nil
+    if not timer then
+      M.refresh(buf)
+      return
+    end
+    resize_timers[buf] = timer
+    timer:start(delay, 0, function()
+      vim.schedule(function()
+        cancel_resize_timer(buf)
+        if vim.api.nvim_buf_is_valid(buf) then
+          M.refresh(buf)
+        end
+      end)
+    end)
+  end
+
   vim.api.nvim_create_autocmd({ "VimResized", "WinResized" }, {
     group = aug,
-    callback = function()
-      if not vim.api.nvim_buf_is_valid(buf) then
-        return
-      end
-      local w = vim.fn.bufwinid(buf)
-      if w == -1 then
-        return
-      end
-      cancel_resize_timer(buf)
-      local delay = config.resize_debounce_ms or 100
-      local timer = vim.uv.new_timer()
-      if not timer then
-        M.refresh(buf)
-        return
-      end
-      resize_timers[buf] = timer
-      timer:start(delay, 0, function()
-        vim.schedule(function()
-          cancel_resize_timer(buf)
-          if vim.api.nvim_buf_is_valid(buf) then
-            M.refresh(buf)
-          end
-        end)
-      end)
-    end,
+    callback = schedule_resize_refresh,
+  })
+  -- 部分 GUI（nvim-qt）改分栏宽度只触发 WinScrolled，补一条兜底
+  vim.api.nvim_create_autocmd("WinScrolled", {
+    group = aug,
+    buffer = buf,
+    callback = schedule_resize_refresh,
   })
 
   vim.api.nvim_create_autocmd("BufWipeout", {
@@ -892,13 +908,15 @@ function M.open(path, opts)
 
   vim.b[buf].imgbuf_term_chan = term_chan
 
-  -- Ignore OSC/DCS TermRequest on this buffer (static image; no shell integration)
-  vim.api.nvim_create_autocmd("TermRequest", {
-    buffer = buf,
-    callback = function()
-      -- no-op: do not attempt replies on preview terminals
-    end,
-  })
+  -- Ignore OSC/DCS TermRequest（仅 Neovim 0.10+ 有此 event；0.9 会 Invalid event）
+  if vim.fn.has("nvim-0.10") == 1 then
+    pcall(vim.api.nvim_create_autocmd, "TermRequest", {
+      buffer = buf,
+      callback = function()
+        -- no-op: do not attempt replies on preview terminals
+      end,
+    })
+  end
 
   local function send_to_term(data)
     if not term_chan or term_chan <= 0 then
@@ -910,8 +928,22 @@ function M.open(path, opts)
     if type(data) ~= "table" or #data == 0 then
       return
     end
-    -- jobstart splits on NL; rejoin. pcall avoids rare closed-stream races.
-    pcall(vim.api.nvim_chan_send, term_chan, table.concat(data, "\n"))
+    -- jobstart 按 \n 拆行（Windows 行尾常带 \r）。nvim 终端要用 \r\n，
+    -- 否则半块字符常出现「一行内容一行空白」的横条。
+    local lines = {}
+    for _, line in ipairs(data) do
+      if line ~= nil then
+        lines[#lines + 1] = tostring(line):gsub("\r$", "")
+      end
+    end
+    -- jobstart 完成时末项常为空串，去掉以免多出空行
+    while #lines > 0 and lines[#lines] == "" do
+      lines[#lines] = nil
+    end
+    if #lines == 0 then
+      return
+    end
+    pcall(vim.api.nvim_chan_send, term_chan, table.concat(lines, "\r\n") .. "\r\n")
   end
 
   -- Merge into current env (jobstart `env` replaces the whole environment if set)
@@ -1129,9 +1161,29 @@ if isinstance(img, list):
     img = Image.open(img[0])
 img.convert("RGBA").save(sys.argv[1], "PNG")
 ]]
-  local result = vim.system({ py, "-X", "utf8", "-c", code, tmp }, { text = true }):wait()
-  if result.code ~= 0 then
-    local err = (result.stderr ~= "" and result.stderr) or result.stdout or "clipboard grab failed"
+  local cmd = { py, "-X", "utf8", "-c", code, tmp }
+  local code_exit, stdout, stderr = -1, "", ""
+  local used = false
+  if vim.system then
+    local ok, result = pcall(function()
+      return vim.system(cmd, { text = true }):wait()
+    end)
+    if ok and type(result) == "table" then
+      code_exit = result.code or -1
+      stdout = result.stdout or ""
+      stderr = result.stderr or ""
+      used = true
+    end
+  end
+  if not used then
+    -- Neovim 0.9 无 vim.system
+    local out = vim.fn.system(cmd)
+    code_exit = vim.v.shell_error
+    stdout = out or ""
+    stderr = code_exit ~= 0 and (out or "") or ""
+  end
+  if code_exit ~= 0 then
+    local err = (stderr ~= "" and stderr) or stdout or "clipboard grab failed"
     return nil, err:gsub("%s+$", "")
   end
   if vim.fn.filereadable(tmp) == 0 then

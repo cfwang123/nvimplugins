@@ -6,6 +6,8 @@ local M = {}
 
 local CHUNK = 4096
 local next_id = 771001
+--- Neovim 0.9 只有 vim.loop；0.10+ 为 vim.uv
+local uv = vim.uv or vim.loop
 
 ---@class OverlayState
 ---@field id integer
@@ -27,25 +29,54 @@ local function plugin_root()
   return vim.fn.fnamemodify(src, ":h:h:h")
 end
 
----@param s string
+-- PNG 等二进制常含 NUL；经 vim.fn.system 的 input 会变成 Blob 并触发 E976。
+-- Neovim 0.10+ 用 vim.base64；0.9 走纯 Lua（不经过 Vimscript 字符串/Blob）。
+local B64_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+
+---@param s string 可为含 NUL 的二进制
+---@return string
+local function b64encode_lua(s)
+  local n = #s
+  if n == 0 then
+    return ""
+  end
+  local out = {}
+  local oi = 1
+  local i = 1
+  while i <= n do
+    local b1 = s:byte(i)
+    local b2 = (i + 1 <= n) and s:byte(i + 1) or nil
+    local b3 = (i + 2 <= n) and s:byte(i + 2) or nil
+    local n2, n3 = b2 ~= nil, b3 ~= nil
+    b2, b3 = b2 or 0, b3 or 0
+    local v = b1 * 65536 + b2 * 256 + b3
+    local c1 = math.floor(v / 262144) % 64
+    local c2 = math.floor(v / 4096) % 64
+    local c3 = math.floor(v / 64) % 64
+    local c4 = v % 64
+    out[oi] = B64_ALPHABET:sub(c1 + 1, c1 + 1)
+    out[oi + 1] = B64_ALPHABET:sub(c2 + 1, c2 + 1)
+    out[oi + 2] = n2 and B64_ALPHABET:sub(c3 + 1, c3 + 1) or "="
+    out[oi + 3] = n3 and B64_ALPHABET:sub(c4 + 1, c4 + 1) or "="
+    oi = oi + 4
+    i = i + 3
+  end
+  return table.concat(out)
+end
+
+---@param s string 可为含 NUL 的二进制
 ---@return string
 local function b64encode(s)
+  if type(s) ~= "string" or s == "" then
+    return ""
+  end
   if vim.base64 and vim.base64.encode then
-    return vim.base64.encode(s)
-  end
-  local py = "python"
-  if vim.fn.executable(py) ~= 1 and vim.fn.executable("python3") == 1 then
-    py = "python3"
-  end
-  if vim.fn.executable(py) == 1 then
-    local code =
-      "import sys,base64; sys.stdout.write(base64.standard_b64encode(sys.stdin.buffer.read()).decode('ascii'))"
-    local out = vim.fn.system({ py, "-c", code }, s)
-    if vim.v.shell_error == 0 and type(out) == "string" and #out > 0 then
-      return (out:gsub("%s+", ""))
+    local ok, res = pcall(vim.base64.encode, s)
+    if ok and type(res) == "string" and res ~= "" then
+      return res
     end
   end
-  return ""
+  return b64encode_lua(s)
 end
 
 ---写宿主终端（多路尝试）
@@ -433,7 +464,7 @@ function M.attach_overlay(opts)
   end, 200)
 
   -- 焦点在预览时周期性重绘（nvim 重绘会盖掉图层）
-  local timer = vim.uv.new_timer()
+  local timer = uv and uv.new_timer and uv.new_timer() or nil
   if timer then
     st.timer = timer
     timer:start(300, 300, function()

@@ -1,6 +1,9 @@
 ---@mod nvimgames.mine Windows-style Minesweeper for Neovim
 local M = {}
 
+--- Neovim 0.9 只有 vim.loop；0.10+ 为 vim.uv
+local uv = vim.uv or vim.loop
+
 local i18n = require("nvimgames.i18n")
 
 ---@class MineDifficulty
@@ -262,7 +265,7 @@ end
 local function start_timer(st, buf)
   stop_timer(st)
   st.seconds = 0
-  st.timer = vim.uv.new_timer()
+  st.timer = uv.new_timer()
   if not st.timer then
     return
   end
@@ -862,7 +865,7 @@ end
 function M.open(opts)
   opts = opts or {}
   ensure_hl()
-  math.randomseed(os.time() % 100000 + (vim.uv.hrtime() % 100000))
+  math.randomseed(os.time() % 100000 + (uv.hrtime() % 100000))
 
   local diff = opts.difficulty or config.difficulty or "beginner"
   local win = vim.api.nvim_get_current_win()

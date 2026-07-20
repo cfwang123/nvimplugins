@@ -1,6 +1,9 @@
 ---@mod nvimgames.twentyfour 计算 24 点
 local M = {}
 
+--- Neovim 0.9 只有 vim.loop；0.10+ 为 vim.uv
+local uv = vim.uv or vim.loop
+
 local i18n = require("nvimgames.i18n")
 local ns = vim.api.nvim_create_namespace("nvimgames_twentyfour")
 local state_by_buf = {} ---@type table<integer, table>
@@ -682,7 +685,7 @@ end
 function M.open(opts)
   opts = opts or {}
   ensure_hl()
-  math.randomseed(os.time() % 100000 + (vim.uv.hrtime() % 100000))
+  math.randomseed(os.time() % 100000 + (uv.hrtime() % 100000))
 
   local win = vim.api.nvim_get_current_win()
   local buf = vim.api.nvim_create_buf(true, true)

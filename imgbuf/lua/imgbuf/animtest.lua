@@ -23,6 +23,8 @@ local M = {}
 
 ---@type AnimTestState|nil
 local state = nil
+--- Neovim 0.9 只有 vim.loop；0.10+ 为 vim.uv
+local uv = vim.uv or vim.loop
 
 local function stop_timer()
   if not state or not state.timer then
@@ -147,7 +149,7 @@ local function draw_once()
   state.cols = cols
   state.rows = rows
 
-  local now = vim.uv.hrtime() / 1e6 -- ms
+  local now = uv.hrtime() / 1e6 -- ms
   if state.last_ts > 0 then
     local dt = now - state.last_ts
     if dt > 0 and dt < 2000 then
@@ -160,7 +162,7 @@ local function draw_once()
   end
   state.last_ts = now
 
-  local t0 = vim.uv.hrtime()
+  local t0 = uv.hrtime()
   local payload = build_frame(
     cols,
     rows,
@@ -171,7 +173,7 @@ local function draw_once()
     state.paused
   )
   pcall(vim.api.nvim_chan_send, state.term_chan, payload)
-  state.last_draw_ms = (vim.uv.hrtime() - t0) / 1e6
+  state.last_draw_ms = (uv.hrtime() - t0) / 1e6
   state.frame = state.frame + 1
 
   -- 滑动窗口：避免 avg 被启动阶段拖死
@@ -187,7 +189,7 @@ local function start_timer()
     return
   end
   local interval = math.max(16, math.floor(1000 / state.fps + 0.5))
-  local timer = vim.uv.new_timer()
+  local timer = uv and uv.new_timer and uv.new_timer() or nil
   if not timer then
     vim.notify("imgbuf animtest: cannot create timer", vim.log.levels.ERROR)
     return

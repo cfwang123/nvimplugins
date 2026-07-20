@@ -113,27 +113,42 @@ local function prefs_path()
   return vim.fn.stdpath("data") .. "/taskmgr-nvim-cols.json"
 end
 
+---nvim_set_hl：0.9 不支持 force 键（会 invalid key，整组高亮失败）
+---@param name string
+---@param val table
+local function set_hl(name, val)
+  local o = {}
+  for k, v in pairs(val) do
+    o[k] = v
+  end
+  if vim.fn.has("nvim-0.10") == 1 then
+    o.force = true
+  end
+  pcall(vim.api.nvim_set_hl, 0, name, o)
+end
+
 local function ensure_hl()
-  pcall(vim.api.nvim_set_hl, 0, "TaskmgrNormal", { fg = "#111111", bg = "#ffffff", force = true })
-  pcall(vim.api.nvim_set_hl, 0, "TaskmgrTitle", { fg = "#111111", bg = "#ffffff", bold = true, force = true })
-  pcall(vim.api.nvim_set_hl, 0, "TaskmgrHelp", { fg = "#666666", bg = "#ffffff", force = true })
-  pcall(vim.api.nvim_set_hl, 0, "TaskmgrHead", { fg = "#003366", bg = "#e8f0ff", bold = true, force = true })
-  pcall(vim.api.nvim_set_hl, 0, "TaskmgrBorder", { fg = "#4488aa", bg = "#ffffff", force = true })
-  pcall(vim.api.nvim_set_hl, 0, "TaskmgrStatus", { fg = "#006600", bg = "#ffffff", force = true })
-  pcall(vim.api.nvim_set_hl, 0, "TaskmgrErr", { fg = "#aa0000", bg = "#ffffff", bold = true, force = true })
-  pcall(vim.api.nvim_set_hl, 0, "TaskmgrFocusCol", { fg = "#003366", bg = "#fff3b0", bold = true, force = true })
-  pcall(vim.api.nvim_set_hl, 0, "TaskmgrSearch", { fg = "#0d47a1", bg = "#fff9c4", force = true })
-  pcall(vim.api.nvim_set_hl, 0, "TaskmgrMatch", { fg = "#000000", bg = "#ffeb3b", bold = true, force = true })
+  -- gui + cterm：无 termguicolors 时仍能看见列高亮
+  set_hl("TaskmgrNormal", { fg = "#111111", bg = "#ffffff", ctermfg = 233, ctermbg = 15 })
+  set_hl("TaskmgrTitle", { fg = "#111111", bg = "#ffffff", bold = true, ctermfg = 233, ctermbg = 15 })
+  set_hl("TaskmgrHelp", { fg = "#666666", bg = "#ffffff", ctermfg = 242, ctermbg = 15 })
+  set_hl("TaskmgrHead", { fg = "#003366", bg = "#e8f0ff", bold = true, ctermfg = 24, ctermbg = 189 })
+  set_hl("TaskmgrBorder", { fg = "#4488aa", bg = "#ffffff", ctermfg = 67, ctermbg = 15 })
+  set_hl("TaskmgrStatus", { fg = "#006600", bg = "#ffffff", ctermfg = 28, ctermbg = 15 })
+  set_hl("TaskmgrErr", { fg = "#aa0000", bg = "#ffffff", bold = true, ctermfg = 124, ctermbg = 15 })
+  set_hl("TaskmgrFocusCol", { fg = "#003366", bg = "#fff3b0", bold = true, ctermfg = 24, ctermbg = 229 })
+  set_hl("TaskmgrSearch", { fg = "#0d47a1", bg = "#fff9c4", ctermfg = 25, ctermbg = 229 })
+  set_hl("TaskmgrMatch", { fg = "#000000", bg = "#ffeb3b", bold = true, ctermfg = 16, ctermbg = 226 })
   -- CPU：绿 → 黄 → 橙 → 红（背景随程度加深）
-  pcall(vim.api.nvim_set_hl, 0, "TaskmgrCpu1", { fg = "#1b5e20", bg = "#e8f5e9", force = true })
-  pcall(vim.api.nvim_set_hl, 0, "TaskmgrCpu2", { fg = "#f57f17", bg = "#fff9c4", bold = true, force = true })
-  pcall(vim.api.nvim_set_hl, 0, "TaskmgrCpu3", { fg = "#e65100", bg = "#ffe0b2", bold = true, force = true })
-  pcall(vim.api.nvim_set_hl, 0, "TaskmgrCpu4", { fg = "#b71c1c", bg = "#ffcdd2", bold = true, force = true })
+  set_hl("TaskmgrCpu1", { fg = "#1b5e20", bg = "#e8f5e9", ctermfg = 22, ctermbg = 194 })
+  set_hl("TaskmgrCpu2", { fg = "#f57f17", bg = "#fff9c4", bold = true, ctermfg = 178, ctermbg = 229 })
+  set_hl("TaskmgrCpu3", { fg = "#e65100", bg = "#ffe0b2", bold = true, ctermfg = 166, ctermbg = 223 })
+  set_hl("TaskmgrCpu4", { fg = "#b71c1c", bg = "#ffcdd2", bold = true, ctermfg = 124, ctermbg = 217 })
   -- 内存：浅蓝 → 紫 → 粉 → 红
-  pcall(vim.api.nvim_set_hl, 0, "TaskmgrMem1", { fg = "#0d47a1", bg = "#e3f2fd", force = true })
-  pcall(vim.api.nvim_set_hl, 0, "TaskmgrMem2", { fg = "#4a148c", bg = "#f3e5f5", bold = true, force = true })
-  pcall(vim.api.nvim_set_hl, 0, "TaskmgrMem3", { fg = "#880e4f", bg = "#fce4ec", bold = true, force = true })
-  pcall(vim.api.nvim_set_hl, 0, "TaskmgrMem4", { fg = "#b71c1c", bg = "#ffcdd2", bold = true, force = true })
+  set_hl("TaskmgrMem1", { fg = "#0d47a1", bg = "#e3f2fd", ctermfg = 25, ctermbg = 153 })
+  set_hl("TaskmgrMem2", { fg = "#4a148c", bg = "#f3e5f5", bold = true, ctermfg = 54, ctermbg = 189 })
+  set_hl("TaskmgrMem3", { fg = "#880e4f", bg = "#fce4ec", bold = true, ctermfg = 89, ctermbg = 218 })
+  set_hl("TaskmgrMem4", { fg = "#b71c1c", bg = "#ffcdd2", bold = true, ctermfg = 124, ctermbg = 217 })
 end
 
 local function script_path()
@@ -163,6 +178,93 @@ local function resolve_python()
     end
   end
   return nil
+end
+
+---异步跑外部命令：优先 vim.system（0.10+），否则 jobstart（0.9 / Windows 更稳）
+---@param cmd string[]
+---@param opts? { text?: boolean, timeout?: number }
+---@param on_exit fun(res: { code: number, stdout: string, stderr: string })
+local function run_async(cmd, opts, on_exit)
+  opts = opts or {}
+  if vim.system then
+    local ok = pcall(function()
+      vim.system(cmd, { text = opts.text ~= false, timeout = opts.timeout }, function(res)
+        on_exit({
+          code = res.code or -1,
+          stdout = res.stdout or "",
+          stderr = res.stderr or "",
+        })
+      end)
+    end)
+    if ok then
+      return
+    end
+  end
+
+  local out_chunks, err_chunks = {}, {}
+  local finished = false
+  local function finish(res)
+    if finished then
+      return
+    end
+    finished = true
+    on_exit(res)
+  end
+
+  local job = vim.fn.jobstart(cmd, {
+    stdout_buffered = true,
+    stderr_buffered = true,
+    on_stdout = function(_, data)
+      if not data then
+        return
+      end
+      for _, line in ipairs(data) do
+        if line ~= nil then
+          out_chunks[#out_chunks + 1] = line
+        end
+      end
+    end,
+    on_stderr = function(_, data)
+      if not data then
+        return
+      end
+      for _, line in ipairs(data) do
+        if line ~= nil then
+          err_chunks[#err_chunks + 1] = line
+        end
+      end
+    end,
+    on_exit = function(_, code)
+      -- jobstart 行缓冲会多一个尾空串，去掉以免多余换行
+      if out_chunks[#out_chunks] == "" then
+        out_chunks[#out_chunks] = nil
+      end
+      if err_chunks[#err_chunks] == "" then
+        err_chunks[#err_chunks] = nil
+      end
+      finish({
+        code = code or -1,
+        stdout = table.concat(out_chunks, "\n"),
+        stderr = table.concat(err_chunks, "\n"),
+      })
+    end,
+  })
+  if job <= 0 then
+    finish({ code = -1, stdout = "", stderr = "jobstart failed" })
+    return
+  end
+  local timeout = tonumber(opts.timeout)
+  if timeout and timeout > 0 then
+    vim.defer_fn(function()
+      if finished then
+        return
+      end
+      -- 仍在跑则强停，on_exit 会 finish
+      if vim.fn.jobwait({ job }, 0)[1] == -1 then
+        pcall(vim.fn.jobstop, job)
+      end
+    end, timeout)
+  end
 end
 
 ---打开时计算并锁定的几何
@@ -1122,20 +1224,25 @@ local function build_frame()
         local endp = pos + #cell
         pos = endp
 
+        -- 当前列浅底（可被 CPU/内存/匹配高亮覆盖）
+        if c.id == state.col_focus_id then
+          ranges[#ranges + 1] = { start = start, end_ = endp, hl = "TaskmgrFocusCol", pri = 110 }
+        end
+
         if c.id == "cpu" then
           local hl = cpu_hl(proc)
           if hl then
-            ranges[#ranges + 1] = { start = start, end_ = endp, hl = hl }
+            ranges[#ranges + 1] = { start = start, end_ = endp, hl = hl, pri = 150 }
           end
         elseif c.id == "mem" or c.id == "mem_pct" then
           local hl = mem_hl(proc)
           if hl then
-            ranges[#ranges + 1] = { start = start, end_ = endp, hl = hl }
+            ranges[#ranges + 1] = { start = start, end_ = endp, hl = hl, pri = 150 }
           end
         elseif c.id == "gpu" then
           local hl = gpu_hl(proc)
           if hl then
-            ranges[#ranges + 1] = { start = start, end_ = endp, hl = hl }
+            ranges[#ranges + 1] = { start = start, end_ = endp, hl = hl, pri = 150 }
           end
         end
 
@@ -1146,7 +1253,7 @@ local function build_frame()
             local ms = start + content_off + mr[1]
             local me = start + content_off + mr[2]
             if me > ms and me <= endp then
-              ranges[#ranges + 1] = { start = ms, end_ = me, hl = "TaskmgrMatch" }
+              ranges[#ranges + 1] = { start = ms, end_ = me, hl = "TaskmgrMatch", pri = 200 }
             end
           end
         end
@@ -1161,6 +1268,7 @@ local function build_frame()
           col = r.start,
           end_col = r.end_,
           hl = r.hl,
+          pri = r.pri,
         }
       end
     end
@@ -1215,14 +1323,17 @@ local function build_frame()
       col = 0,
       end_col = #lines[header_line],
       hl = "TaskmgrHead",
+      pri = 100,
     }
     for _, hr in ipairs(head_ranges) do
       if hr.id == state.col_focus_id then
+        -- 优先级高于表头底色，确保当前列黄底可见
         extmarks[#extmarks + 1] = {
           line = header_line - 1,
           col = hr.start,
           end_col = hr.end_,
           hl = "TaskmgrFocusCol",
+          pri = 160,
         }
       end
     end
@@ -1300,10 +1411,22 @@ function M._paint()
 
   vim.api.nvim_buf_clear_namespace(state.buf, NS, 0, -1)
   for _, em in ipairs(frame.extmarks) do
+    local pri = em.pri
+    if not pri then
+      if em.hl == "TaskmgrMatch" then
+        pri = 200
+      elseif em.hl == "TaskmgrFocusCol" then
+        pri = 160
+      elseif em.hl and (em.hl:find("^TaskmgrCpu") or em.hl:find("^TaskmgrMem")) then
+        pri = 150
+      else
+        pri = 100
+      end
+    end
     local opts = {
       end_col = em.end_col,
       hl_group = em.hl,
-      priority = (em.hl == "TaskmgrMatch") and 200 or 100,
+      priority = pri,
     }
     if em.virt_text then
       opts.virt_text = em.virt_text
@@ -1441,7 +1564,7 @@ local function fetch(cb)
   cmd[#cmd + 1] = script
   cmd[#cmd + 1] = tostring(sample)
 
-  vim.system(cmd, { text = true, timeout = 20000 }, function(res)
+  run_async(cmd, { text = true, timeout = 20000 }, function(res)
     vim.schedule(function()
       state.busy = false
       local code = res.code or -1
@@ -1539,7 +1662,7 @@ local function kill_proc()
       -- Linux / macOS
       cmd = { "kill", "-TERM", tostring(pid) }
     end
-    vim.system(cmd, { text = true }, function(res)
+    run_async(cmd, { text = true }, function(res)
       vim.schedule(function()
         if (res.code or 1) == 0 then
           vim.notify(i18n.t("killed") .. tostring(pid), vim.log.levels.INFO)

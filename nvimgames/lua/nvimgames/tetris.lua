@@ -1,6 +1,9 @@
 ---@mod nvimgames.tetris 俄罗斯方块（特殊★ / 人机对战垃圾攻击）
 local M = {}
 
+--- Neovim 0.9 只有 vim.loop；0.10+ 为 vim.uv
+local uv = vim.uv or vim.loop
+
 local i18n = require("nvimgames.i18n")
 local ns = vim.api.nvim_create_namespace("nvimgames_tetris")
 local state_by_buf = {} ---@type table<integer, table>
@@ -624,7 +627,7 @@ local function start_special_fill_anim(sess, side, hit)
 
   local idx = 0
   local ms = config.special_fill_ms or 35
-  side.fill_timer = vim.uv.new_timer()
+  side.fill_timer = uv.new_timer()
   if not side.fill_timer then
     -- 无 timer 则瞬间填完
     for _, c in ipairs(cells) do
@@ -1357,7 +1360,7 @@ local function start_timers(sess, buf)
   end
 
   -- 玩家重力
-  sess.timer = vim.uv.new_timer()
+  sess.timer = uv.new_timer()
   if sess.timer then
     local function schedule_p()
       local ms = tick_interval(sess.player)
@@ -1395,7 +1398,7 @@ local function start_timers(sess, buf)
 
   -- AI
   if sess.versus and sess.ai then
-    sess.ai_timer = vim.uv.new_timer()
+    sess.ai_timer = uv.new_timer()
     if sess.ai_timer then
       local function schedule_ai()
         local base = config.ai_tick_ms or 180
@@ -1519,7 +1522,7 @@ end
 function M.open(opts)
   opts = opts or {}
   ensure_hl()
-  math.randomseed(os.time() % 100000 + (vim.uv.hrtime() % 100000))
+  math.randomseed(os.time() % 100000 + (uv.hrtime() % 100000))
 
   local versus = opts.mode == "versus" or opts.versus == true
 

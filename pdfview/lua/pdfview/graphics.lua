@@ -3,6 +3,9 @@
 --- 对齐 imgbuf 成功路径：检测终端 → encode PNG → 按可见行定位叠层 → 滚动重绘
 local M = {}
 
+--- Neovim 0.9 只有 vim.loop；0.10+ 为 vim.uv
+local uv = vim.uv or vim.loop
+
 local CHUNK = 4096
 local next_id = 770001
 
@@ -14,24 +17,54 @@ local function plugin_root()
   return vim.fn.fnamemodify(src, ":h:h:h")
 end
 
-local function b64encode(s)
-  if vim.base64 and vim.base64.encode then
-    return vim.base64.encode(s)
-  end
-  local py = "python"
-  if vim.fn.executable(py) ~= 1 and vim.fn.executable("python3") == 1 then
-    py = "python3"
-  end
-  if vim.fn.executable(py) ~= 1 then
+-- PNG 等二进制常含 NUL；经 vim.fn.system 的 input 会变成 Blob 并触发 E976。
+-- Neovim 0.10+ 用 vim.base64；0.9 走纯 Lua。
+local B64_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+
+---@param s string 可为含 NUL 的二进制
+---@return string
+local function b64encode_lua(s)
+  local n = #s
+  if n == 0 then
     return ""
   end
-  local code =
-    "import sys,base64; sys.stdout.write(base64.standard_b64encode(sys.stdin.buffer.read()).decode('ascii'))"
-  local out = vim.fn.system({ py, "-c", code }, s)
-  if vim.v.shell_error == 0 and type(out) == "string" and #out > 0 then
-    return (out:gsub("%s+", ""))
+  local out = {}
+  local oi = 1
+  local i = 1
+  while i <= n do
+    local b1 = s:byte(i)
+    local b2 = (i + 1 <= n) and s:byte(i + 1) or nil
+    local b3 = (i + 2 <= n) and s:byte(i + 2) or nil
+    local n2, n3 = b2 ~= nil, b3 ~= nil
+    b2, b3 = b2 or 0, b3 or 0
+    local v = b1 * 65536 + b2 * 256 + b3
+    local c1 = math.floor(v / 262144) % 64
+    local c2 = math.floor(v / 4096) % 64
+    local c3 = math.floor(v / 64) % 64
+    local c4 = v % 64
+    out[oi] = B64_ALPHABET:sub(c1 + 1, c1 + 1)
+    out[oi + 1] = B64_ALPHABET:sub(c2 + 1, c2 + 1)
+    out[oi + 2] = n2 and B64_ALPHABET:sub(c3 + 1, c3 + 1) or "="
+    out[oi + 3] = n3 and B64_ALPHABET:sub(c4 + 1, c4 + 1) or "="
+    oi = oi + 4
+    i = i + 3
   end
-  return ""
+  return table.concat(out)
+end
+
+---@param s string 可为含 NUL 的二进制
+---@return string
+local function b64encode(s)
+  if type(s) ~= "string" or s == "" then
+    return ""
+  end
+  if vim.base64 and vim.base64.encode then
+    local ok, res = pcall(vim.base64.encode, s)
+    if ok and type(res) == "string" and res ~= "" then
+      return res
+    end
+  end
+  return b64encode_lua(s)
 end
 
 local function tty_write(data)
@@ -853,7 +886,7 @@ function M.attach_preview(opts)
 
   -- Kitty 可低频补画对抗 redraw；iTerm 不再 timer 重画（防堆叠）
   if protocol ~= "iterm" then
-    local timer = vim.uv.new_timer()
+    local timer = uv.new_timer()
     if timer then
       ov.timer = timer
       timer:start(400, 400, function()
@@ -919,7 +952,7 @@ function M.attach_preview(opts)
 
     -- 焦点切换（打开 float/弹窗、切到源窗或其它窗）→ 清高清
     -- 用 WinLeave 挂在预览窗；并用 WinEnter 兜底「当前窗不再是预览」
-    ov._focus_grace = vim.uv.hrtime()
+    ov._focus_grace = uv.hrtime()
     local focus_grace_ns = 200 * 1000000
     vim.api.nvim_create_autocmd({ "WinLeave", "BufLeave" }, {
       group = aug,
@@ -928,7 +961,7 @@ function M.attach_preview(opts)
         if overlays[buf] ~= ov then
           return
         end
-        local now = vim.uv.hrtime()
+        local now = uv.hrtime()
         if ov._focus_grace and (now - ov._focus_grace) < focus_grace_ns then
           return
         end
@@ -951,7 +984,7 @@ function M.attach_preview(opts)
         if overlays[buf] ~= ov then
           return
         end
-        local now = vim.uv.hrtime()
+        local now = uv.hrtime()
         if ov._focus_grace and (now - ov._focus_grace) < focus_grace_ns then
           return
         end
@@ -1244,7 +1277,7 @@ function M.attach_float(opts)
   vim.defer_fn(paint_float, 150)
   vim.defer_fn(paint_float, 350)
 
-  local timer = vim.uv.new_timer()
+  local timer = uv.new_timer()
   if timer then
     ov.timer = timer
     timer:start(400, 400, function()
