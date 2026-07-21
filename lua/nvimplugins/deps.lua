@@ -1,5 +1,5 @@
 ---@mod nvimplugins.deps 启动时检测 pip 依赖并提示安装
----无 npm 依赖。可选系统命令（chafa 等）仅作提示，不自动装。
+---无 npm 依赖。可选系统命令仅作提示，不自动装。
 ---启动默认只提示「必需」缺失；推荐包需 :NvimpluginsDeps 或 force。
 local M = {}
 

@@ -6,7 +6,7 @@ local M = {}
 ---@field max_height number
 ---@field max_width number|nil
 ---@field max_images number
----@field backend "auto"|"chafa"|"python"|"none"
+---@field backend "python"|"none" 字符画仅 Python+Pillow（auto/chafa 兼容映射为 python）
 ---@field palette_size number
 ---@field open_with "float"|"edit"|"none"
 ---@field python string
@@ -50,9 +50,17 @@ local M = {}
 ---@field sync_reverse boolean
 ---@field image MdViewImageConfig
 ---@field html MdViewHtmlConfig
+---@field paste_image MdViewPasteImageConfig
 ---@field highlights table|nil
 ---@field auto_side_open boolean
 ---@field keys { view?: string|false, side?: string|false, toc?: string|false } 全局快捷键；false 关闭该项
+
+---@class MdViewPasteImageConfig
+---@field enable boolean 是否启用剪贴板贴图
+---@field dir string 相对 md 文件目录的子目录（默认 images）
+---@field alt string 插入链接的 alt 文本（默认 "image" → ![image](...)）
+---@field intercept_clipboard_put boolean 拦截 p/P：当寄存器为 +/* 时智能贴图（推荐，兼容 nmap Q="+p）
+---@field keys { insert?: string[]|false, normal?: string[]|false } 额外智能粘贴键
 
 local defaults = {
   split_direction = "right",
@@ -62,6 +70,18 @@ local defaults = {
     view = "<leader>mv", -- :MdView 单窗预览
     side = "<leader>ms", -- :MdSideView 侧边预览
     toc = "<leader>toc", -- 编辑窗 / 任意处：弹出 TOC float
+  },
+  --- 粘贴剪贴板图片 → 保存到 <md目录>/images/yyyyMMddHHmmss.png 并插入 ![image](...)
+  paste_image = {
+    enable = true,
+    dir = "images",
+    alt = "image",
+    -- 拦截 "+p / "*p（及 nmap 映射到 "+p 的键）；nnoremap Q "+p 不会递归，见 README
+    intercept_clipboard_put = true,
+    keys = {
+      insert = { "<C-S-v>", "<S-Insert>" },
+      normal = { "<C-S-v>" },
+    },
   },
   winopts = {
     number = false,
@@ -86,6 +106,8 @@ local defaults = {
   table_style = "unicode",
   strikethrough = true,
   mark_highlight = true,
+  --- 编辑源：非光标行将 ![alt](url) 显示为 🖼 name（alt 空 → image）
+  source_image_conceal = true,
   toc = true,
   toc_min_level = 1,
   toc_max_level = 3,
@@ -104,13 +126,13 @@ local defaults = {
     max_height = 0,
     max_width = nil, -- nil = 预览宽 100%
     max_images = 20,
-    backend = "auto",
+    backend = "python", -- 字符画：Python+Pillow（thumb.py）；none 关闭
     palette_size = 64,
     thumb_scale = "width_full", -- width_full=宽100%高自适应；stretch=拉满
     -- 终端单元格 宽/高（约 0.5）。修正把字符格当正方形导致的图像比例失真
     cell_aspect = 0.5,
     open_with = "float",
-    float_scale = "fill", -- float 内高清/█：fill 拉伸 | fit 等比
+    float_scale = "fit", -- float 内高清/█：fit 等比 | fill 拉伸
     python = "python",
     -- 预览内不做高清叠层（仅 █）
     hd = "never",

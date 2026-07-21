@@ -18,7 +18,7 @@
 | 插件 | 简介 | 文档 |
 |------|------|------|
 | **[mdview](mdview/)** | Markdown 预览：单窗（`:MdView`）或侧边对照（`:MdSideView`）。标题/列表/GFM 表/代码块、TOC、链接锚点、色块图与可选高清叠层。预览内 **`L`** 切换中英文。 | [EN](mdview/README.md) · [中文](mdview/README.zh.md) |
-| **[pdfview](pdfview/)** | PDF / Word 预览：文字样式、表格、chafa 图；Enter/点击 float 高清，`gh` 页内临时高清。**`L`** 切换中英文。 | [EN](pdfview/README.md) · [中文](pdfview/README.zh.md) |
+| **[pdfview](pdfview/)** | PDF / Word 预览：文字样式、表格、Python+Pillow 图；Enter/点击 float 高清，`gh` 页内临时高清。**`L`** 切换中英文。 | [EN](pdfview/README.md) · [中文](pdfview/README.zh.md) |
 | **[xlsview](xlsview/)** | Excel（.xlsx/.xlsm）预览：样式、多工作表、内容列宽 + 横滚、**单元格跳格 / Ctrl-v 格块选 / y 复制**。**`L`** 中英文。 | [EN](xlsview/README.md) · [中文](xlsview/README.zh.md) |
 | **[tts](tts/)** | Windows SAPI 朗读：`<leader>vo` **从光标所在段起播**（播放中再按可跳段）；控制条白底；音量/滚轮/语速；系统默认输出设备；**EN/中文** 按钮或 **`L`**。 | [EN](tts/README.md) · [中文](tts/README.zh.md) |
 | **[imgbuf](imgbuf/)** | 图片字符画（block/half/braille），等比/拉伸；自动预览、剪贴板；WezTerm/Kitty/Ghostty 可选像素高清。底栏 **`L`** 中英文。 | [EN](imgbuf/README.md) · [中文](imgbuf/README.zh.md) |
@@ -29,7 +29,7 @@
 | **[es](es/)** | Windows **Everything** 文件搜索（`es.exe`）：`:ES` / `<leader>es` 浮窗即时搜，回车打开。 | [EN](es/README.md) · [中文](es/README.zh.md) |
 | **[qrbuf](qrbuf/)** | 文本 → 终端 **二维码** 浮窗：`:QrBuf` / `<leader>qr`，支持选区。 | [EN](qrbuf/README.md) · [中文](qrbuf/README.zh.md) |
 | **[httpbuf](httpbuf/)** | 轻量 **HTTP** 请求编辑与响应查看：`:HttpBuf` / `<leader>http`，curl 或 Python。 | [EN](httpbuf/README.md) · [中文](httpbuf/README.zh.md) |
-| **[weather](weather/)** | 状态栏 **城市/天气/温度** + `:Weather` / `<leader>we` 十天表格（显示**获取时间**）；Open-Meteo 公开 HTTP，小时缓存。 | [EN](weather/README.md) · [中文](weather/README.zh.md) |
+| **[weather](weather/)** | 状态栏 **城市/天气/温度** + `:Weather` / `<leader>we` 十天表格；**系统中文用国内源**，否则 Open-Meteo；小时缓存。 | [EN](weather/README.md) · [中文](weather/README.zh.md) |
 | **[taskmgr](taskmgr/)** | 进程管理 float：`:Taskmgr` / `<leader>ta`，排序 / 列显隐与列宽、CPU·内存高占用着色、结束进程。 | [EN](taskmgr/README.md) · [中文](taskmgr/README.zh.md) |
 | **[ntemoji](ntemoji/)** | **NERDTree** emoji 图标（无需 Nerd Font / vim-devicons；自动 conceal 中括号）。 | [EN](ntemoji/README.md) · [中文](ntemoji/README.zh.md) |
 
@@ -113,8 +113,8 @@ tts 测试稿：[tts/testdata/](tts/testdata/)（`sample.zh.txt` / `sample.en.tx
 
 | 插件 | Neovim | 其他 |
 |------|--------|------|
-| mdview | 0.9+ | 核心无额外依赖；色块图需 Pillow（或 chafa）；代码高亮可选 Tree-sitter；像素高清需图形协议终端 |
-| pdfview | 0.9+ | PDF：PyMuPDF；DOCX：仅标准库；DOC：可选 LibreOffice；图片 chafa/Pillow；高清 WezTerm/Kitty/Ghostty |
+| mdview | 0.9+ | 核心无额外依赖；色块图需 Python3 + Pillow；代码高亮可选 Tree-sitter；像素高清需图形协议终端 |
+| pdfview | 0.9+ | PDF：PyMuPDF；DOCX：仅标准库；DOC：可选 LibreOffice；图片：Python3 + Pillow；高清 WezTerm/Kitty/Ghostty |
 | xlsview | 0.9+ | Python3 + **openpyxl** |
 | tts | 0.9+ | **Windows** + SAPI；Python3 + **pywin32** |
 | imgbuf | 0.9+ | chafa **或** Python3 + Pillow；高清需 WezTerm/Kitty/Ghostty + Pillow |
@@ -126,7 +126,7 @@ tts 测试稿：[tts/testdata/](tts/testdata/)（`sample.zh.txt` / `sample.en.tx
 | es | 0.9+ | **Windows** + [Everything](https://www.voidtools.com/) + [es.exe CLI](https://www.voidtools.com/support/everything/command_line_interface/) |
 | qrbuf | 0.9+ | Python3（标准库，`scripts/qrgen.py`） |
 | httpbuf | 0.9+ | **curl** 或 Python3（标准库 urllib） |
-| weather | 0.9+ | Python3 + 网络（Open-Meteo 公开 HTTP，无 Key） |
+| weather | 0.9+ | Python3 + 网络（国内源 + Open-Meteo，无 Key） |
 | taskmgr | 0.9+ | Python3 + **必须** psutil；支持 Win / Linux / macOS |
 | ntemoji | 0.9+ | [NERDTree](https://github.com/preservim/nerdtree)；勿与 vim-devicons 同装 |
 
@@ -244,7 +244,7 @@ require("pdfview").setup({
   ui_lang = "auto", -- L 切换
   python = "python",
   image = {
-    backend = "chafa",
+    backend = "python",
     open_with = "float",
     float_hd = "always",
   },

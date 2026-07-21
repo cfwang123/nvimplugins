@@ -128,7 +128,7 @@ require("mdview").setup({
     python = "python",
     open_with = "float",
     float_hd = "never",      -- tier ②: blocks only in float first
-    float_scale = "fill",
+    float_scale = "fit",
   },
 })
 ```
@@ -149,7 +149,7 @@ On top of ②:
 |------------|------|
 | **WezTerm / Kitty / Ghostty** | Graphics protocol; float HD, `gh` temporary in-page HD |
 | Truecolor terminal | Better blocks + HD look |
-| (Optional) chafa | Alternate backend when `image.backend = "auto"` |
+| Python 3 + **Pillow** | Block-character images (`thumb.py`) |
 
 #### Terminals
 
@@ -188,7 +188,7 @@ require("mdview").setup({
     backend = "auto",
     python = "python",
     open_with = "float",
-    float_scale = "fill",
+    float_scale = "fit",     -- fit contain | fill stretch
     -- preview: no auto HD (scroll glitches); use gh temporarily
     hd = "never",
     float_hd = "always",
@@ -238,6 +238,7 @@ python -c "from PIL import Image; print('Pillow OK')"
 | `:MdViewRefresh` | Force re-render |
 | `:MdViewSync` | Sync side preview to source cursor |
 | `:MdViewToc` | Toggle TOC float (editor or preview) |
+| `:MdViewPasteImage` | Save **clipboard image** as `images/yyyyMMddHHmmss.png` and insert `![](...)` |
 
 With side open, switching to another **markdown** buffer in the same tab follows that file; non-md keeps the current preview.
 
@@ -270,6 +271,50 @@ Works without opening preview (auto-mapped on `markdown` buffers once the plugin
 | `Ctrl`+LeftMouse | Same |
 | `<C-o>` | Jump back (Vim jumplist; in-doc anchors and external md) |
 | `<CR>` elsewhere | Default Vim behavior |
+| (auto) | **Non-cursor lines**: show `![alt](url)` as **`🖼 name`** (empty alt → `image`; full syntax on the cursor line). Disable with `source_image_conceal = false` |
+| **`"+p`** / **`"+P`** | **Smart paste** (recommended): clipboard image → `images/yyyyMMddHHmmss.png` + `![image](images/...)`; otherwise normal text paste |
+| **`Ctrl-Shift-v`** / **`Shift-Insert`** | Same (Shift-Insert also in insert mode) |
+| `:MdViewPasteImage` | Image-only paste (notify if clipboard has no image) |
+
+### Paste image
+
+1. **Save** the markdown file first (directory is required)  
+2. Copy a screenshot / image to the clipboard  
+3. In normal mode press **`"+p`** (or `:MdViewPasteImage` / `Ctrl-Shift-v`)  
+4. Creates `<md-dir>/images/`, writes `yyyyMMddHHmmss.png` (suffix `_2`… on collision), inserts e.g. `![image](images/20260721143005.png)`  
+
+Requires **Python3 + Pillow** (same as block thumbnails).
+
+#### Custom key (e.g. `Q`)
+
+| Mapping | Image paste? | Notes |
+|---------|:------------:|-------|
+| `nmap Q "+p` | yes | recursive → hits mdview's `p` intercept |
+| `nnoremap Q "+p` | **no** | non-recursive → builtin `p`, skips plugin |
+| bind Lua | yes | best with `nnoremap` |
+
+```vim
+" A: recursive
+nmap Q "+p
+
+" B: noremap → call plugin (recommended)
+nnoremap Q <Cmd>lua require('mdview').smart_clipboard_paste()<CR>
+```
+
+```lua
+require("mdview").setup({
+  paste_image = {
+    enable = true,
+    dir = "images",
+    alt = "image",        -- ![image](...)
+    intercept_clipboard_put = true, -- intercept p/P when register is +/*
+    keys = {
+      insert = { "<C-S-v>", "<S-Insert>" },
+      normal = { "<C-S-v>" },
+    },
+  },
+})
+```
 
 ## Config notes
 
@@ -279,6 +324,7 @@ All defaults: `lua/mdview/config.lua`.
 
 - **In preview**: block characters only by default (`hd = "never"`); use **`gh`** for temporary HD  
 - **float / `gi`**: blocks + optional pixel HD (`float_hd = "always"`)  
+- **Paste**: clipboard image → `images/yyyyMMddHHmmss.png` + Markdown link  
 - Needs **Pillow**; HD also needs a graphics-protocol terminal  
 
 ## Layout

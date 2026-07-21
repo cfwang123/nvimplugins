@@ -3,7 +3,7 @@ local M = {}
 
 ---@class PdfViewImageConfig
 ---@field mode "thumb"|"placeholder"|"off"
----@field backend "auto"|"chafa"|"python"|"none"
+---@field backend "python"|"none" 字符画仅 Python+Pillow（auto/chafa 兼容映射为 python）
 ---@field max_height number
 ---@field max_width number|nil
 ---@field max_images number
@@ -19,6 +19,13 @@ local M = {}
 ---@field auto_open boolean
 ---@field python string
 ---@field max_pages number 0=全部
+---@field lazy_render boolean 大文档只渲染视口附近页
+---@field lazy_threshold number 页数 ≥ 此值才启用懒渲染（默认 12）
+---@field viewport_buffer number 可见页上下各多渲染几页（默认 2）
+---@field extract_chunk number PDF 打开时先同步提取的页数（默认 8）
+---@field stub_page_lines number 未提取页占位行数（默认 36，使滚动比例接近真实页序）
+---@field toc boolean 有大纲时默认打开左侧 TOC（默认 true）
+---@field toc_width number TOC 窗宽度（列，默认 32）
 ---@field table_style "unicode"|"ascii"|"minimal"
 ---@field page_sep boolean
 ---@field show_help boolean
@@ -31,7 +38,15 @@ local M = {}
 local defaults = {
   auto_open = true,
   python = "python",
-  max_pages = 0, -- 0 = 全部页
+  max_pages = 0, -- 0 = 全部页（提取上限；0 不限制）
+  -- 大 PDF：按页懒提取 + 视口懒渲染；远处页占位，滚近再展开
+  lazy_render = true,
+  lazy_threshold = 12,
+  viewport_buffer = 2,
+  extract_chunk = 8, -- 打开时先抽前 N 页（同步，避免卡死上千页）
+  stub_page_lines = 36, -- 未加载页等高占位，滚动约 50% ≈ 中间页
+  toc = true, -- 有 PDF 大纲时默认开左侧 TOC
+  toc_width = 32,
   table_style = "unicode",
   page_sep = true,
   show_help = true,
@@ -51,15 +66,15 @@ local defaults = {
   },
   image = {
     mode = "thumb",
-    -- 默认 chafa；无 chafa 时回退 python+Pillow
-    backend = "chafa",
+    -- 字符画：Python+Pillow（thumb.py）；none 关闭
+    backend = "python",
     max_height = 0, -- 0 = 按宽比例
     max_width = nil, -- nil = 窗口宽
     max_images = 30,
     cell_aspect = 0.5,
     python = "python",
     open_with = "float", -- Enter/点击/gi → float 大图
-    float_scale = "fill", -- fill 拉伸 | fit 等比
+    float_scale = "fit", -- fit 等比 | fill 拉伸
     -- float 内高清：终端支持则 always（与 mdview 一致）
     float_hd = "always",
     hd_tmux = false,

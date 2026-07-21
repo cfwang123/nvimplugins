@@ -1,5 +1,5 @@
 ---@mod pdfview.image
---- 预览内图片：默认 chafa 色块；python+Pillow 回退；float 大图 + 可选高清
+--- 预览内图片：Python+Pillow █ 色块；float 大图 + 可选高清
 local highlight = require("pdfview.highlight")
 
 local M = {}
@@ -135,168 +135,6 @@ local function parse_thumb_protocol(out)
   return { lines = lines, marks = marks, width = w, height = h }
 end
 
----解析 chafa ANSI truecolor / 256 输出为 █ + marks
----@param out string[]
----@param full_w number
----@param max_h number
----@return table|nil
-local function parse_chafa_ansi(out, full_w, max_h)
-  out = normalize_out(out)
-  if #out == 0 then
-    return nil
-  end
-  highlight.ensure()
-  local lines = {}
-  local marks = {}
-
-  for _, raw in ipairs(out) do
-    if raw == "" then
-      goto continue
-    end
-    -- 去掉 chafa 可能的结尾 reset
-    local i = 1
-    local n = #raw
-    local row_marks = {}
-    local col_cells = 0
-    local cur_hex = "808080"
-    local row_idx = #lines -- 0-based after push
-
-    while i <= n do
-      local c = raw:byte(i)
-      if c == 27 and raw:sub(i + 1, i + 1) == "[" then -- ESC[
-        local j = i + 2
-        while j <= n do
-          local bj = raw:byte(j)
-          if bj >= 64 and bj <= 126 then -- final byte
-            break
-          end
-          j = j + 1
-        end
-        local seq = raw:sub(i + 2, j - 1)
-        local final = raw:sub(j, j)
-        if final == "m" then
-          -- SGR
-          if seq == "" or seq == "0" then
-            cur_hex = "808080"
-          else
-            -- 38;2;r;g;b
-            local r, g, b = seq:match("38;2;(%d+);(%d+);(%d+)")
-            if r then
-              cur_hex = string.format("%02x%02x%02x", tonumber(r) or 0, tonumber(g) or 0, tonumber(b) or 0)
-            else
-              -- 38;5;n 粗略映射
-              local n256 = seq:match("38;5;(%d+)")
-              if n256 then
-                n256 = tonumber(n256) or 0
-                if n256 < 16 then
-                  local basic = {
-                    "000000",
-                    "800000",
-                    "008000",
-                    "808000",
-                    "000080",
-                    "800080",
-                    "008080",
-                    "c0c0c0",
-                    "808080",
-                    "ff0000",
-                    "00ff00",
-                    "ffff00",
-                    "0000ff",
-                    "ff00ff",
-                    "00ffff",
-                    "ffffff",
-                  }
-                  cur_hex = basic[n256 + 1] or "808080"
-                elseif n256 < 232 then
-                  local v = n256 - 16
-                  local rr = math.floor(v / 36)
-                  local gg = math.floor((v % 36) / 6)
-                  local bb = v % 6
-                  local function level(x)
-                    return x == 0 and 0 or (55 + x * 40)
-                  end
-                  cur_hex = string.format("%02x%02x%02x", level(rr), level(gg), level(bb))
-                else
-                  local g = 8 + (n256 - 232) * 10
-                  cur_hex = string.format("%02x%02x%02x", g, g, g)
-                end
-              end
-            end
-          end
-        end
-        i = j + 1
-      else
-        -- 可见字符（可能是多字节 UTF-8 块字符）
-        local ulen = 1
-        if c >= 0xF0 then
-          ulen = 4
-        elseif c >= 0xE0 then
-          ulen = 3
-        elseif c >= 0xC0 then
-          ulen = 2
-        end
-        local ch = raw:sub(i, i + ulen - 1)
-        if ch ~= "\n" and ch ~= "\r" then
-          col_cells = col_cells + 1
-          row_marks[#row_marks + 1] = cur_hex
-        end
-        i = i + ulen
-      end
-    end
-
-    if col_cells > 0 then
-      local w = math.max(col_cells, full_w)
-      local line = string.rep(BLOCK, w)
-      lines[#lines + 1] = line
-      local row = #lines - 1
-      local x = 1
-      while x <= #row_marks do
-        local hex = row_marks[x] or "808080"
-        local x2 = x + 1
-        while x2 <= #row_marks and row_marks[x2] == hex do
-          x2 = x2 + 1
-        end
-        marks[#marks + 1] = {
-          row = row,
-          col = (x - 1) * BLOCK_BYTES,
-          end_col = math.min(#line, (x2 - 1) * BLOCK_BYTES),
-          hl = ensure_truecolor_hl(hex),
-        }
-        x = x2
-      end
-      -- 补齐宽度的灰块
-      if col_cells < full_w then
-        marks[#marks + 1] = {
-          row = row,
-          col = col_cells * BLOCK_BYTES,
-          end_col = full_w * BLOCK_BYTES,
-          hl = ensure_truecolor_hl("404040"),
-        }
-      end
-    end
-    ::continue::
-  end
-
-  if max_h > 0 then
-    while #lines > max_h do
-      table.remove(lines)
-    end
-    local keep = {}
-    for _, m in ipairs(marks) do
-      if m.row < #lines then
-        keep[#keep + 1] = m
-      end
-    end
-    marks = keep
-  end
-
-  if #lines == 0 then
-    return nil
-  end
-  return { lines = lines, marks = marks, width = full_w, height = #lines }
-end
-
 ---@param path string
 ---@param full_w number
 ---@param max_h number
@@ -310,15 +148,24 @@ function M.render_thumb(path, full_w, max_h, cfg)
   max_h = max_h or 0
   cfg = cfg or {}
   local imgcfg = cfg.image or {}
-  local backend = imgcfg.backend or "chafa"
+  local backend = imgcfg.backend or "python"
+  if backend == "none" then
+    return nil
+  end
   local cell_aspect = tonumber(imgcfg.cell_aspect) or 0.5
+  -- width_full=宽100%高自适应；stretch/fill=拉满盒子；fit=盒内等比
+  local scale_mode = imgcfg.thumb_scale or "width_full"
+  if scale_mode == "fill" then
+    scale_mode = "stretch"
+  end
   local path_arg = vim.fn.fnamemodify(path, ":p")
   local mtime = vim.fn.getftime(path_arg)
   local ckey = table.concat({
     path_arg,
     tostring(full_w),
     tostring(max_h),
-    backend,
+    "python",
+    scale_mode,
     tostring(cell_aspect),
     tostring(mtime),
   }, "\0")
@@ -348,64 +195,37 @@ function M.render_thumb(path, full_w, max_h, cfg)
     return result
   end
 
-  local try_chafa = backend == "chafa" or backend == "auto"
-  local try_python = backend == "python" or backend == "auto" or backend == "chafa"
+  local py_mode = (scale_mode == "stretch" and "stretch")
+    or (scale_mode == "fit" and "fit")
+    or "width_full"
 
-  if try_chafa and vim.fn.executable("chafa") == 1 then
-    local box_h = (max_h > 0) and max_h or math.max(4, math.floor(full_w * cell_aspect * 0.85))
+  -- 字符画仅 Python+Pillow（scripts/thumb.py），不再依赖 chafa
+  local py = python_cmd(cfg)
+  local script = plugin_root() .. "/scripts/thumb.py"
+  script = vim.fn.fnamemodify(script, ":p")
+  if py and vim.fn.filereadable(script) == 1 then
     local cmd = {
-      "chafa",
-      "-f",
-      "symbols",
-      "--symbols",
-      "block",
-      "-s",
-      string.format("%dx%d", full_w, box_h),
-      "--animate",
-      "off",
-      "--scale",
-      "max",
-      "--colors",
-      "full",
+      py,
+      "-X",
+      "utf8",
+      script,
       path_arg,
+      tostring(full_w),
+      tostring(max_h),
+      py_mode,
+      tostring(cell_aspect),
     }
     local ok, out = pcall(vim.fn.systemlist, cmd)
-    if ok and type(out) == "table" and vim.v.shell_error == 0 then
-      local parsed = parse_chafa_ansi(out, full_w, max_h)
+    if ok and type(out) == "table" then
+      local parsed = parse_thumb_protocol(out)
       if parsed then
+        reapply_mark_colors(parsed.marks)
         return store(parsed)
       end
     end
   end
 
-  if try_python then
-    local py = python_cmd(cfg)
-    local script = plugin_root() .. "/scripts/thumb.py"
-    script = vim.fn.fnamemodify(script, ":p")
-    if py and vim.fn.filereadable(script) == 1 then
-      local cmd = {
-        py,
-        "-X",
-        "utf8",
-        script,
-        path_arg,
-        tostring(full_w),
-        tostring(max_h),
-        "width_full",
-        tostring(cell_aspect),
-      }
-      local ok, out = pcall(vim.fn.systemlist, cmd)
-      if ok and type(out) == "table" then
-        local parsed = parse_thumb_protocol(out)
-        if parsed then
-          reapply_mark_colors(parsed.marks)
-          return store(parsed)
-        end
-      end
-    end
-  end
-
-  -- 占位
+  -- 占位（无 Python/Pillow 时）
   local ph = {
     lines = { "🖼  [image]", path_arg },
     marks = {
@@ -481,6 +301,68 @@ local function editor_size()
   return vim.o.columns, vim.o.lines
 end
 
+---fit 时把 █ 画布 letterbox 居中到 content 盒（与高清 gfx fit 对齐）
+---@param thumb table {lines, marks, width?, height?}
+---@param content_w number
+---@param content_h number
+---@return table
+local function letterbox_block_art(thumb, content_w, content_h)
+  local src_lines = thumb.lines or {}
+  local img_h = #src_lines
+  if img_h < 1 then
+    return thumb
+  end
+  local img_w = tonumber(thumb.width) or 0
+  if img_w < 1 then
+    img_w = vim.fn.strdisplaywidth(src_lines[1] or "")
+  end
+  content_w = math.max(1, content_w or img_w)
+  content_h = math.max(1, content_h or img_h)
+
+  local pad_top = math.max(0, math.floor((content_h - img_h) / 2))
+  local pad_left = math.max(0, math.floor((content_w - img_w) / 2))
+  if pad_top == 0 and pad_left == 0 and img_h >= content_h then
+    local lines = {}
+    for i = 1, math.min(img_h, content_h) do
+      lines[i] = src_lines[i]
+    end
+    local marks = {}
+    for _, m in ipairs(thumb.marks or {}) do
+      if m.row < #lines then
+        marks[#marks + 1] = m
+      end
+    end
+    return { lines = lines, marks = marks, width = img_w, height = #lines }
+  end
+
+  local left_pad = string.rep(" ", pad_left)
+  local left_bytes = #left_pad
+  local lines = {}
+  for _ = 1, pad_top do
+    lines[#lines + 1] = ""
+  end
+  for _, tl in ipairs(src_lines) do
+    lines[#lines + 1] = left_pad .. tl
+  end
+  while #lines < content_h do
+    lines[#lines + 1] = ""
+  end
+
+  local marks = {}
+  for _, m in ipairs(thumb.marks or {}) do
+    local row = m.row + pad_top
+    if row >= 0 and row < #lines then
+      marks[#marks + 1] = {
+        row = row,
+        col = (m.col or 0) + left_bytes,
+        end_col = (m.end_col or m.col or 0) + left_bytes,
+        hl = m.hl,
+      }
+    end
+  end
+  return { lines = lines, marks = marks, width = content_w, height = #lines }
+end
+
 ---float 内 █ 底层
 ---@param buf integer
 ---@param abs_path string
@@ -492,26 +374,34 @@ function M._fill_float_block_art(buf, abs_path, content_w, content_h, cfg, float
   if not buf or not vim.api.nvim_buf_is_valid(buf) then
     return
   end
+  -- fit=等比居中；fill/stretch=拉满盒子
+  local do_fit = float_scale == "fit"
+  local thumb_scale = do_fit and "fit" or "stretch"
   local float_cfg = vim.deepcopy(cfg)
   float_cfg.image = vim.tbl_deep_extend("force", vim.deepcopy(cfg.image or {}), {
-    -- float 内用固定盒：chafa/python 都按 max_h 填满
     max_height = content_h,
+    thumb_scale = thumb_scale,
   })
   local thumb = M.render_thumb(abs_path, content_w, content_h, float_cfg)
+  if thumb and thumb.lines and do_fit then
+    thumb = letterbox_block_art(thumb, content_w, content_h)
+  end
   local lines = {}
   if thumb and thumb.lines then
     for _, tl in ipairs(thumb.lines) do
       lines[#lines + 1] = tl
     end
-    -- 不足高度时补空行，方便高清叠层铺满
-    while #lines < content_h do
-      lines[#lines + 1] = string.rep(BLOCK, content_w)
+    -- stretch 时不足高度补 █ 行，方便高清叠层铺满；fit 已由 letterbox 补空行
+    if not do_fit then
+      while #lines < content_h do
+        lines[#lines + 1] = string.rep(BLOCK, content_w)
+      end
     end
   else
     lines = {
       "pdfview image float",
       abs_path,
-      "(need chafa / Python+Pillow / Kitty/WezTerm HD)",
+      "(need Python+Pillow / Kitty/WezTerm HD)",
       require("pdfview.i18n").t("float_hint"),
     }
   end
@@ -650,7 +540,7 @@ function M.open_float(abs_path, cfg)
 
   local content_w = math.max(10, vim.api.nvim_win_get_width(win))
   local content_h = math.max(4, vim.api.nvim_win_get_height(win))
-  local float_scale = (cfg.image and cfg.image.float_scale) or "fill"
+  local float_scale = (cfg.image and cfg.image.float_scale) or "fit"
 
   -- █ 底层（始终）
   M._fill_float_block_art(buf, abs_path, content_w, content_h, cfg, float_scale)

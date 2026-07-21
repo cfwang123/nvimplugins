@@ -3,7 +3,7 @@
 [English](README.md) | **中文**
 
 状态栏显示 **`城市 天气emoji 天气 温度`**，命令弹窗用表格查看 **10 天预报**。  
-通过 HTTP 访问公开气象站 [Open-Meteo](https://open-meteo.com/)（**无需 API Key / 注册**），结果缓存到本地文件，**默认每小时**刷新一次。
+默认 **`source = "auto"`**：**系统语言为中文 → 国内源**（中国天气网 / itboy，失败再回退 Open-Meteo）；**否则 → Open-Meteo**。**均无需 API Key**。结果缓存到本地，**默认每小时**刷新。
 
 ## 依赖
 
@@ -11,7 +11,7 @@
 |------|------|
 | Neovim 0.9+ | |
 | **Python3** | 标准库 `urllib`（`scripts/fetch_weather.py`） |
-| 网络 | 访问 open-meteo.com |
+| 网络 | 国内源 + 可选 open-meteo.com |
 
 ## 安装
 
@@ -73,6 +73,8 @@ set statusline+=\ %{get(g:,'weather_status','')}
 ```lua
 require("weather").setup({
   city = "北京",           -- 必填才会启用；不配则不拉数据、状态栏为空
+  -- 数据源：auto（默认：系统中文→国内，否则 Open-Meteo）| cn | open-meteo
+  source = "auto",
   cache_ttl = 3600,        -- 缓存秒数
   refresh_ms = 3600 * 1000,-- 自动刷新间隔
   status_format = "{city} {emoji} {weather} {temp}°",
@@ -102,5 +104,12 @@ require("weather").setup({
 
 ## 数据说明
 
-- 地理编码 / 预报均来自 **Open-Meteo** 公开 HTTP 接口（非商业 Key API）。
-- 天气码为 WMO 标准，映射为中英文文案 + emoji（☀️🌧️❄️⛈️ 等）。
+| `source` | 说明 |
+|----------|------|
+| **`auto`**（默认） | **系统中文 → cn**（失败再回退 open-meteo）；**非中文 → open-meteo** |
+| **`cn`** | 强制国内：中国天气网数据（`t.weather.itboy.net`），城市码见 `scripts/citycode.json` |
+| **`open-meteo`** | 强制 [Open-Meteo](https://open-meteo.com/)（全球） |
+
+- 国内源适合中国城市，延迟通常明显低于 Open-Meteo。
+- `auto` 看**系统 locale**，不受浮窗 `L` 切换界面语言影响。
+- 天气码映射为中英文文案 + emoji；国内源保留原始中文天气文案。

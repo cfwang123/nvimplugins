@@ -1,5 +1,5 @@
 ---@mod pdfview
---- 打开 PDF / Word 进入结构化预览：文本样式 / 表格 / chafa 图 / gh 高清
+--- 打开 PDF / Word 进入结构化预览：文本样式 / 表格 / █ 图 / gh 高清
 local config = require("pdfview.config")
 local extract_mod = require("pdfview.extract")
 local render_mod = require("pdfview.render")
@@ -44,8 +44,89 @@ local function apply_winopts(win, cfg)
   end
 end
 
+---是否对当前文档启用懒渲染
 ---@param st table
-local function do_render(st)
+---@param cfg table
+---@return boolean
+local function use_lazy(st, cfg)
+  if cfg.lazy_render == false then
+    return false
+  end
+  local pc = st.data and (st.data.page_count or #(st.data.pages or {})) or 0
+  local th = tonumber(cfg.lazy_threshold) or 12
+  return pc >= th
+end
+
+---根据窗口 topline/botline 推算可见页区间（含缓冲）
+---@param st table
+---@param cfg table
+---@return table<number, boolean> full_pages set
+---@return number lo
+---@return number hi
+local function viewport_full_pages(st, cfg)
+  local pc = st.data and (st.data.page_count or #(st.data.pages or {})) or 1
+  pc = math.max(1, pc)
+  local buf = tonumber(cfg.viewport_buffer) or 2
+  if buf < 0 then
+    buf = 0
+  end
+  if buf > 20 then
+    buf = 20
+  end
+
+  local lo, hi = 1, math.min(pc, 1 + buf * 2)
+  local win = st.win
+  if not win or not vim.api.nvim_win_is_valid(win) then
+    win = vim.fn.bufwinid(st.buf)
+  end
+  if win ~= -1 and vim.api.nvim_win_is_valid(win) then
+    local ok, info = pcall(vim.fn.getwininfo, win)
+    local topline, botline = 1, 1
+    if ok and type(info) == "table" and info[1] then
+      topline = info[1].topline or 1
+      botline = info[1].botline or topline
+    else
+      pcall(function()
+        topline = vim.api.nvim_win_call(win, function()
+          return vim.fn.line("w0")
+        end)
+        botline = vim.api.nvim_win_call(win, function()
+          return vim.fn.line("w$")
+        end)
+      end)
+    end
+    local p_top = render_mod.page_at_line(st.result, topline) or st.page or 1
+    local p_bot = render_mod.page_at_line(st.result, botline) or p_top
+    if p_bot < p_top then
+      p_bot = p_top
+    end
+    lo = math.max(1, p_top - buf)
+    hi = math.min(pc, p_bot + buf)
+  end
+
+  -- 首次尚无 result：渲染开头
+  if not st.result then
+    lo, hi = 1, math.min(pc, 1 + buf * 2)
+  end
+
+  local set = {}
+  for p = lo, hi do
+    set[p] = true
+  end
+  -- 当前页始终在集合内（翻页/跳转）
+  if st.page and st.page >= 1 and st.page <= pc then
+    set[st.page] = true
+    for p = math.max(1, st.page - buf), math.min(pc, st.page + buf) do
+      set[p] = true
+    end
+  end
+  return set, lo, hi
+end
+
+---@param st table
+---@param opts {force?:boolean, preserve_view?:boolean, full_pages?:table}|nil
+local function do_render(st, opts)
+  opts = opts or {}
   if not st or not st.buf or not vim.api.nvim_buf_is_valid(st.buf) then
     return
   end
@@ -54,14 +135,172 @@ local function do_render(st)
   end
   local cfg = config.get()
   local width = win_width(st.buf)
+  local width_changed = st.width and math.abs(width - st.width) >= 2
   st.width = width
-  local result = render_mod.render(st.data, { width = width, cfg = cfg })
+
+  if width_changed or opts.force then
+    st.page_cache = {}
+  end
+  st.page_cache = st.page_cache or {}
+
+  local full_pages = opts.full_pages
+  local lazy = use_lazy(st, cfg)
+  if not lazy then
+    full_pages = nil -- 全部完整渲染
+  elseif not full_pages then
+    full_pages = viewport_full_pages(st, cfg)
+  end
+
+  local view
+  local anchor_page, anchor_off
+  local win = st.win
+  if not win or not vim.api.nvim_win_is_valid(win) then
+    win = vim.fn.bufwinid(st.buf)
+  end
+  if opts.preserve_view ~= false and win ~= -1 and vim.api.nvim_win_is_valid(win) then
+    view = vim.api.nvim_win_call(win, function()
+      return vim.fn.winsaveview()
+    end)
+    if st.result and view and view.topline then
+      anchor_page = render_mod.page_at_line(st.result, view.topline)
+      if anchor_page and st.result.page_ranges and st.result.page_ranges[anchor_page] then
+        anchor_off = view.topline - st.result.page_ranges[anchor_page].start
+      end
+    end
+  end
+
+  local result = render_mod.render(st.data, {
+    width = width,
+    cfg = cfg,
+    full_pages = full_pages,
+    page_cache = st.page_cache,
+  })
   st.result = result
+  st.page_cache = result.page_cache or st.page_cache
+  st.full_pages = full_pages
   render_mod.apply(st.buf, result)
-  -- 清旧高清
+
+  -- 恢复视口：按页锚点，避免 stub→full 后跳动
+  if view and win ~= -1 and vim.api.nvim_win_is_valid(win) then
+    if anchor_page and result.page_ranges and result.page_ranges[anchor_page] then
+      local start = result.page_ranges[anchor_page].start
+      local finish = result.page_ranges[anchor_page].finish
+      local top = start + math.max(0, anchor_off or 0)
+      if top > finish then
+        top = start
+      end
+      view.topline = top
+      view.lnum = math.max(top, math.min(view.lnum or top, finish))
+    end
+    pcall(vim.api.nvim_win_call, win, function()
+      vim.fn.winrestview(view)
+    end)
+  end
+
+  -- 清旧高清（行号已变）
   pcall(function()
     require("pdfview.graphics").clear_buf(st.buf)
   end)
+  -- 搜索侧窗仍开时：重渲后恢复关键词高亮
+  pcall(function()
+    require("pdfview.search").apply_preview_highlight(st)
+  end)
+  pcall(function()
+    require("pdfview.toc").sync_current(st)
+  end)
+end
+
+---滚动时：先确保页已提取，再展开完整渲染
+---@param st table
+local function ensure_viewport(st)
+  if not st or not st.data or not st.buf or not vim.api.nvim_buf_is_valid(st.buf) then
+    return
+  end
+  local cfg = config.get()
+  local need, lo, hi = viewport_full_pages(st, cfg)
+
+  -- 更新当前页
+  if st.result then
+    local win = vim.fn.bufwinid(st.buf)
+    if win ~= -1 then
+      local top = vim.api.nvim_win_call(win, function()
+        return vim.fn.line("w0")
+      end)
+      local p = render_mod.page_at_line(st.result, top)
+      if p then
+        st.page = p
+        pcall(function()
+          require("pdfview.toc").sync_current(st)
+        end)
+      end
+    end
+  end
+
+  -- PDF 懒提取：视口页尚未 extract 时异步补提
+  local need_extract = false
+  if st.kind == "pdf" and st.data.lazy then
+    for p = lo, hi do
+      if need[p] and not extract_mod.page_ready(st.data, p) then
+        need_extract = true
+        break
+      end
+    end
+  end
+
+  local function after_data_ready()
+    local cache = st.page_cache or {}
+    -- 视口内已提取但当前 buffer 仍是 stub/未 full → 必须重绘
+    -- （修复：滚走再滚回时 cache 命中却不 assemble，页内容消失）
+    local need_rerender = false
+    for p = lo, hi do
+      if need[p] and extract_mod.page_ready(st.data, p) then
+        local shown = st.result and st.result.page_ranges and st.result.page_ranges[p]
+        if not shown or not shown.full then
+          need_rerender = true
+          break
+        end
+        if not cache[p] or not cache[p].full then
+          need_rerender = true
+          break
+        end
+      end
+    end
+    if need_extract then
+      for p = lo, hi do
+        if need[p] then
+          cache[p] = nil
+        end
+      end
+      st.page_cache = cache
+      do_render(st, { full_pages = need, preserve_view = true })
+      return
+    end
+    if need_rerender then
+      do_render(st, { full_pages = need, preserve_view = true })
+    end
+  end
+
+  if need_extract then
+    if st.extract_job then
+      return -- 已有提取任务
+    end
+    local job = extract_mod.ensure_pages_async(st.path, st.data, lo, hi, false, function(ok, changed, err)
+      st.extract_job = nil
+      if not ok then
+        if err then
+          vim.notify(require("pdfview.i18n").t("err") .. tostring(err), vim.log.levels.WARN)
+        end
+        return
+      end
+      if changed then
+        after_data_ready()
+      end
+    end)
+    st.extract_job = job
+    return
+  end
+
+  after_data_ready()
 end
 
 ---@param st table
@@ -70,10 +309,10 @@ local function attach_maps(st)
   if not buf or not vim.api.nvim_buf_is_valid(buf) then
     return
   end
-  if st.maps_version == 3 then
+  if st.maps_version == 9 then
     return
   end
-  st.maps_version = 3
+  st.maps_version = 9
   local opts = { buffer = buf, silent = true, nowait = true }
 
   -- 图片点击需要 mouse
@@ -92,33 +331,110 @@ local function attach_maps(st)
     end
   end
 
+  -- q/Esc：先关搜索，再关 TOC，最后才关预览
   vim.keymap.set("n", "q", with_st(function(s)
+    local search = require("pdfview.search")
+    if search.is_open(s) or search.has_session(s) then
+      search.close(s)
+      return
+    end
+    local toc = require("pdfview.toc")
+    if toc.is_open(s) then
+      toc.close(s)
+      return
+    end
     M.close(s.buf)
-  end), vim.tbl_extend("force", opts, { desc = "pdfview: close" }))
+  end), vim.tbl_extend("force", opts, { desc = "pdfview: close search/toc/preview" }))
 
   vim.keymap.set("n", "<Esc>", with_st(function(s)
+    local search = require("pdfview.search")
+    if search.is_open(s) or search.has_session(s) then
+      search.close(s)
+      return
+    end
+    local toc = require("pdfview.toc")
+    if toc.is_open(s) then
+      toc.close(s)
+      return
+    end
     M.close(s.buf)
-  end), vim.tbl_extend("force", opts, { desc = "pdfview: close" }))
+  end), vim.tbl_extend("force", opts, { desc = "pdfview: close search/toc/preview" }))
 
   vim.keymap.set("n", "r", with_st(function(s)
     M.refresh(s.buf, true)
   end), vim.tbl_extend("force", opts, { desc = "pdfview: refresh" }))
 
-  vim.keymap.set("n", "n", with_st(function(s)
-    M.goto_page(s, (s.page or 1) + 1)
-  end), vim.tbl_extend("force", opts, { desc = "pdfview: next page" }))
-
+  -- 翻页只用 ] / [；n/N 仅搜索结果下/上一条
   vim.keymap.set("n", "]", with_st(function(s)
     M.goto_page(s, (s.page or 1) + 1)
   end), vim.tbl_extend("force", opts, { desc = "pdfview: next page" }))
 
-  vim.keymap.set("n", "p", with_st(function(s)
-    M.goto_page(s, (s.page or 1) - 1)
-  end), vim.tbl_extend("force", opts, { desc = "pdfview: prev page" }))
-
   vim.keymap.set("n", "[", with_st(function(s)
     M.goto_page(s, (s.page or 1) - 1)
   end), vim.tbl_extend("force", opts, { desc = "pdfview: prev page" }))
+
+  vim.keymap.set("n", "n", with_st(function(s)
+    local search = require("pdfview.search")
+    if search.has_session(s) then
+      search.jump_relative(s, 1)
+    else
+      vim.notify(require("pdfview.i18n").t("search_no_session"), vim.log.levels.INFO)
+    end
+  end), vim.tbl_extend("force", opts, { desc = "pdfview: next search hit" }))
+
+  vim.keymap.set("n", "N", with_st(function(s)
+    local search = require("pdfview.search")
+    if search.has_session(s) then
+      search.jump_relative(s, -1)
+    else
+      vim.notify(require("pdfview.i18n").t("search_no_session"), vim.log.levels.INFO)
+    end
+  end), vim.tbl_extend("force", opts, { desc = "pdfview: prev search hit" }))
+
+  -- 页面跳转：gg 首页；G 末页；42G / 42gg 跳到第 42 页；gp 输入页码
+  local function max_page(s)
+    return (s.data and (s.data.page_count or #(s.data.pages or {}))) or 1
+  end
+
+  vim.keymap.set("n", "gg", with_st(function(s)
+    local count = vim.v.count
+    if count > 0 then
+      M.goto_page(s, count)
+    else
+      M.goto_page(s, 1)
+    end
+  end), vim.tbl_extend("force", opts, { desc = "pdfview: first page / {count}gg" }))
+
+  vim.keymap.set("n", "G", with_st(function(s)
+    local count = vim.v.count
+    local maxp = max_page(s)
+    if count > 0 then
+      M.goto_page(s, count)
+    else
+      M.goto_page(s, maxp)
+    end
+  end), vim.tbl_extend("force", opts, { desc = "pdfview: last page / {count}G" }))
+
+  vim.keymap.set("n", "gp", with_st(function(s)
+    local i18n = require("pdfview.i18n")
+    local maxp = max_page(s)
+    local cur = s.page or 1
+    vim.ui.input({
+      prompt = string.format(i18n.t("goto_page_prompt"), maxp),
+      default = tostring(cur),
+    }, function(input)
+      if not input or vim.trim(input) == "" then
+        return
+      end
+      local n = tonumber(vim.trim(input))
+      if not n or n ~= math.floor(n) then
+        vim.notify(i18n.t("goto_page_bad"), vim.log.levels.WARN)
+        return
+      end
+      n = math.max(1, math.min(maxp, n))
+      M.goto_page(s, n)
+    end)
+  end), vim.tbl_extend("force", opts, { desc = "pdfview: go to page number" }))
 
   vim.keymap.set("n", "gi", with_st(function(s)
     M._open_image_at_cursor(s)
@@ -147,6 +463,16 @@ local function attach_maps(st)
   vim.keymap.set("n", "L", function()
     M.toggle_ui_lang()
   end, vim.tbl_extend("force", opts, { desc = "pdfview: toggle UI language" }))
+
+  -- 全文搜索（PDF 用 PyMuPDF 扫全书，不依赖懒提取 buffer）
+  vim.keymap.set("n", "/", with_st(function(s)
+    require("pdfview.search").prompt_and_search(s)
+  end), vim.tbl_extend("force", opts, { desc = "pdfview: full-text search" }))
+
+  -- 左侧大纲 TOC
+  vim.keymap.set("n", "t", with_st(function(s)
+    require("pdfview.toc").toggle(s, { focus = true })
+  end), vim.tbl_extend("force", opts, { desc = "pdfview: toggle TOC" }))
 
   -- Enter / 点击：打开图片 float（支持时加载高清）
   vim.keymap.set("n", "<CR>", with_st(function(s)
@@ -194,6 +520,13 @@ local function attach_autocmds(st)
         end)
         st.resize_timer = nil
       end
+      if st.viewport_timer then
+        pcall(function()
+          st.viewport_timer:stop()
+          st.viewport_timer:close()
+        end)
+        st.viewport_timer = nil
+      end
       states[buf] = nil
     end,
   })
@@ -224,11 +557,53 @@ local function attach_autocmds(st)
           vim.schedule(function()
             local s = get_state(buf)
             if s and s.data then
-              do_render(s)
+              do_render(s, { force = true, preserve_view = true })
             end
           end)
         end)
       end
+    end,
+  })
+
+  -- 滚动 / 光标移动：靠近未渲染页时再展开
+  local function schedule_viewport()
+    if st.viewport_timer then
+      pcall(function()
+        st.viewport_timer:stop()
+      end)
+    end
+    local timer = uv.new_timer()
+    st.viewport_timer = timer
+    if timer then
+      timer:start(60, 0, function()
+        vim.schedule(function()
+          local s = get_state(buf)
+          if s and s.data then
+            ensure_viewport(s)
+          end
+        end)
+      end)
+    end
+  end
+
+  vim.api.nvim_create_autocmd({ "CursorMoved", "CursorMovedI" }, {
+    group = aug,
+    buffer = buf,
+    callback = function()
+      schedule_viewport()
+    end,
+  })
+  -- WinScrolled 无 buffer 过滤；只在本预览仍显示时处理
+  vim.api.nvim_create_autocmd("WinScrolled", {
+    group = aug,
+    callback = function()
+      if not vim.api.nvim_buf_is_valid(buf) then
+        return
+      end
+      if vim.fn.bufwinid(buf) == -1 then
+        return
+      end
+      schedule_viewport()
     end,
   })
 end
@@ -288,12 +663,17 @@ function M.open(path, opts)
   end
 
   local kind = extract_mod.kind_of(path) or "doc"
-  vim.notify(string.format(i18n.t("extracting"), kind), vim.log.levels.INFO)
+  if kind == "pdf" then
+    vim.notify(string.format(i18n.t("extracting"), "pdf") .. " · lazy", vim.log.levels.INFO)
+  else
+    vim.notify(string.format(i18n.t("extracting"), kind), vim.log.levels.INFO)
+  end
   local data, err = extract_mod.extract(path, opts.force)
   if not data then
     vim.notify(i18n.t("err") .. tostring(err), vim.log.levels.ERROR)
     return
   end
+  data.kind = data.kind or kind
 
   local buf = vim.api.nvim_create_buf(true, false)
   prep_buf(buf)
@@ -307,25 +687,48 @@ function M.open(path, opts)
     data = data,
     page = 1,
     result = nil,
+    page_cache = {},
     width = nil,
     maps_version = 0,
+    extract_job = nil,
   }
   states[buf] = st
 
   vim.api.nvim_win_set_buf(win, buf)
   apply_winopts(win, config.get())
-  do_render(st)
+  do_render(st, { force = true, preserve_view = false })
   attach_maps(st)
   attach_autocmds(st)
+  -- 有大纲且配置开启：默认打开左侧 TOC（焦点留在预览）
+  if config.get().toc ~= false and kind == "pdf" then
+    pcall(function()
+      require("pdfview.toc").open(st, { focus = false })
+    end)
+  end
+  -- 打开后再按真实窗口高度补一帧视口（可能触发异步提取）
+  vim.schedule(function()
+    local s = get_state(buf)
+    if s then
+      ensure_viewport(s)
+      pcall(function()
+        require("pdfview.toc").sync_current(s)
+      end)
+    end
+  end)
 
   local pc = data.page_count or #(data.pages or {})
+  local ready = 0
+  for i = 1, pc do
+    if extract_mod.page_ready(data, i) then
+      ready = ready + 1
+    end
+  end
   local fmt = (kind == "pdf") and i18n.t("open_echo_pages") or i18n.t("open_echo_sections")
-  pcall(vim.api.nvim_echo, {
-    {
-      string.format(fmt, vim.fn.fnamemodify(path, ":t"), pc),
-      "MoreMsg",
-    },
-  }, false, {})
+  local msg = string.format(fmt, vim.fn.fnamemodify(path, ":t"), pc)
+  if kind == "pdf" and data.lazy and ready < pc then
+    msg = msg .. string.format(" · loaded %d/%d", ready, pc)
+  end
+  pcall(vim.api.nvim_echo, { { msg, "MoreMsg" } }, false, {})
   return buf
 end
 
@@ -339,8 +742,30 @@ function M.close(buf)
   end)
   image_mod.close_float()
   require("pdfview.help").close()
+  pcall(function()
+    require("pdfview.search").close(st)
+  end)
+  pcall(function()
+    require("pdfview.toc").close(st)
+  end)
   if st and st.au_group then
     pcall(vim.api.nvim_del_augroup_by_id, st.au_group)
+  end
+  if st and st.viewport_timer then
+    pcall(function()
+      st.viewport_timer:stop()
+      st.viewport_timer:close()
+    end)
+  end
+  if st and st.resize_timer then
+    pcall(function()
+      st.resize_timer:stop()
+      st.resize_timer:close()
+    end)
+  end
+  if st and st.extract_job and st.extract_job > 0 then
+    pcall(vim.fn.jobstop, st.extract_job)
+    st.extract_job = nil
   end
   states[buf] = nil
   if vim.api.nvim_buf_is_valid(buf) and vim.b[buf].pdfview_preview then
@@ -383,33 +808,73 @@ function M.refresh(buf, force)
     return
   end
   st.data = data
-  do_render(st)
+  st.page_cache = {}
+  st.extract_job = nil
+  do_render(st, { force = true, preserve_view = false })
   vim.notify(i18n.t("refreshed"), vim.log.levels.INFO)
 end
 
 ---@param st table
 ---@param page number
 function M.goto_page(st, page)
-  if not st or not st.result then
+  if not st or not st.data then
     return
   end
-  local maxp = st.data and (st.data.page_count or #(st.data.pages or {})) or 1
+  local maxp = st.data.page_count or #(st.data.pages or {}) or 1
   page = math.max(1, math.min(maxp, page))
   st.page = page
-  local line = st.result.page_map and st.result.page_map[page]
-  if line and st.buf and vim.api.nvim_buf_is_valid(st.buf) then
-    local win = vim.fn.bufwinid(st.buf)
-    if win ~= -1 then
-      pcall(vim.api.nvim_win_set_cursor, win, { line, 0 })
-      -- 置顶
-      vim.api.nvim_win_call(win, function()
-        vim.cmd("normal! zt")
-      end)
+
+  local cfg = config.get()
+  local bufn = tonumber(cfg.viewport_buffer) or 2
+  local lo = math.max(1, page - bufn)
+  local hi = math.min(maxp, page + bufn)
+
+  local function jump()
+    local need = {}
+    for p = lo, hi do
+      need[p] = true
+    end
+    if use_lazy(st, cfg) then
+      do_render(st, { full_pages = need, preserve_view = false })
+    else
+      do_render(st, { preserve_view = false })
+    end
+    local line = st.result and st.result.page_map and st.result.page_map[page]
+    if line and st.buf and vim.api.nvim_buf_is_valid(st.buf) then
+      -- 优先 st.win（预览窗），避免落到搜索侧窗
+      local win = st.win
+      if not win or not vim.api.nvim_win_is_valid(win) or vim.api.nvim_win_get_buf(win) ~= st.buf then
+        win = vim.fn.bufwinid(st.buf)
+      end
+      if win ~= -1 then
+        st.win = win
+        pcall(vim.api.nvim_win_set_cursor, win, { line, 0 })
+        vim.api.nvim_win_call(win, function()
+          vim.cmd("normal! zt")
+        end)
+      end
+    end
+    pcall(vim.api.nvim_echo, {
+      { string.format("pdfview: page %d / %d", page, maxp), "MoreMsg" },
+    }, false, {})
+    pcall(function()
+      require("pdfview.toc").sync_current(st)
+    end)
+  end
+
+  -- 目标页未提取：同步抽一小段（跳页应立刻可见）
+  if st.kind == "pdf" and st.data.lazy then
+    local ok, err = extract_mod.ensure_pages_sync(st.path, st.data, lo, hi, false)
+    if not ok and err then
+      vim.notify(require("pdfview.i18n").t("err") .. tostring(err), vim.log.levels.WARN)
+    end
+    -- 清缓存以便用新数据渲染
+    st.page_cache = st.page_cache or {}
+    for p = lo, hi do
+      st.page_cache[p] = nil
     end
   end
-  pcall(vim.api.nvim_echo, {
-    { string.format("pdfview: page %d / %d", page, maxp), "MoreMsg" },
-  }, false, {})
+  jump()
 end
 
 ---@param st table

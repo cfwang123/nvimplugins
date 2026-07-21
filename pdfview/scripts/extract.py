@@ -411,21 +411,93 @@ def meta_of(doc: "fitz.Document") -> Dict[str, Any]:
     }
 
 
-def main() -> int:
-    if len(sys.argv) < 3:
-        print("usage: extract.py <pdf> <out_json> [img_dir] [max_pages]", file=sys.stderr)
-        return 2
-    pdf = os.path.abspath(sys.argv[1])
-    out_json = os.path.abspath(sys.argv[2])
-    img_dir = os.path.abspath(sys.argv[3]) if len(sys.argv) > 3 else os.path.join(os.path.dirname(out_json), "images")
-    max_pages = int(sys.argv[4]) if len(sys.argv) > 4 else 0
+def toc_of(doc: "fitz.Document") -> List[Dict[str, Any]]:
+    """PDF 大纲：[{level, title, page}, ...] page 为 1-based。"""
+    out: List[Dict[str, Any]] = []
+    try:
+        raw = doc.get_toc(simple=True) or []
+    except Exception:
+        return out
+    for item in raw:
+        if not item or len(item) < 3:
+            continue
+        try:
+            level = int(item[0]) or 1
+            title = str(item[1] or "").strip()
+            page = int(item[2]) or 1
+        except (TypeError, ValueError):
+            continue
+        if not title:
+            continue
+        out.append({"level": max(1, level), "title": title, "page": max(1, page)})
+    return out
 
+
+def file_fingerprint(pdf: str) -> Tuple[int, int]:
+    try:
+        st = os.stat(pdf)
+        return int(st.st_mtime), int(st.st_size)
+    except OSError:
+        return 0, 0
+
+
+def main() -> int:
+    """用法:
+      extract.py <pdf> --meta
+          → stdout JSON: {ok, page_count, meta, mtime, size, path}
+      extract.py <pdf> <out_json> [img_dir] [max_pages] [start_page] [end_page]
+          start/end 为 1-based 闭区间；0/缺省=按 max_pages 从 1 起或全文
+          额外写入同目录 pages/<n>.json 供按页缓存
+    """
+    if len(sys.argv) < 3:
+        print(
+            "usage: extract.py <pdf> --meta | <pdf> <out_json> [img_dir] [max_pages] [start] [end]",
+            file=sys.stderr,
+        )
+        return 2
+
+    pdf = os.path.abspath(sys.argv[1])
     if not os.path.isfile(pdf):
         print(f"ERROR: file not found: {pdf}", file=sys.stderr)
         return 1
 
+    # 仅元信息（极快：只开文档读页数）
+    if sys.argv[2] in ("--meta", "--meta-only"):
+        try:
+            doc = fitz.open(pdf)
+        except Exception as e:
+            print(json.dumps({"ok": False, "error": f"open failed: {e}"}, ensure_ascii=False))
+            return 1
+        try:
+            mtime, size = file_fingerprint(pdf)
+            out = {
+                "ok": True,
+                "path": pdf,
+                "mtime": mtime,
+                "size": size,
+                "page_count": doc.page_count,
+                "meta": meta_of(doc),
+                "toc": toc_of(doc),
+            }
+            print(json.dumps(out, ensure_ascii=False))
+            return 0
+        finally:
+            doc.close()
+
+    out_json = os.path.abspath(sys.argv[2])
+    img_dir = (
+        os.path.abspath(sys.argv[3])
+        if len(sys.argv) > 3
+        else os.path.join(os.path.dirname(out_json), "images")
+    )
+    max_pages = int(sys.argv[4]) if len(sys.argv) > 4 else 0
+    start_page = int(sys.argv[5]) if len(sys.argv) > 5 else 1  # 1-based
+    end_page = int(sys.argv[6]) if len(sys.argv) > 6 else 0  # 1-based inclusive; 0=auto
+
     ensure_dir(os.path.dirname(out_json) or ".")
     ensure_dir(img_dir)
+    pages_dir = os.path.join(os.path.dirname(out_json), "pages")
+    ensure_dir(pages_dir)
 
     try:
         doc = fitz.open(pdf)
@@ -435,30 +507,63 @@ def main() -> int:
 
     try:
         n = doc.page_count
-        limit = n if max_pages <= 0 else min(n, max_pages)
-        pages = []
-        for i in range(limit):
-            pages.append(extract_page(doc, i, img_dir))
-        # 缓存指纹
-        try:
-            st = os.stat(pdf)
-            mtime = int(st.st_mtime)
-            size = int(st.st_size)
-        except OSError:
-            mtime, size = 0, 0
+        # 页范围（0-based end inclusive）
+        start_i = max(0, (start_page if start_page > 0 else 1) - 1)
+        if end_page > 0:
+            end_i = min(n - 1, end_page - 1)
+        elif max_pages > 0:
+            end_i = min(n - 1, start_i + max_pages - 1)
+        else:
+            end_i = n - 1
+        if end_i < start_i:
+            end_i = start_i
+
+        pages: List[Dict[str, Any]] = []
+        for i in range(start_i, end_i + 1):
+            page = extract_page(doc, i, img_dir)
+            pages.append(page)
+            # 单页缓存
+            try:
+                pfile = os.path.join(pages_dir, f"{page['page']}.json")
+                with open(pfile, "w", encoding="utf-8") as pf:
+                    json.dump(page, pf, ensure_ascii=False)
+            except OSError:
+                pass
+
+        mtime, size = file_fingerprint(pdf)
         payload = {
-            "version": 1,
+            "version": 2,
             "path": pdf,
             "mtime": mtime,
             "size": size,
             "meta": meta_of(doc),
             "pages": pages,
             "page_count": n,
-            "extracted_pages": limit,
+            "extracted_from": start_i + 1,
+            "extracted_to": end_i + 1,
+            "extracted_pages": end_i - start_i + 1,
         }
         with open(out_json, "w", encoding="utf-8") as f:
             json.dump(payload, f, ensure_ascii=False)
-        print(f"OK {n}")
+        # meta 侧车
+        try:
+            meta_path = os.path.join(os.path.dirname(out_json), "meta.json")
+            with open(meta_path, "w", encoding="utf-8") as mf:
+                json.dump(
+                    {
+                        "path": pdf,
+                        "mtime": mtime,
+                        "size": size,
+                        "page_count": n,
+                        "meta": payload["meta"],
+                        "toc": toc_of(doc),
+                    },
+                    mf,
+                    ensure_ascii=False,
+                )
+        except OSError:
+            pass
+        print(f"OK {n} {start_i + 1}-{end_i + 1}")
         return 0
     except Exception as e:
         print(f"ERROR: extract failed: {e}", file=sys.stderr)

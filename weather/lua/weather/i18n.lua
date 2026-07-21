@@ -141,13 +141,25 @@ function M.t(key)
   return pack[key] or STR.zh[key] or key
 end
 
----@param code any
+---@param code any WMO 码；或中文天气文案（国内源）
+---@param label_override? string 优先显示的文案（如国内源原始「小雨」）
 ---@return string emoji
 ---@return string label
-function M.weather_of(code)
+function M.weather_of(code, label_override)
   local c = tonumber(code)
-  local info = (c and WMO[c]) or { zh = "未知", en = "Unknown", emoji = "🌡️" }
-  local label = (lang == "en") and info.en or info.zh
+  local info = (c and WMO[c]) or nil
+  if not info and type(code) == "string" and code ~= "" then
+    -- 国内源可能直接给中文天气
+    info = { zh = code, en = code, emoji = "🌡️" }
+  end
+  info = info or { zh = "未知", en = "Unknown", emoji = "🌡️" }
+  local label = label_override
+  if not label or label == "" then
+    label = (lang == "en") and info.en or info.zh
+  elseif lang == "en" and c and WMO[c] then
+    -- 有 override 但 UI 英文时仍用 WMO 英文
+    label = WMO[c].en
+  end
   return info.emoji or "🌡️", label
 end
 

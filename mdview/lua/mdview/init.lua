@@ -3213,10 +3213,10 @@ function M._activate_source_at_cursor()
   return M._activate_source_at(nil, nil)
 end
 
-local SOURCE_MAPS_VER = 2
+local SOURCE_MAPS_VER = 5
 local source_maps_au = false
 
----给 Markdown 源 buffer 绑 Enter / Ctrl+左键
+---给 Markdown 源 buffer 绑 Enter / Ctrl+左键 / 粘贴图片
 ---@param buf integer
 local function attach_source_maps(buf)
   if not buf or not vim.api.nvim_buf_is_valid(buf) then
@@ -3265,7 +3265,87 @@ local function attach_source_maps(buf)
     })
   )
 
+  -- 智能粘贴：剪贴板有图 → images/yyyyMMddHHmmss.png + ![image](...)；否则文本
+  local pc = (config.get().paste_image) or {}
+  if pc.enable ~= false then
+    -- 拦截 p/P：v:register 为 +/* 时贴图（手动 "+p、nmap Q "+p 均可）
+    -- 注意：nnoremap Q "+p 不递归，不会进此映射，需改 nmap 或绑 smart_clipboard_paste
+    if pc.intercept_clipboard_put ~= false then
+      vim.keymap.set("n", "p", function()
+        require("mdview.paste_image").put_with_register("p")
+      end, vim.tbl_extend("force", opts, {
+        desc = "mdview: put (clipboard image → link if +/*)",
+      }))
+      vim.keymap.set("n", "P", function()
+        require("mdview.paste_image").put_with_register("P")
+      end, vim.tbl_extend("force", opts, {
+        desc = "mdview: Put (clipboard image → link if +/*)",
+      }))
+    end
+
+    local keys = pc.keys
+    if type(keys) ~= "table" then
+      keys = {}
+    end
+    local insert_keys = keys.insert
+    if insert_keys == nil then
+      insert_keys = { "<C-S-v>", "<S-Insert>" }
+    end
+    local normal_keys = keys.normal
+    if normal_keys == nil then
+      normal_keys = { "<C-S-v>" }
+    end
+    if type(insert_keys) == "table" then
+      for _, lhs in ipairs(insert_keys) do
+        if type(lhs) == "string" and lhs ~= "" then
+          vim.keymap.set("i", lhs, function()
+            require("mdview.paste_image").smart_paste("i")
+          end, vim.tbl_extend("force", opts, {
+            desc = "mdview: smart paste (image → file + link)",
+          }))
+        end
+      end
+    end
+    if type(normal_keys) == "table" then
+      for _, lhs in ipairs(normal_keys) do
+        if type(lhs) == "string" and lhs ~= "" then
+          local mode_put = (lhs:sub(-1) == "P") and "P" or "p"
+          vim.keymap.set("n", lhs, function()
+            require("mdview.paste_image").smart_paste("n", { put = mode_put })
+          end, vim.tbl_extend("force", opts, {
+            desc = "mdview: smart paste (image → file + link)",
+          }))
+        end
+      end
+    end
+  end
+
   M.ensure_mouse()
+end
+
+---剪贴板图片 → 保存并插入 Markdown 链接（仅图，无图则提示）
+function M.paste_image()
+  M.ensure_setup()
+  return require("mdview.paste_image").paste_image_only()
+end
+
+---智能粘贴系统剪贴板（有图存图插链接，无图 "+p）。
+---供用户键绑定（推荐 nnoremap Q 绑此函数，比 nmap Q "+p 更稳）
+function M.smart_clipboard_paste()
+  M.ensure_setup()
+  local ft = vim.bo.filetype or ""
+  local name = vim.api.nvim_buf_get_name(0):lower()
+  local is_md = ft == "markdown"
+    or ft == "md"
+    or ft == "pandoc"
+    or name:match("%.md$")
+    or name:match("%.markdown$")
+    or name:match("%.mdx$")
+  if is_md then
+    return require("mdview.paste_image").smart_paste("n", { put = "p", reg = "+" })
+  end
+  -- 非 md：普通 "+p
+  vim.cmd('normal! "+p')
 end
 
 ---安装源 buffer 键位 autocmd（幂等）

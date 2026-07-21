@@ -5,7 +5,7 @@
 Open **PDF / Word** files inside Neovim as a **structured preview** (not raw binary, not full-page screenshots).
 
 - Text: **color / bold / italic** (and monospace)
-- Images: **chafa** by default; **Enter / click / `gi`** opens a float with **HD overlay when supported** (same path as mdview)
+- Images: **Python+Pillow** block art; **Enter / click / `gi`** opens a float with **HD overlay when supported** (same path as mdview)
 - Tables: Unicode borders
 - `gh`: temporary page HD (clears on scroll/blur)
 
@@ -23,7 +23,7 @@ Demos:
 | Auto-open | `.pdf` / `.docx` / `.doc` (`auto_open`) |
 | Text styles | Per-span/run color, bold, italic, mono |
 | Tables | PDF `find_tables`; Word `w:tbl` |
-| Images | chafa default; Pillow fallback |
+| Images | Python+Pillow block art |
 | Enter / click / `gi` | Image float + `attach_float` HD when available |
 | `gh` | Temporary HD for visible images |
 | Pages | `n` / `]` next, `p` / `[` prev (PDF) |
@@ -36,8 +36,7 @@ Demos:
 | Python 3 + **PyMuPDF** | PDF extract |
 | Python 3 (stdlib) | **DOCX** extract (zip + xml) |
 | LibreOffice `soffice` (optional) | Legacy **.doc** → docx |
-| **chafa** (recommended) | In-preview image blocks |
-| Pillow (optional) | Thumb fallback; HD encode |
+| Python 3 + **Pillow** | In-preview block art + HD encode |
 | WezTerm / Kitty / Ghostty | Float / `gh` pixel HD |
 
 ```bash
@@ -64,8 +63,16 @@ Plug '/path/to/nvimplugins/pdfview'
 |-----|--------|
 | `q` / `Esc` | Close |
 | `r` | Re-extract + render |
-| `n` / `]` | Next page (PDF) |
-| `p` / `[` | Prev page (PDF) |
+| `]` | Next page (PDF) |
+| `[` | Prev page (PDF) |
+| `gg` | First page; `42gg` jump to page 42 |
+| `G` | Last page; `42G` jump to page 42 |
+| `gp` | Prompt for page number |
+| **`t`** | Toggle left **TOC** (auto-open when outline exists) |
+| **`/`** | Full-text search (right panel; whole PDF) |
+| **Enter / double-click** | Jump to hit (in results panel) |
+| `n` / `N` | Search hits: next/prev |
+| `q` | Close search panel |
 | **Enter / click** | Image float (+ HD if supported) |
 | `gi` | Same |
 | `gh` | Temporary page HD |
@@ -78,10 +85,15 @@ Plug '/path/to/nvimplugins/pdfview'
 require("pdfview").setup({
   auto_open = true,
   python = "python",
+  -- large PDFs: lazy extract + render only near the window
+  lazy_render = true,
+  lazy_threshold = 12,
+  viewport_buffer = 2,
+  extract_chunk = 8, -- first pages extracted synchronously on open
   image = {
-    backend = "chafa",
+    backend = "python",
     open_with = "float",
-    float_scale = "fill",
+    float_scale = "fit",
     float_hd = "always",
   },
 })
@@ -93,3 +105,4 @@ require("pdfview").setup({
 - Complex layouts may reorder  
 - `.doc` needs LibreOffice; prefer `.docx`  
 - HD needs graphics-protocol terminals  
+- Large PDFs use **lazy extract** (first `extract_chunk` pages, then more as you scroll) plus viewport render; not a full-document parse on open  

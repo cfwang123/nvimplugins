@@ -65,6 +65,13 @@ vim.api.nvim_create_user_command("MdViewToc", function()
   end
 end, { desc = "mdview: toggle TOC float (edit or preview)" })
 
+vim.api.nvim_create_user_command("MdViewPasteImage", function()
+  local m = get_mod()
+  if m then
+    m.paste_image()
+  end
+end, { desc = "mdview: paste clipboard image as images/yyyyMMddHHmmss.png + link" })
+
 -- 启动时检测推荐 pip 依赖（Pillow）并提示安装
 do
   local _dep_plugin = "mdview"

@@ -1,4 +1,4 @@
----@mod weather 状态栏天气 + 10 天预报浮窗（公开 HTTP，无 API Key）
+---@mod weather 状态栏天气 + 10 天预报浮窗（国内源 + Open-Meteo，无 API Key）
 local i18n = require("weather.i18n")
 
 local M = {}
@@ -7,6 +7,9 @@ local default_config = {
   ---城市名（中英文均可）。默认 nil：未配置则不自动启用、不拉数据
   city = nil, ---@type string|nil
   python = "python",
+  ---数据源：auto=系统中文→国内 cn，否则 open-meteo | cn | open-meteo
+  ---auto 下中文系统会优先国内源（失败再回退 Open-Meteo）
+  source = "auto", ---@type "auto"|"cn"|"open-meteo"
   ---缓存有效期（秒），默认 1 小时
   cache_ttl = 3600,
   ---自动刷新间隔（毫秒），默认 1 小时
@@ -173,7 +176,7 @@ local function update_statusline(data)
     return
   end
   local city = data.city or state.city or ""
-  local emoji, weather = i18n.weather_of(data.current.code)
+  local emoji, weather = i18n.weather_of(data.current.code, data.current.label)
   emoji = statusline_emoji(emoji)
   local temp = data.current.temp
   if temp ~= nil then
@@ -210,6 +213,28 @@ function M.statusline()
   return vim.g.weather_status or ""
 end
 
+---解析实际数据源：auto 时按**系统语言**（非 UI 切换）
+---中文系统 → cn；否则 → open-meteo
+---@return string "cn"|"open-meteo"|"auto"
+local function resolve_source()
+  local source = config.source or "auto"
+  if source == "china" or source == "domestic" or source == "itboy" then
+    return "cn"
+  end
+  if source == "om" or source == "openmeteo" or source == "open-meteo" then
+    return "open-meteo"
+  end
+  if source == "cn" then
+    return "cn"
+  end
+  -- auto：看系统 locale，不看 L 切换后的 UI 语言
+  local sys = i18n.detect()
+  if sys == "zh" then
+    return "auto" -- 脚本侧：先 cn 再回退 open-meteo
+  end
+  return "open-meteo"
+end
+
 ---@param on_done? fun(ok: boolean, data: table|nil, err?: string)
 local function fetch_remote(on_done)
   on_done = on_done or function() end
@@ -229,6 +254,7 @@ local function fetch_remote(on_done)
   state.busy = true
   local city = state.city or config.city or "北京"
   local lang = i18n.get()
+  local source = resolve_source()
   local cmd = {}
   for _, a in ipairs(py) do
     cmd[#cmd + 1] = a
@@ -243,12 +269,15 @@ local function fetch_remote(on_done)
     lang,
     "--days",
     "10",
+    "--source",
+    source,
   })
 
   local function finish(ok, data, err)
     state.busy = false
     if ok and data then
       data.query_city = state.city or config.city
+      data.query_source = config.source or "auto"
       state.data = data
       save_cache(data)
       update_statusline(data)
@@ -333,10 +362,16 @@ function M.refresh(force, on_done)
     return
   end
   local want = vim.trim(state.city or config.city or "")
+  local want_source = config.source or "auto"
 
   if not force then
     local cached = state.data or load_cache()
-    if cached and cache_fresh(cached) and (cached.query_city == want or cached.query_city == nil) then
+    if
+      cached
+      and cache_fresh(cached)
+      and (cached.query_city == want or cached.query_city == nil)
+      and (cached.query_source == nil or cached.query_source == want_source)
+    then
       state.data = cached
       update_statusline(cached)
       on_done(true, cached, nil)
@@ -347,6 +382,7 @@ function M.refresh(force, on_done)
   fetch_remote(function(ok, data, err)
     if ok and data then
       data.query_city = want
+      data.query_source = want_source
       state.data = data
       save_cache(data)
       update_statusline(data)
@@ -394,7 +430,7 @@ function M._render_popup()
   if not data or not data.current then
     lines[#lines + 1] = i18n.t("no_data")
   else
-    local emoji, weather = i18n.weather_of(data.current.code)
+    local emoji, weather = i18n.weather_of(data.current.code, data.current.label)
     local cur = string.format(
       "%s  %s %s %s  %s %s%%  %s %s  [%s]",
       i18n.t("current"),
@@ -423,7 +459,7 @@ function M._render_popup()
     lines[#lines + 1] = string.rep("─", vim.fn.strdisplaywidth(head))
 
     for _, day in ipairs(data.daily or {}) do
-      local em, lab = i18n.weather_of(day.code)
+      local em, lab = i18n.weather_of(day.code, day.label)
       local wd = i18n.weekday_of(day.date)
       local date_s = string.format("%s(%s)", day.date or "", wd)
       local weather_s = em .. " " .. lab

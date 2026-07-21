@@ -18,7 +18,7 @@ Focused on fun, practical, low-dependency terminal tooling. Most UIs support **C
 | Plugin | Overview | Docs |
 |--------|----------|------|
 | **[mdview](mdview/)** | Markdown preview: single-window (`:MdView`) or side-by-side (`:MdSideView`). Headings/lists/GFM tables/code, TOC, anchors, block-character images, optional terminal HD. **`L`** toggles UI language. | [EN](mdview/README.md) · [中文](mdview/README.zh.md) |
-| **[pdfview](pdfview/)** | PDF / Word preview: text styles, tables, chafa images; Enter/click float HD; `gh` temporary page HD. **`L`** toggles language. | [EN](pdfview/README.md) · [中文](pdfview/README.zh.md) |
+| **[pdfview](pdfview/)** | PDF / Word preview: text styles, tables, Python+Pillow images; Enter/click float HD; `gh` temporary page HD. **`L`** toggles language. | [EN](pdfview/README.md) · [中文](pdfview/README.zh.md) |
 | **[xlsview](xlsview/)** | Excel (.xlsx/.xlsm) preview: styles, multi-sheet, natural column width + h-scroll, **cell motion / Ctrl-v cell-block / y yank**. **`L`** language. | [EN](xlsview/README.md) · [中文](xlsview/README.zh.md) |
 | **[tts](tts/)** | Windows SAPI TTS: `<leader>vo` starts from the **segment at the cursor** (press again to jump while playing); white control bar; volume wheel / rate; system default audio device; **EN/中文** button or **`L`**. | [EN](tts/README.md) · [中文](tts/README.zh.md) |
 | **[imgbuf](imgbuf/)** | Image as character art (block/half/braille); fill/fit; auto-open, clipboard; optional pixel HD on WezTerm/Kitty/Ghostty. **`L`** toggles language. | [EN](imgbuf/README.md) · [中文](imgbuf/README.zh.md) |
@@ -29,7 +29,7 @@ Focused on fun, practical, low-dependency terminal tooling. Most UIs support **C
 | **[es](es/)** | Windows **Everything** file search (`es.exe`): `:ES` / `<leader>es` live float picker. | [EN](es/README.md) · [中文](es/README.zh.md) |
 | **[qrbuf](qrbuf/)** | Text → terminal **QR code** float: `:QrBuf` / `<leader>qr`, selection supported. | [EN](qrbuf/README.md) · [中文](qrbuf/README.zh.md) |
 | **[httpbuf](httpbuf/)** | Lightweight **HTTP** request editor + response view: `:HttpBuf` / `<leader>http`, curl or Python. | [EN](httpbuf/README.md) · [中文](httpbuf/README.zh.md) |
-| **[weather](weather/)** | Statusline **city / weather / temp** + `:Weather` / `<leader>we` 10-day table (shows **fetch time**); Open-Meteo public HTTP, hourly cache. | [EN](weather/README.md) · [中文](weather/README.zh.md) |
+| **[weather](weather/)** | Statusline **city / weather / temp** + `:Weather` / `<leader>we` 10-day table; **CN source if system Chinese**, else Open-Meteo; hourly cache. | [EN](weather/README.md) · [中文](weather/README.zh.md) |
 | **[taskmgr](taskmgr/)** | Process manager float: `:Taskmgr` / `<leader>ta`, sort / column show-hide & width, CPU·mem intensity highlights, kill process. | [EN](taskmgr/README.md) · [中文](taskmgr/README.zh.md) |
 | **[ntemoji](ntemoji/)** | **NERDTree** emoji icons (no Nerd Font / no vim-devicons; brackets concealed). | [EN](ntemoji/README.md) · [中文](ntemoji/README.zh.md) |
 
@@ -113,8 +113,8 @@ TTS samples: [tts/testdata/](tts/testdata/) (`sample.zh.txt` / `sample.en.txt`).
 
 | Plugin | Neovim | Other |
 |--------|--------|-------|
-| mdview | 0.9+ | Core needs nothing extra; block images need Pillow (or chafa); code highlight optional Tree-sitter; pixel HD needs a graphics-protocol terminal |
-| pdfview | 0.9+ | PDF: PyMuPDF; DOCX: stdlib only; DOC: optional LibreOffice; images chafa/Pillow; HD: WezTerm/Kitty/Ghostty |
+| mdview | 0.9+ | Core needs nothing extra; block images need Python3 + Pillow; code highlight optional Tree-sitter; pixel HD needs a graphics-protocol terminal |
+| pdfview | 0.9+ | PDF: PyMuPDF; DOCX: stdlib only; DOC: optional LibreOffice; images: Python3 + Pillow; HD: WezTerm/Kitty/Ghostty |
 | xlsview | 0.9+ | Python3 + **openpyxl** |
 | tts | 0.9+ | **Windows** + SAPI; Python3 + **pywin32** |
 | imgbuf | 0.9+ | chafa **or** Python3 + Pillow; HD needs WezTerm/Kitty/Ghostty + Pillow |
@@ -126,7 +126,7 @@ TTS samples: [tts/testdata/](tts/testdata/) (`sample.zh.txt` / `sample.en.txt`).
 | es | 0.9+ | **Windows** + [Everything](https://www.voidtools.com/) + [es.exe CLI](https://www.voidtools.com/support/everything/command_line_interface/) |
 | qrbuf | 0.9+ | Python3 (stdlib, `scripts/qrgen.py`) |
 | httpbuf | 0.9+ | **curl** or Python3 (stdlib urllib) |
-| weather | 0.9+ | Python3 + network (Open-Meteo public HTTP, no key) |
+| weather | 0.9+ | Python3 + network (CN domestic + Open-Meteo, no key) |
 | taskmgr | 0.9+ | Python3 + **psutil**; Win / Linux / macOS |
 | ntemoji | 0.9+ | [NERDTree](https://github.com/preservim/nerdtree); do **not** load vim-devicons together |
 
@@ -244,7 +244,7 @@ require("pdfview").setup({
   ui_lang = "auto", -- L
   python = "python",
   image = {
-    backend = "chafa",
+    backend = "python",
     open_with = "float",
     float_hd = "always",
   },

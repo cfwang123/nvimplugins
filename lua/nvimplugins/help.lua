@@ -121,6 +121,7 @@ local function catalog()
         { cmd = "MdViewRefresh", desc_zh = "刷新", desc_en = "Refresh" },
         { cmd = "MdViewSync", desc_zh = "同步滚动位置", desc_en = "Sync scroll" },
         { cmd = "MdViewToc", desc_zh = "TOC 大纲浮窗", desc_en = "TOC outline float" },
+        { cmd = "MdViewPasteImage", desc_zh = "粘贴剪贴板图片", desc_en = "Paste clipboard image" },
       },
       keys = {
         { default = "<leader>mv", desc_zh = "单窗预览", desc_en = "Single-window preview" },
@@ -128,6 +129,8 @@ local function catalog()
         { default = "<leader>toc", desc_zh = "编辑窗/预览 TOC", desc_en = "TOC from editor/preview" },
         { default = "t", desc_zh = "预览内 TOC", desc_en = "TOC in preview" },
         { default = "L", desc_zh = "预览内中英", desc_en = "In preview: language" },
+        { default = '"+p', desc_zh = "智能粘贴 ![image](images/…)", desc_en = "Smart paste ![image](images/…)" },
+        { default = "Q→smart_clipboard_paste", desc_zh = "若 nnoremap Q 请绑 smart_clipboard_paste", desc_en = "If nnoremap Q, bind smart_clipboard_paste" },
       },
     },
     {

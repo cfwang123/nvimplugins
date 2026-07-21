@@ -315,104 +315,52 @@ function M.render_thumb(abs_path, full_w, max_h, cfg)
     }
   end
 
+  -- 字符画仅 Python+Pillow（scripts/thumb.py），不再依赖 chafa
+  local backend = (cfg.image and cfg.image.backend) or "python"
+  if backend == "none" then
+    return nil
+  end
+
   local py = python_cmd(cfg)
   local script = plugin_root() .. "/scripts/thumb.py"
   script = vim.fn.fnamemodify(script, ":p")
-  if py and vim.fn.filereadable(script) == 1 then
-    local cmd = {
-      py,
-      "-X",
-      "utf8",
-      script,
-      path_arg,
-      tostring(full_w),
-      tostring(max_h),
-      (scale_mode == "stretch" and "stretch")
-        or (scale_mode == "fit" and "fit")
-        or "width_full",
-      tostring(cell_aspect),
-    }
-    local ok, out = pcall(vim.fn.systemlist, cmd)
-    if ok and type(out) == "table" then
-      local parsed = parse_thumb_protocol(out)
-      if parsed then
-        reapply_mark_colors(parsed.marks)
-        local result = {
-          lines = parsed.lines,
-          marks = parsed.marks,
-          width = parsed.width,
-          height = parsed.height,
-        }
-        thumb_cache[ckey] = result
-        -- 简单限量
-        local n = 0
-        for _ in pairs(thumb_cache) do
-          n = n + 1
-        end
-        if n > 40 then
-          thumb_cache = { [ckey] = result }
-        end
-        return result
-      end
-    end
+  if not py or vim.fn.filereadable(script) ~= 1 then
+    return nil
   end
-
-  -- chafa 回退：用 cell_aspect 估算高度盒
-  if vim.fn.executable("chafa") == 1 then
-    local box_h = (max_h > 0) and max_h or math.max(4, math.floor(full_w * cell_aspect * 0.75))
-    local cmd = {
-      "chafa",
-      "-f",
-      "symbols",
-      "--symbols",
-      "block",
-      "-s",
-      string.format("%dx%d", full_w, box_h),
-      "--animate",
-      "off",
-    }
-    if scale_mode == "stretch" then
-      table.insert(cmd, "--stretch")
-    else
-      table.insert(cmd, "--scale")
-      table.insert(cmd, "max")
-    end
-    table.insert(cmd, path_arg)
-    local ok, out = pcall(vim.fn.systemlist, cmd)
-    out = normalize_out(ok and out or {})
-    if ok and #out > 0 and vim.v.shell_error == 0 then
-      local lines = {}
-      for _, row in ipairs(out) do
-        if row ~= "" then
-          -- 宽 100%：每行铺满 full_w 个 █（chafa 输出宽可能略小）
-          lines[#lines + 1] = string.rep(BLOCK, full_w)
-        end
-      end
-      if max_h > 0 then
-        while #lines > max_h do
-          table.remove(lines)
-        end
-      end
-      if #lines == 0 then
-        return nil
-      end
-      vim.api.nvim_set_hl(0, "MdViewImg0", { fg = "#888888", default = false })
-      local marks = {}
-      for i = 1, #lines do
-        marks[#marks + 1] = {
-          row = i - 1,
-          col = 0,
-          end_col = #lines[i],
-          hl = "MdViewImg0",
-        }
-      end
-      return {
-        lines = lines,
-        marks = marks,
-        palette = { { r = 136, g = 136, b = 136 } },
-        width = full_w,
-        height = #lines,
+  local cmd = {
+    py,
+    "-X",
+    "utf8",
+    script,
+    path_arg,
+    tostring(full_w),
+    tostring(max_h),
+    (scale_mode == "stretch" and "stretch")
+      or (scale_mode == "fit" and "fit")
+      or "width_full",
+    tostring(cell_aspect),
+  }
+  local ok, out = pcall(vim.fn.systemlist, cmd)
+  if ok and type(out) == "table" then
+    local parsed = parse_thumb_protocol(out)
+    if parsed then
+      reapply_mark_colors(parsed.marks)
+      local result = {
+        lines = parsed.lines,
+        marks = parsed.marks,
+        width = parsed.width,
+        height = parsed.height,
       }
+      thumb_cache[ckey] = result
+      -- 简单限量
+      local n = 0
+      for _ in pairs(thumb_cache) do
+        n = n + 1
+      end
+      if n > 40 then
+        thumb_cache = { [ckey] = result }
+      end
+      return result
     end
   end
 
@@ -512,7 +460,7 @@ local function setup_float_chrome(win, buf, title, abs_path)
   return map_close
 end
 
----80% 宽高 float；默认拉伸 fill
+---80% 宽高 float；默认等比 fit
 ---@param abs_path string
 ---@param cfg table
 ---@return boolean
@@ -580,7 +528,7 @@ function M.open_float(abs_path, cfg)
   -- 与真实内容区一致（打开后实测宽高；无 winbar 时即整窗）
   local content_w = math.max(10, vim.api.nvim_win_get_width(win))
   local content_h = math.max(4, vim.api.nvim_win_get_height(win))
-  local float_scale = (cfg.image and cfg.image.float_scale) or "fill"
+  local float_scale = (cfg.image and cfg.image.float_scale) or "fit"
 
   -- 不透明 float + █ 真彩（默认）。Kitty 高清在 nvim 内不可靠且会 winblend 半透明，仅显式开启时尝试
   pcall(function()
@@ -659,6 +607,69 @@ function M.open_float(abs_path, cfg)
   return true
 end
 
+---fit 时把 █ 画布 letterbox 居中到 content 盒（与高清 gfx fit 对齐）
+---@param thumb table {lines, marks, width?, height?}
+---@param content_w number
+---@param content_h number
+---@return table
+local function letterbox_block_art(thumb, content_w, content_h)
+  local src_lines = thumb.lines or {}
+  local img_h = #src_lines
+  if img_h < 1 then
+    return thumb
+  end
+  local img_w = tonumber(thumb.width) or 0
+  if img_w < 1 then
+    img_w = vim.fn.strdisplaywidth(src_lines[1] or "")
+  end
+  content_w = math.max(1, content_w or img_w)
+  content_h = math.max(1, content_h or img_h)
+
+  local pad_top = math.max(0, math.floor((content_h - img_h) / 2))
+  local pad_left = math.max(0, math.floor((content_w - img_w) / 2))
+  if pad_top == 0 and pad_left == 0 and img_h >= content_h then
+    -- 已铺满或更大：裁到盒高即可
+    local lines = {}
+    for i = 1, math.min(img_h, content_h) do
+      lines[i] = src_lines[i]
+    end
+    local marks = {}
+    for _, m in ipairs(thumb.marks or {}) do
+      if m.row < #lines then
+        marks[#marks + 1] = m
+      end
+    end
+    return { lines = lines, marks = marks, width = img_w, height = #lines }
+  end
+
+  local left_pad = string.rep(" ", pad_left)
+  local left_bytes = #left_pad
+  local lines = {}
+  for _ = 1, pad_top do
+    lines[#lines + 1] = ""
+  end
+  for _, tl in ipairs(src_lines) do
+    lines[#lines + 1] = left_pad .. tl
+  end
+  while #lines < content_h do
+    lines[#lines + 1] = ""
+  end
+
+  local marks = {}
+  for _, m in ipairs(thumb.marks or {}) do
+    local row = m.row + pad_top
+    if row >= 0 and row < #lines then
+      marks[#marks + 1] = {
+        row = row,
+        col = (m.col or 0) + left_bytes,
+        end_col = (m.end_col or m.col or 0) + left_bytes,
+        hl = m.hl,
+      }
+    end
+  end
+  return { lines = lines, marks = marks, width = content_w, height = #lines }
+end
+
 ---float 内 █ 块渲染（无高清协议时）
 ---@param buf integer
 ---@param abs_path string
@@ -670,15 +681,17 @@ function M._fill_float_block_art(buf, abs_path, content_w, content_h, cfg, float
   if not buf or not vim.api.nvim_buf_is_valid(buf) then
     return
   end
-  local thumb_scale = "stretch"
-  if float_scale == "fit" then
-    thumb_scale = "fit"
-  end
+  -- fit=等比居中；fill/stretch=拉满盒子（默认 fit）
+  local do_fit = float_scale == "fit"
+  local thumb_scale = do_fit and "fit" or "stretch"
   local float_cfg = vim.deepcopy(cfg)
   float_cfg.image = vim.tbl_deep_extend("force", vim.deepcopy(cfg.image or {}), {
     thumb_scale = thumb_scale,
   })
   local thumb = M.render_thumb(abs_path, content_w, content_h, float_cfg)
+  if thumb and thumb.lines and do_fit then
+    thumb = letterbox_block_art(thumb, content_w, content_h)
+  end
   local lines = {}
   if thumb and thumb.lines then
     for _, tl in ipairs(thumb.lines) do
@@ -688,7 +701,7 @@ function M._fill_float_block_art(buf, abs_path, content_w, content_h, cfg, float
     lines = {
       "mdview image float",
       abs_path,
-      "(need Python+Pillow / chafa，或 Kitty/WezTerm 高清协议)",
+      "(need Python+Pillow，或 Kitty/WezTerm 高清协议)",
       "q/Esc 关闭 · o 系统打开",
     }
   end

@@ -1,5 +1,5 @@
 ---@mod mdview.source_mark
---- 编辑窗就地预览：==mark==、`<font color/style>`
+--- 编辑窗就地预览：==mark==、`<font color/style>`、图片链接 `![alt](url)` → 🖼 name
 local config = require("mdview.config")
 local highlight = require("mdview.highlight")
 local html = require("mdview.html")
@@ -148,7 +148,86 @@ local function set_conceal(buf, row0, c0, c1)
   })
 end
 
----刷新 buffer 内 ==mark== / <font> 高亮
+---行内找 ![alt](url)（跳过 `code`），0-based 半开
+---@param text string
+---@return { c0: integer, c1: integer, alt: string }[]
+local function find_images_on_line(text)
+  local out = {}
+  if not text or text == "" or not text:find("![", 1, true) then
+    return out
+  end
+  local i = 1
+  local n = #text
+  while i <= n do
+    local c = text:sub(i, i)
+    if c == "`" then
+      local j = text:find("`", i + 1, true)
+      if j then
+        i = j + 1
+      else
+        break
+      end
+    elseif text:sub(i, i + 1) == "![" then
+      local close = text:find("%]", i + 2)
+      if close and text:sub(close + 1, close + 1) == "(" then
+        local endp = text:find("%)", close + 2)
+        if endp then
+          -- 1-based: ![ 起 i，] 在 close，) 在 endp
+          out[#out + 1] = {
+            c0 = i - 1,
+            c1 = endp, -- 半开 end = ')' 的 0-based 下一列
+            alt = text:sub(i + 2, close - 1),
+          }
+          i = endp + 1
+        else
+          i = i + 1
+        end
+      else
+        i = i + 1
+      end
+    else
+      i = i + 1
+    end
+  end
+  return out
+end
+
+---图片链接隐藏显示：🖼 name（alt 空 → image）
+---@param buf integer
+---@param row0 integer
+---@param c0 integer
+---@param c1 integer
+---@param alt string
+local function set_image_conceal(buf, row0, c0, c1, alt)
+  if c1 <= c0 then
+    return
+  end
+  local name = alt
+  if type(name) ~= "string" then
+    name = ""
+  end
+  -- 去掉首尾空白；全空则默认 image
+  name = (name:match("^%s*(.-)%s*$") or name)
+  if name == "" then
+    name = "image"
+  end
+  local label = "🖼 " .. name
+  -- 整段 ![…](…) conceal；virt_text 显示为 🖼 name
+  -- 默认 concealcursor 为空 → 光标行不隐藏，符合「非光标行」
+  -- inline 需 0.10+；0.9 用 overlay（配合 conceal 即可）
+  local pos = (vim.fn.has("nvim-0.10") == 1) and "inline" or "overlay"
+  pcall(vim.api.nvim_buf_set_extmark, buf, NS, row0, c0, {
+    end_col = c1,
+    conceal = "",
+    virt_text = { { label, "MdViewImage" } },
+    virt_text_pos = pos,
+    virt_text_hide = true, -- 光标在该行时不叠 virt_text，避免与原文叠字
+    priority = 115,
+    hl_mode = "combine",
+  })
+end
+
+---刷新 buffer 内 ==mark== / <font> / 图片链接 高亮与隐藏
 ---@param buf integer
 function M.refresh(buf)
   if not is_md_source(buf) then
@@ -160,8 +239,9 @@ function M.refresh(buf)
 
   local do_mark = cfg.mark_highlight ~= false
   local do_font = not (cfg.html and cfg.html.font == false)
+  local do_img = cfg.source_image_conceal ~= false
 
-  if not do_mark and not do_font then
+  if not do_mark and not do_font and not do_img then
     return
   end
 
@@ -202,6 +282,11 @@ function M.refresh(buf)
               })
             end
           end
+        end
+      end
+      if do_img then
+        for _, im in ipairs(find_images_on_line(line)) do
+          set_image_conceal(buf, row - 1, im.c0, im.c1, im.alt)
         end
       end
     end

@@ -5,7 +5,7 @@
 在 Neovim 内打开 **PDF / Word** 并进入**结构化预览**（不是二进制乱码，也不是整页截图）。
 
 - 文本：**颜色 / 粗体 / 斜体**（及等宽字体）
-- 图片：默认 **chafa** 色块；**Enter / 点击 / `gi`** 打开 float，支持时**自动高清叠层**（同 mdview）
+- 图片：**Python+Pillow** 色块；**Enter / 点击 / `gi`** 打开 float，支持时**自动高清叠层**（同 mdview）
 - 表格：Unicode 边框渲染
 - 页内 `gh`：临时高清（滚动/失焦清除）
 
@@ -23,10 +23,10 @@
 | 自动打开 | 打开 `.pdf` / `.docx` / `.doc` 即预览（`auto_open`） |
 | 文本样式 | span/run 级颜色、bold、italic、mono |
 | 表格 | PDF：`find_tables`；Word：`w:tbl` |
-| 图片 | 默认 chafa；无 chafa 时可改 python+Pillow |
+| 图片 | Python+Pillow 色块字符画 |
 | Enter / 点击 / `gi` | float 大图 + 终端支持时 **attach_float 高清** |
 | `gh` | 当前可见区图片临时高清 |
-| 翻页 | `n` / `]` 下一页，`p` / `[` 上一页（PDF） |
+| 翻页 | `]` 下一页，`[` 上一页（PDF） |
 
 ## 依赖
 
@@ -36,13 +36,11 @@
 | Python 3 + **PyMuPDF** | PDF 提取 |
 | Python 3（标准库） | **DOCX** 提取（zip + xml，无需 python-docx） |
 | LibreOffice `soffice`（可选） | 旧 **.doc** → docx |
-| **chafa**（推荐） | 预览内图片色块 |
-| Pillow（可选） | 缩略图回退；float/gh 高清编码 |
+| Python 3 + **Pillow** | 预览内色块 + float/gh 高清编码 |
 | WezTerm / Kitty / Ghostty | float / `gh` 像素高清 |
 
 ```bash
 pip install pymupdf Pillow
-# 可选 chafa：https://hpjansson.org/chafa/
 # 可选 .doc：安装 LibreOffice，保证 soffice 在 PATH
 ```
 
@@ -76,11 +74,19 @@ Plug 'cfwang123/nvimplugins'
 |----|------|
 | `q` / `Esc` | 关闭预览 |
 | `r` | 强制重新提取并渲染 |
-| `n` / `]` | 下一页（PDF） |
-| `p` / `[` | 上一页（PDF） |
+| `]` | 下一页（PDF） |
+| `[` | 上一页（PDF） |
+| `gg` | 第 1 页；`42gg` 跳到第 42 页 |
+| `G` | 最后一页；`42G` 跳到第 42 页 |
+| `gp` | 输入页码跳转 |
+| **`t`** | 打开/关闭左侧 **大纲 TOC**（有大纲时默认开启） |
+| **`/`** | **全文搜索**（右侧结果窗；PDF 扫全书） |
+| **Enter / 双击** | 跳到对应页（结果窗内） |
+| `n` / `N` | 搜索结果：下/上一条 |
+| `q` | 关闭搜索结果窗 |
 | **Enter / 鼠标点击** | 光标处图片 → float（支持则高清） |
 | `gi` | 同上 |
-| `gh` | 当前页临时高清（再按 / 滚动 / 失焦清除） |
+| `gh` | 当前页临时高清（再按 gh / 滚动 / 失焦清除） |
 | `o` | 系统打开文档，或光标在图上时打开该图 |
 | `?` | 帮助 |
 
@@ -90,17 +96,24 @@ Plug 'cfwang123/nvimplugins'
 require("pdfview").setup({
   auto_open = true,
   python = "python",
-  max_pages = 0,          -- PDF：0 = 全部页
+  max_pages = 0,          -- 提取页数上限；0 = 不限制（仍按需懒提取）
+  -- 大 PDF：按页懒提取 + 视口懒渲染（上千页手册也不会一次抽完卡死）
+  lazy_render = true,
+  lazy_threshold = 12,    -- 页数 ≥ 此值启用预览懒渲染
+  viewport_buffer = 2,    -- 可见页上下各多渲染/提取几页
+  extract_chunk = 8,      -- 打开时先同步提取前 N 页
+  toc = true,             -- 有 PDF 大纲时默认开左侧 TOC
+  toc_width = 32,
   table_style = "unicode", -- unicode | ascii | minimal
   page_sep = true,
   image = {
     mode = "thumb",       -- thumb | placeholder | off
-    backend = "chafa",    -- chafa | python | auto | none
+    backend = "python",   -- python+Pillow 字符画；none 关闭
     open_with = "float",  -- Enter/点击/gi
     max_height = 0,
     max_images = 30,
     cell_aspect = 0.5,
-    float_scale = "fill", -- fill | fit
+    float_scale = "fit",  -- fit 等比 | fill 拉伸
     float_hd = "always",  -- float 内高清（终端支持时）
     python = "python",
     hd_tmux = false,
@@ -124,6 +137,13 @@ require("pdfview").setup({ auto_open = false })
 | DOC | 先 soffice 转 docx，再同上 |
 
 提取结果 → Lua `render`（真彩色 / 表 / 色块图）→ Enter 时 `image.open_float`：█ 底层 + `graphics.attach_float` 高清。
+
+**懒提取 + 懒渲染（默认开）**：
+
+- **提取**：打开时只同步抽前 `extract_chunk` 页；滚动靠近未加载页时**异步**补提取（单页缓存于 `stdpath("cache")/pdfview/.../pages/`）。
+- **已提取页**：始终完整显示（滚走再滚回不丢内容）。
+- **未提取页**：等高占位（`stub_page_lines`，默认 36 行），滚动约 50% ≈ 手册中部。
+- 上千页芯片手册可秒开，不会一次抽完全书卡死 Neovim。
 
 缓存：`stdpath("cache")/pdfview/<hash>/`
 

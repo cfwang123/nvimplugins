@@ -133,7 +133,7 @@ require("mdview").setup({
     python = "python",       -- 或 "python3" / 绝对路径
     open_with = "float",
     float_hd = "never",      -- ② 可先关高清，仅色块
-    float_scale = "fill",
+    float_scale = "fit",
   },
 })
 ```
@@ -155,7 +155,7 @@ require("mdview").setup({
 |------|------|
 | **WezTerm / Kitty / Ghostty** | 终端图形协议；float 高清、`gh` 页内临时高清 |
 | 真彩终端 + 足够色域 | 色块与高清观感更好 |
-| （可选）chafa | `image.backend = "auto"` 时可作为色块渲染备选 |
+| Python 3 + **Pillow** | 色块字符图（`thumb.py`） |
 
 #### 终端
 
@@ -191,10 +191,10 @@ require("mdview").setup({
     mode = "thumb",
     max_height = 0,            -- 0 = 高度随宽比例；>0 限制最大行数
     max_images = 20,
-    backend = "auto",          -- python Pillow / chafa
+    backend = "python",        -- python+Pillow 字符画；none 关闭
     python = "python",
     open_with = "float",
-    float_scale = "fill",      -- fill 拉伸 | fit 等比 letterbox
+    float_scale = "fit",       -- fit 等比 letterbox | fill 拉伸
     -- 预览内默认不自动高清（滚动易乱）；用 gh 临时开
     hd = "never",
     -- float 与 gi：终端支持则像素高清
@@ -245,6 +245,7 @@ python -c "from PIL import Image; print('Pillow OK')"
 | `:MdViewRefresh` | 强制重渲染 |
 | `:MdViewSync` | 侧边按源光标同步 |
 | `:MdViewToc` | 弹出 / 关闭 TOC（编辑窗或预览） |
+| `:MdViewPasteImage` | 将**剪贴板图片**保存为 `images/yyyyMMddHHmmss.png` 并插入 `![](...)` |
 
 侧边开启后，同 tab 切换其它 **markdown** buffer 时预览会跟到该文件；非 md 则保持当前预览。
 
@@ -277,6 +278,50 @@ python -c "from PIL import Image; print('Pillow OK')"
 | `Ctrl`+鼠标左键 | 同上 |
 | `<C-o>` | 跳转后返回（Vim jumplist；文内锚点与外部 md 均适用） |
 | 非图片/链接处的 `<CR>` | 保持 Vim 默认行为 |
+| （自动） | **非光标行**将 `![alt](url)` 折叠显示为 **`🖼 name`**（`alt` 为空时 name=`image`；光标行显示完整源码）。`source_image_conceal = false` 可关 |
+| **`"+p`** / **`"+P`** | **智能粘贴**（推荐）：剪贴板有图 → `images/yyyyMMddHHmmss.png` 并插入 `![image](images/...)`；无图则正常粘贴文本 |
+| **`Ctrl-Shift-v`** / **`Shift-Insert`** | 同上（插入模式也可用 Shift-Insert） |
+| `:MdViewPasteImage` | 仅贴图（无图则提示，不插入文本） |
+
+### 粘贴图片
+
+1. 先**保存** md 文件（需知目录）  
+2. 截图 / 复制图片到剪贴板  
+3. 在编辑窗普通模式 **`"+p`**（或 `:MdViewPasteImage` / `Ctrl-Shift-v`）  
+4. 自动创建 `<md目录>/images/`，文件名 `yyyyMMddHHmmss.png`（同秒冲突时加 `_2`…），插入例如 `![image](images/20260721143005.png)`  
+
+依赖：**Python3 + Pillow**（与预览色块图相同）。
+
+#### 自定义键（如 `Q`）
+
+| 写法 | 能否贴图 | 说明 |
+|------|:--------:|------|
+| `nmap Q "+p` | ✓ | 递归，会走到 mdview 对 `p` 的拦截 |
+| `nnoremap Q "+p` | ✗ | **不递归**，用的是 Vim 内置 `p`，绕过插件 |
+| 直接绑函数 | ✓ | 推荐给 `nnoremap` 用户 |
+
+```vim
+" 方式 A：允许递归
+nmap Q "+p
+
+" 方式 B：noremap 时直接调插件（推荐）
+nnoremap Q <Cmd>lua require('mdview').smart_clipboard_paste()<CR>
+```
+
+```lua
+require("mdview").setup({
+  paste_image = {
+    enable = true,
+    dir = "images",
+    alt = "image",        -- ![image](...)
+    intercept_clipboard_put = true, -- 拦截 p/P 且寄存器为 +/* 时贴图
+    keys = {
+      insert = { "<C-S-v>", "<S-Insert>" },
+      normal = { "<C-S-v>" },
+    },
+  },
+})
+```
 
 ## 配置摘要
 
@@ -286,6 +331,7 @@ python -c "from PIL import Image; print('Pillow OK')"
 
 - **预览内**：默认仅色块字符渲染（`hd = "never"`）；需要时用 **`gh`** 临时叠高清  
 - **float / `gi`**：色块 + 可选像素高清（`float_hd = "always"`）  
+- **粘贴**：剪贴板图 → `images/yyyyMMddHHmmss.png` + Markdown 链接  
 - 需 **Pillow**；高清还需支持图形协议的终端  
 
 ## 目录

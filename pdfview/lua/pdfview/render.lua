@@ -542,7 +542,10 @@ local function render_image(ctx, block)
   -- 1-based 行号：标签行也可点
   local hit_start = label_row + 1
 
-  if imgcfg.mode == "placeholder" then
+  -- 懒渲染 / 超预算：只留可点标签，不生成色块
+  local budget = ctx.image_budget
+  local allow = ctx.allow_images ~= false
+  if imgcfg.mode == "placeholder" or not allow or (budget ~= nil and budget <= 0) then
     ctx.hits[#ctx.hits + 1] = {
       kind = "image",
       line = hit_start,
@@ -557,6 +560,9 @@ local function render_image(ctx, block)
 
   local thumb = image_mod.render_thumb(path, full_w, max_h, cfg)
   if thumb and thumb.lines then
+    if budget ~= nil then
+      ctx.image_budget = budget - 1
+    end
     local base = #ctx.lines
     for _, ln in ipairs(thumb.lines) do
       ctx.lines[#ctx.lines + 1] = ln
@@ -601,23 +607,140 @@ local function render_image(ctx, block)
   ctx.lines[#ctx.lines + 1] = ""
 end
 
----@param data table extract JSON
----@param opts {width:number, cfg:table}
----@return table result
-function M.render(data, opts)
-  highlight.ensure()
-  opts = opts or {}
-  local cfg = opts.cfg or {}
-  local width = math.max(20, opts.width or 80)
-
-  local ctx = {
+---@param width number
+---@param cfg table
+---@return table
+local function new_ctx(width, cfg, allow_images, image_budget)
+  return {
     lines = {},
     extmarks = {},
     hits = {},
-    page_map = {}, ---@type table<number, number> page -> preview line (1-based)
     width = width,
     cfg = cfg,
+    allow_images = allow_images ~= false,
+    image_budget = image_budget,
   }
+end
+
+---@param ctx table
+---@param pno number
+---@param page_count number
+---@param multi_page boolean
+local function append_page_sep(ctx, pno, page_count, multi_page)
+  local cfg = ctx.cfg or {}
+  if cfg.page_sep == false or not multi_page then
+    return
+  end
+  local width = ctx.width
+  local sep = string.format(require("pdfview.i18n").t("page_sep"), pno, page_count or pno)
+  local pad = width - str_width(sep)
+  if pad > 0 then
+    sep = sep .. string.rep("─", pad)
+  end
+  local row = #ctx.lines
+  ctx.lines[#ctx.lines + 1] = sep
+  ctx.extmarks[#ctx.extmarks + 1] = {
+    row = row,
+    col = 0,
+    end_col = #sep,
+    hl = "PdfViewPageSep",
+  }
+  ctx.lines[#ctx.lines + 1] = ""
+end
+
+---完整渲染一页内容（相对行号，从 0 起）
+---@param page table
+---@param opts {width:number, cfg:table, multi_page?:boolean, page_count?:number, allow_images?:boolean, image_budget?:number}
+---@return table segment {lines, extmarks, hits, full, page}
+function M.render_page_full(page, opts)
+  opts = opts or {}
+  local cfg = opts.cfg or {}
+  local width = math.max(20, opts.width or 80)
+  local pno = page.page or 1
+  local page_count = opts.page_count or pno
+  local multi_page = opts.multi_page
+  if multi_page == nil then
+    multi_page = page_count > 1
+  end
+  local budget = opts.image_budget
+  if budget == nil then
+    budget = (cfg.image and cfg.image.max_images) or 30
+  end
+  local ctx = new_ctx(width, cfg, opts.allow_images ~= false, budget)
+  append_page_sep(ctx, pno, page_count, multi_page)
+  for _, block in ipairs(page.blocks or {}) do
+    if block.type == "text" then
+      render_text(ctx, block)
+    elseif block.type == "table" then
+      render_table(ctx, block.rows or {}, block.header ~= false)
+      ctx.lines[#ctx.lines + 1] = ""
+    elseif block.type == "image" then
+      render_image(ctx, block)
+    end
+  end
+  if #ctx.lines == 0 then
+    ctx.lines[1] = ""
+  end
+  return {
+    lines = ctx.lines,
+    extmarks = ctx.extmarks,
+    hits = ctx.hits,
+    full = true,
+    page = pno,
+    image_budget_left = ctx.image_budget,
+  }
+end
+
+---尚未提取的页：分隔线 + 提示 + 等高占位行（让滚动条近似按页比例）
+---@param pno number
+---@param opts {width:number, cfg:table, multi_page?:boolean, page_count?:number, pending?:boolean, stub_lines?:number}
+---@return table segment
+function M.render_page_stub(pno, opts)
+  opts = opts or {}
+  local cfg = opts.cfg or {}
+  local width = math.max(20, opts.width or 80)
+  local page_count = opts.page_count or pno
+  local multi_page = opts.multi_page
+  if multi_page == nil then
+    multi_page = page_count > 1
+  end
+  local ctx = new_ctx(width, cfg, false, 0)
+  append_page_sep(ctx, pno, page_count, multi_page)
+  local hint = opts.pending and "  … loading" or "  …"
+  local row = #ctx.lines
+  ctx.lines[#ctx.lines + 1] = hint
+  ctx.extmarks[#ctx.extmarks + 1] = {
+    row = row,
+    col = 0,
+    end_col = #hint,
+    hl = "PdfViewMeta",
+  }
+  -- 等高占位：滚动约 50% ≈ 中间页（未提取区按固定行高估算）
+  local pad = tonumber(opts.stub_lines) or tonumber(cfg.stub_page_lines) or 36
+  pad = math.max(2, math.min(120, pad))
+  -- 已有 sep(2) + hint(1)，再补到 pad 行
+  while #ctx.lines < pad do
+    ctx.lines[#ctx.lines + 1] = ""
+  end
+  return {
+    lines = ctx.lines,
+    extmarks = ctx.extmarks,
+    hits = {},
+    full = false,
+    page = pno,
+    pending = opts.pending == true,
+  }
+end
+
+---文档头（标题 + 元信息）
+---@param data table
+---@param opts {width:number, cfg:table}
+---@return table segment
+function M.render_header(data, opts)
+  opts = opts or {}
+  local cfg = opts.cfg or {}
+  local width = math.max(20, opts.width or 80)
+  local ctx = new_ctx(width, cfg, false, 0)
 
   local meta = data.meta or {}
   local title = meta.title
@@ -638,10 +761,7 @@ function M.render(data, opts)
   if kind == "docx" or kind == "doc" then
     meta_line = i18n.t("meta_word")
   else
-    meta_line = string.format(
-      i18n.t("meta_pdf"),
-      data.page_count or #(data.pages or {})
-    )
+    meta_line = string.format(i18n.t("meta_pdf"), data.page_count or #(data.pages or {}))
   end
   ctx.lines[#ctx.lines + 1] = meta_line
   ctx.extmarks[#ctx.extmarks + 1] = {
@@ -651,52 +771,169 @@ function M.render(data, opts)
     hl = "PdfViewMeta",
   }
   ctx.lines[#ctx.lines + 1] = ""
-
-  local multi_page = (data.page_count or #(data.pages or {})) > 1
-  for _, page in ipairs(data.pages or {}) do
-    local pno = page.page or 1
-    ctx.page_map[pno] = #ctx.lines + 1
-    -- Word 单节不画 Page 分隔；PDF 多页画分隔
-    if cfg.page_sep ~= false and multi_page then
-      local sep = string.format(require("pdfview.i18n").t("page_sep"), pno, data.page_count or pno)
-      local pad = width - str_width(sep)
-      if pad > 0 then
-        sep = sep .. string.rep("─", pad)
-      end
-      local row = #ctx.lines
-      ctx.lines[#ctx.lines + 1] = sep
-      ctx.extmarks[#ctx.extmarks + 1] = {
-        row = row,
-        col = 0,
-        end_col = #sep,
-        hl = "PdfViewPageSep",
-      }
-      ctx.lines[#ctx.lines + 1] = ""
-    end
-
-    for _, block in ipairs(page.blocks or {}) do
-      if block.type == "text" then
-        render_text(ctx, block)
-      elseif block.type == "table" then
-        render_table(ctx, block.rows or {}, block.header ~= false)
-        ctx.lines[#ctx.lines + 1] = ""
-      elseif block.type == "image" then
-        render_image(ctx, block)
-      end
-    end
-  end
-
-  if #ctx.lines == 0 then
-    ctx.lines[1] = "(empty PDF)"
-  end
-
   return {
     lines = ctx.lines,
     extmarks = ctx.extmarks,
-    hits = ctx.hits,
-    page_map = ctx.page_map,
-    ns = NS,
+    hits = {},
+    full = true,
+    page = 0,
   }
+end
+
+---把 segment 拼到 result 上，并修正绝对行号
+---@param result table
+---@param seg table
+---@param pno number|nil 写入 page_map / page_ranges
+local function append_segment(result, seg, pno)
+  local base = #result.lines -- 0-based next row
+  local start_line = base + 1 -- 1-based
+  for _, ln in ipairs(seg.lines or {}) do
+    result.lines[#result.lines + 1] = ln
+  end
+  for _, m in ipairs(seg.extmarks or {}) do
+    result.extmarks[#result.extmarks + 1] = {
+      row = base + (m.row or 0),
+      col = m.col,
+      end_col = m.end_col,
+      hl = m.hl,
+    }
+  end
+  for _, h in ipairs(seg.hits or {}) do
+    local nh = vim.tbl_extend("force", {}, h)
+    local rel_a = (h.line or 1) - 1 -- hits 在 page ctx 里是 1-based 相对
+    local rel_b = (h.line_end or h.line or 1) - 1
+    -- render_image 写的 line 是 ctx 内 1-based（= row+1）
+    nh.line = start_line + rel_a
+    nh.line_end = start_line + rel_b
+    result.hits[#result.hits + 1] = nh
+  end
+  local end_line = #result.lines
+  if pno and pno > 0 then
+    result.page_map[pno] = start_line
+    result.page_ranges[pno] = {
+      start = start_line,
+      finish = end_line,
+      full = seg.full == true,
+    }
+  end
+end
+
+---按页缓存组装整份预览
+---@param data table
+---@param opts {width:number, cfg:table, full_pages?:table<number,boolean>|nil, page_cache?:table}
+---@return table result
+function M.assemble(data, opts)
+  highlight.ensure()
+  opts = opts or {}
+  local cfg = opts.cfg or {}
+  local width = math.max(20, opts.width or 80)
+  local pages = data.pages or {}
+  local page_count = data.page_count or #pages
+  local multi_page = page_count > 1
+  local full_pages = opts.full_pages -- set of page numbers to fully render; nil = all
+  local page_cache = opts.page_cache or {}
+  local image_budget = (cfg.image and cfg.image.max_images) or 30
+
+  local result = {
+    lines = {},
+    extmarks = {},
+    hits = {},
+    page_map = {},
+    page_ranges = {}, ---@type table<number, {start:number, finish:number, full:boolean}>
+    ns = NS,
+    header_lines = 0,
+    page_count = page_count,
+    width = width,
+  }
+
+  local header = M.render_header(data, { width = width, cfg = cfg })
+  append_segment(result, header, nil)
+  result.header_lines = #header.lines
+
+  -- 建立 page 号 → page 数据
+  local by_no = {}
+  for _, page in ipairs(pages) do
+    local pno = page.page or 1
+    by_no[pno] = page
+  end
+  -- 若 page 字段缺失，按顺序 1..n
+  if #pages > 0 and not by_no[1] and pages[1] then
+    by_no = {}
+    for i, page in ipairs(pages) do
+      by_no[i] = page
+      page.page = page.page or i
+    end
+    page_count = math.max(page_count, #pages)
+    result.page_count = page_count
+  end
+
+  local order = {}
+  for pno, _ in pairs(by_no) do
+    order[#order + 1] = pno
+  end
+  table.sort(order)
+  if #order == 0 then
+    for i = 1, page_count do
+      order[i] = i
+    end
+  end
+
+  local stub_lines = tonumber(cfg.stub_page_lines) or 36
+  local stub_opts = {
+    width = width,
+    cfg = cfg,
+    multi_page = multi_page,
+    page_count = page_count,
+    stub_lines = stub_lines,
+  }
+
+  -- 策略：
+  --  · 已提取页 → 始终完整显示（滚走再滚回不丢内容）
+  --  · 未提取页 → 等高占位（滚动条比例接近真实页序）
+  --  · full_pages 仅作「优先渲染/图片预算」提示，不再把已提取页打回 stub
+  for _, pno in ipairs(order) do
+    local page = by_no[pno]
+    local pending = page and page._pending == true
+    local prefer = (full_pages == nil) or (full_pages[pno] == true)
+    local seg
+    if pending or not page then
+      local so = vim.tbl_extend("force", {}, stub_opts, { pending = pending == true })
+      seg = M.render_page_stub(pno, so)
+      page_cache[pno] = nil
+    else
+      seg = page_cache[pno]
+      if not seg or not seg.full then
+        -- 视口外已提取页也完整渲染；无图预算时仍画文字
+        local allow_img = prefer and (image_budget == nil or image_budget > 0)
+        seg = M.render_page_full(page, {
+          width = width,
+          cfg = cfg,
+          multi_page = multi_page,
+          page_count = page_count,
+          allow_images = allow_img,
+          image_budget = allow_img and image_budget or 0,
+        })
+        if allow_img and seg.image_budget_left ~= nil then
+          image_budget = math.max(0, seg.image_budget_left)
+        end
+        page_cache[pno] = seg
+      end
+    end
+    append_segment(result, seg, pno)
+  end
+
+  if #result.lines == 0 then
+    result.lines[1] = "(empty PDF)"
+  end
+  result.page_cache = page_cache
+  return result
+end
+
+---@param data table extract JSON
+---@param opts {width:number, cfg:table, full_pages?:table<number,boolean>, page_cache?:table}
+---@return table result
+function M.render(data, opts)
+  return M.assemble(data, opts or {})
 end
 
 ---@param buf integer
@@ -723,6 +960,28 @@ function M.apply(buf, result)
     vim.bo[buf].modifiable = false
     vim.bo[buf].readonly = true
   end)
+end
+
+---根据预览行号反查页码
+---@param result table
+---@param line number 1-based
+---@return number|nil page
+function M.page_at_line(result, line)
+  if not result or not result.page_ranges then
+    return nil
+  end
+  line = tonumber(line) or 1
+  local best, best_start = nil, -1
+  for pno, r in pairs(result.page_ranges) do
+    if r.start and r.finish and line >= r.start and line <= r.finish then
+      return pno
+    end
+    if r.start and r.start <= line and r.start > best_start then
+      best_start = r.start
+      best = pno
+    end
+  end
+  return best
 end
 
 return M
