@@ -10,7 +10,8 @@ Default **`source = "auto"`**: **Chinese system locale → domestic CN source** 
 | Component | Notes |
 |-----------|--------|
 | Neovim 0.9+ | |
-| **Python3** | stdlib only (`scripts/fetch_weather.py`) |
+| **curl** (preferred) | Async HTTP via `jobstart` (non-blocking UI); Windows uses `curl.exe` |
+| **Python3** (fallback) | `scripts/fetch_weather.py` when curl is missing/fails |
 | Network | domestic CN source + optional open-meteo.com |
 
 ## Statusline

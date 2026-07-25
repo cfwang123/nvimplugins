@@ -126,7 +126,7 @@ TTS samples: [tts/testdata/](tts/testdata/) (`sample.zh.txt` / `sample.en.txt`).
 | es | 0.9+ | **Windows** + [Everything](https://www.voidtools.com/) + [es.exe CLI](https://www.voidtools.com/support/everything/command_line_interface/) |
 | qrbuf | 0.9+ | Python3 (stdlib, `scripts/qrgen.py`) |
 | httpbuf | 0.9+ | **curl** or Python3 (stdlib urllib) |
-| weather | 0.9+ | Python3 + network (CN domestic + Open-Meteo, no key) |
+| weather | 0.9+ | curl (async HTTP) or Python3 fallback; CN + Open-Meteo, no key |
 | taskmgr | 0.9+ | Python3 + **psutil**; Win / Linux / macOS |
 | ntemoji | 0.9+ | [NERDTree](https://github.com/preservim/nerdtree); do **not** load vim-devicons together |
 

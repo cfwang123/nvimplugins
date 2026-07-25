@@ -10,7 +10,8 @@
 | 组件 | 说明 |
 |------|------|
 | Neovim 0.9+ | |
-| **Python3** | 标准库 `urllib`（`scripts/fetch_weather.py`） |
+| **curl**（推荐） | 异步 HTTP（`jobstart`，不卡 UI）；Windows 用 `curl.exe` |
+| **Python3**（可选回退） | 无 curl 或 curl 失败时走 `scripts/fetch_weather.py` |
 | 网络 | 国内源 + 可选 open-meteo.com |
 
 ## 安装

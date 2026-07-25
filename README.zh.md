@@ -126,7 +126,7 @@ tts 测试稿：[tts/testdata/](tts/testdata/)（`sample.zh.txt` / `sample.en.tx
 | es | 0.9+ | **Windows** + [Everything](https://www.voidtools.com/) + [es.exe CLI](https://www.voidtools.com/support/everything/command_line_interface/) |
 | qrbuf | 0.9+ | Python3（标准库，`scripts/qrgen.py`） |
 | httpbuf | 0.9+ | **curl** 或 Python3（标准库 urllib） |
-| weather | 0.9+ | Python3 + 网络（国内源 + Open-Meteo，无 Key） |
+| weather | 0.9+ | curl（异步 HTTP）或 Python3 回退；国内源 + Open-Meteo，无 Key |
 | taskmgr | 0.9+ | Python3 + **必须** psutil；支持 Win / Linux / macOS |
 | ntemoji | 0.9+ | [NERDTree](https://github.com/preservim/nerdtree)；勿与 vim-devicons 同装 |
 

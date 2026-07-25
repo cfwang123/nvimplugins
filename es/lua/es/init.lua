@@ -93,6 +93,9 @@ local NS = vim.api.nvim_create_namespace("es_picker")
 local SIZE_COL_W = 9
 ---固定表头行数：输入 / 状态 / 分隔线
 local HEADER_LINES = 3
+---选中行 sign（linehl 铺整行背景，比纯 extmark 更稳）
+local SIGN_GROUP = "EsPickerSel"
+local SIGN_NAME = "EsSelected"
 
 -- 前向声明（互相调用）
 local schedule_search
@@ -289,28 +292,125 @@ local function is_win()
 end
 
 local function ensure_hl()
+  -- guibg/guifg 需要 truecolor；nvim-qt 一般已开，这里兜底
+  if not vim.o.termguicolors then
+    pcall(function()
+      vim.o.termguicolors = true
+    end)
+  end
+  ---nvim 0.9 的 nvim_set_hl 不支持 force 键；带上会导致整次 set_hl 失败（被 pcall 吞掉）
+  ---0.10+ 才有 force。此处永远不要传 force。
   local function hl(name, spec)
-    spec.force = true
-    pcall(vim.api.nvim_set_hl, 0, name, spec)
+    local ok, err = pcall(vim.api.nvim_set_hl, 0, name, spec)
+    if not ok then
+      -- 兜底：用 :highlight 命令（兼容异常参数）
+      local parts = { "highlight", "default", name }
+      if spec.fg then
+        parts[#parts + 1] = "guifg=" .. spec.fg
+        parts[#parts + 1] = "ctermfg=" .. (spec.ctermfg or "NONE")
+      end
+      if spec.bg then
+        parts[#parts + 1] = "guibg=" .. spec.bg
+        parts[#parts + 1] = "ctermbg=" .. (spec.ctermbg or "NONE")
+      end
+      local attrs = {}
+      if spec.bold then
+        attrs[#attrs + 1] = "bold"
+      end
+      if spec.italic then
+        attrs[#attrs + 1] = "italic"
+      end
+      if #attrs > 0 then
+        parts[#parts + 1] = "gui=" .. table.concat(attrs, ",")
+        parts[#parts + 1] = "cterm=" .. table.concat(attrs, ",")
+      end
+      pcall(vim.cmd, table.concat(parts, " "))
+      -- 保留 err 便于调试：vim.notify(tostring(err))
+      _ = err
+    end
   end
   -- 白底 + 黑/灰字；图标用 Everything 绿
-  hl("EsNormal", { fg = "#111111", bg = "#ffffff" })
-  hl("EsPrompt", { fg = "#111111", bg = "#ffffff", bold = true })
-  hl("EsPromptPrefix", { fg = "#60B020", bg = "#ffffff", bold = true })
+  hl("EsNormal", { fg = "#111111", bg = "#ffffff", ctermbg = "White", ctermfg = "Black" })
+  hl("EsPrompt", { fg = "#111111", bg = "#ffffff", bold = true, ctermbg = "White", ctermfg = "Black" })
+  hl("EsPromptPrefix", { fg = "#60B020", bg = "#ffffff", bold = true, ctermbg = "White", ctermfg = "Green" })
   -- 单格方块光标（勿用宽字符 / virt_text）
   hl("EsCursor", { fg = "#ffffff", bg = "#111111", bold = true, ctermbg = "Black", ctermfg = "White" })
-  hl("EsMatch", { fg = "#222222", bg = "#ffffff" })
-  hl("EsMatchSel", { fg = "#000000", bg = "#dddddd", bold = true })
-  hl("EsStatus", { fg = "#666666", bg = "#ffffff" })
-  hl("EsBorder", { fg = "#60B020", bg = "#ffffff" })
-  hl("EsEmpty", { fg = "#888888", bg = "#ffffff", italic = true })
-  hl("EsTitle", { fg = "#60B020", bg = "#ffffff", bold = true })
-  hl("EsSep", { fg = "#bbbbbb", bg = "#ffffff" })
-  hl("EsSize", { fg = "#555555", bg = "#ffffff" })
-  hl("EsSizeSel", { fg = "#000000", bg = "#dddddd", bold = true })
+  hl("EsMatch", { fg = "#222222", bg = "#ffffff", ctermbg = "White", ctermfg = "Black" })
+  -- 选中行：实心浅蓝底（gui + cterm 双保险），上下选择时必须可见
+  hl("EsMatchSel", {
+    fg = "#0D47A1",
+    bg = "#90CAF9",
+    bold = true,
+    ctermbg = "LightBlue",
+    ctermfg = "DarkBlue",
+  })
+  hl("EsStatus", { fg = "#666666", bg = "#ffffff", ctermbg = "White", ctermfg = "DarkGray" })
+  hl("EsBorder", { fg = "#60B020", bg = "#ffffff", ctermbg = "White", ctermfg = "Green" })
+  hl("EsEmpty", { fg = "#888888", bg = "#ffffff", italic = true, ctermbg = "White", ctermfg = "DarkGray" })
+  hl("EsTitle", { fg = "#60B020", bg = "#ffffff", bold = true, ctermbg = "White", ctermfg = "Green" })
+  hl("EsSep", { fg = "#bbbbbb", bg = "#ffffff", ctermbg = "White", ctermfg = "Gray" })
+  hl("EsSize", { fg = "#555555", bg = "#ffffff", ctermbg = "White", ctermfg = "DarkGray" })
+  hl("EsSizeSel", {
+    fg = "#0D47A1",
+    bg = "#90CAF9",
+    bold = true,
+    ctermbg = "LightBlue",
+    ctermfg = "DarkBlue",
+  })
   -- 结果中与输入词匹配的片段
-  hl("EsHit", { fg = "#8B4513", bg = "#FFE082", bold = true })
-  hl("EsHitSel", { fg = "#000000", bg = "#FFCA28", bold = true })
+  hl("EsHit", { fg = "#8B4513", bg = "#FFE082", bold = true, ctermbg = "Yellow", ctermfg = "Brown" })
+  hl("EsHitSel", { fg = "#000000", bg = "#FFCA28", bold = true, ctermbg = "Yellow", ctermfg = "Black" })
+  hl("EsSelSign", { fg = "#1565C0", bg = "#90CAF9", bold = true, ctermbg = "LightBlue", ctermfg = "DarkBlue" })
+  -- sign + linehl：整行背景（不依赖 extmark hl_eol）
+  pcall(vim.fn.sign_define, SIGN_NAME, {
+    text = ">",
+    texthl = "EsSelSign",
+    linehl = "EsMatchSel",
+    numhl = "EsMatchSel",
+  })
+end
+
+---结果行在 buffer 中的 1-based 行号；不可见则 nil
+---注意：勿调用后方 local function（Lua 作用域），高度在此内联
+---@return integer|nil
+local function sel_lnum()
+  local n = #state.results
+  if n == 0 then
+    return nil
+  end
+  local sel = math.max(1, math.min(state.sel or 1, n))
+  local top = state.view_top or 1
+  local h = 20
+  if state.win and vim.api.nvim_win_is_valid(state.win) then
+    h = math.max(1, vim.api.nvim_win_get_height(state.win) - HEADER_LINES)
+  end
+  if sel < top or sel > top + h - 1 then
+    return nil
+  end
+  return HEADER_LINES + (sel - top) + 1
+end
+
+---选中行：sign linehl + cursorline 双通道，保证有背景色
+local function apply_selection_line()
+  if not M.is_open() then
+    return
+  end
+  pcall(vim.fn.sign_unplace, SIGN_GROUP, { buffer = state.buf })
+  local lnum = sel_lnum()
+  if lnum then
+    pcall(vim.fn.sign_place, 1, SIGN_GROUP, SIGN_NAME, state.buf, {
+      lnum = lnum,
+      priority = 90,
+    })
+  end
+  if state.win and vim.api.nvim_win_is_valid(state.win) then
+    -- 列表焦点：cursorline 跟光标（已在选中行）
+    -- prompt 焦点：关 cursorline，靠 sign linehl 标选中结果
+    local use_cul = state.focus == "list" and lnum ~= nil
+    pcall(function()
+      vim.wo[state.win].cursorline = use_cul
+    end)
+  end
 end
 
 local function dw(s)
@@ -836,6 +936,9 @@ local function close_ui()
   cancel_job()
   state.inserting = false
   pcall(vim.cmd, "stopinsert")
+  if state.buf and vim.api.nvim_buf_is_valid(state.buf) then
+    pcall(vim.fn.sign_unplace, SIGN_GROUP, { buffer = state.buf })
+  end
   if state.win and vim.api.nvim_win_is_valid(state.win) then
     pcall(vim.api.nvim_win_close, state.win, true)
   end
@@ -1159,7 +1262,7 @@ end
 local function paint_body_highlights(meta, body_lines)
   -- body 从 buffer 行 1 开始（0-based）：status=1, sep=2, results=3...
   pcall(vim.api.nvim_buf_set_extmark, state.buf, NS, 1, 0, {
-    end_line = 2,
+    end_row = 2,
     end_col = 0,
     hl_group = "EsStatus",
   })
@@ -1177,35 +1280,45 @@ local function paint_body_highlights(meta, body_lines)
   for mi, m in ipairs(meta) do
     local row = HEADER_LINES + mi - 1 -- 0-based buffer row
     local line = body_lines[mi + 2] or "" -- body_lines[1]=status,[2]=sep,[3]=first result
-    local is_sel = m.result_idx == sel and state.focus == "list"
+    -- 只要有结果就高亮当前选中行（不限 focus=list，上下选择时始终可见）
+    local is_sel = m.result_idx == sel
     local size_end = m.size_end or 0
     local hits = m.hits or {}
     local hl_main = is_sel and "EsMatchSel" or "EsMatch"
     local hl_size = is_sel and "EsSizeSel" or "EsSize"
     local hl_hit = is_sel and "EsHitSel" or "EsHit"
+
+    -- 整行背景：end_row=row+1 覆盖整物理行（含行尾空白）
+    if is_sel then
+      pcall(vim.api.nvim_buf_set_extmark, state.buf, NS, row, 0, {
+        end_row = row + 1,
+        end_col = 0,
+        hl_group = "EsMatchSel",
+        hl_eol = true,
+        priority = 8,
+      })
+      -- 兼容旧 API：nvim_buf_add_highlight end_col=-1 到行尾
+      pcall(vim.api.nvim_buf_add_highlight, state.buf, NS, "EsMatchSel", row, 0, -1)
+    end
+
     if size_end > 0 and size_end <= #line then
       pcall(vim.api.nvim_buf_set_extmark, state.buf, NS, row, 0, {
         end_col = size_end,
         hl_group = hl_size,
-        priority = 10,
+        priority = 12,
       })
       pcall(vim.api.nvim_buf_set_extmark, state.buf, NS, row, size_end, {
         end_col = #line,
         hl_group = hl_main,
-        priority = 10,
+        hl_eol = is_sel,
+        priority = 12,
       })
     else
       pcall(vim.api.nvim_buf_set_extmark, state.buf, NS, row, 0, {
-        end_col = #line,
+        end_col = math.max(#line, 0),
         hl_group = hl_main,
-        priority = 10,
-      })
-    end
-    if is_sel then
-      pcall(vim.api.nvim_buf_set_extmark, state.buf, NS, row, 0, {
-        end_col = #line,
-        line_hl_group = "EsMatchSel",
-        priority = 5,
+        hl_eol = is_sel,
+        priority = 12,
       })
     end
     for _, sp in ipairs(hits) do
@@ -1302,7 +1415,8 @@ render = function(opts)
   paint_body_highlights(meta, body_lines)
 
   if inserting then
-    -- 不抢光标，IME 组字中
+    -- 不抢光标，IME 组字中；仍标选中结果行背景
+    apply_selection_line()
     return
   end
 
@@ -1319,6 +1433,8 @@ render = function(opts)
     end
     pcall(vim.api.nvim_win_set_cursor, state.win, { row, 0 })
   end
+  -- 光标落位后再上 cursorline / sign，避免 cul 画在错误行
+  apply_selection_line()
 end
 
 leave_insert = function()
@@ -1818,11 +1934,17 @@ local function bind_keys(buf)
     do_open("tabedit")
   end, "tab")
 
-  -- 列表导航
+  -- 列表导航（j/k、方向键、C-j/C-k 均更新 sel 并重绘选中行背景）
   nmap("<Down>", function()
     move_sel(1)
   end, "down")
   nmap("<Up>", function()
+    move_sel(-1)
+  end, "up")
+  nmap("j", function()
+    move_sel(1)
+  end, "down")
+  nmap("k", function()
     move_sel(-1)
   end, "up")
   nmap("<C-n>", function()
@@ -2110,12 +2232,23 @@ function M.open(opts)
   pcall(function()
     vim.wo[win].wrap = false
     vim.wo[win].cursorline = false
+    vim.wo[win].cursorlineopt = "both"
     vim.wo[win].number = false
     vim.wo[win].relativenumber = false
-    vim.wo[win].signcolumn = "no"
-    -- insert 时显示真实光标（中文 IME 需要）；normal 时 Cursor 贴近背景
-    vim.wo[win].winhighlight =
-      "Normal:EsNormal,NormalFloat:EsNormal,FloatBorder:EsBorder,FloatTitle:EsTitle,EndOfBuffer:EsNormal,Cursor:EsCursor,CursorLine:EsNormal"
+    -- 窄 sign 列：▌ 指示 + linehl 整行背景
+    vim.wo[win].signcolumn = "yes:1"
+    -- CursorLine 映射到选中色（列表焦点时 cursorline=true）
+    vim.wo[win].winhighlight = table.concat({
+      "Normal:EsNormal",
+      "NormalFloat:EsNormal",
+      "FloatBorder:EsBorder",
+      "FloatTitle:EsTitle",
+      "EndOfBuffer:EsNormal",
+      "Cursor:EsCursor",
+      "CursorLine:EsMatchSel",
+      "CursorLineSign:EsMatchSel",
+      "SignColumn:EsNormal",
+    }, ",")
   end)
 
   state.buf = buf

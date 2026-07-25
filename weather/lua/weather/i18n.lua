@@ -103,17 +103,7 @@ function M.detect()
       end
     end
   end
-  if vim.fn.has("win32") == 1 then
-    local ok, out = pcall(vim.fn.system, {
-      "powershell",
-      "-NoProfile",
-      "-Command",
-      "[System.Globalization.CultureInfo]::CurrentUICulture.Name",
-    })
-    if ok and type(out) == "string" and vim.trim(out):lower():match("^zh") then
-      return "zh"
-    end
-  end
+  -- 不调 PowerShell/system（会同步卡 UI）；env 未命中时默认中文
   return "zh"
 end
 
