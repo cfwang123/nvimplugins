@@ -4,7 +4,7 @@ local M = {}
 ---@class MdViewImageConfig
 ---@field mode "thumb"|"placeholder"|"off"
 ---@field max_height number
----@field max_width number|nil
+---@field max_width number|nil 预览缩略最大列数（字符宽）；0/nil=不限制（占满预览宽）
 ---@field max_images number
 ---@field backend "python"|"none" 字符画仅 Python+Pillow（auto/chafa 兼容映射为 python）
 ---@field palette_size number
@@ -122,13 +122,14 @@ local defaults = {
   sync_reverse = true,
   image = {
     mode = "thumb",
-    -- 0 = 高度完全按宽 100% 比例；>0 时高度不超过该值（宽仍 100%）
+    -- 0 = 高度完全按宽比例；>0 时高度不超过该值
     max_height = 0,
-    max_width = nil, -- nil = 预览宽 100%
+    -- 预览缩略最大列数（字符宽）；0/nil = 不限制（占满预览宽）
+    max_width = 60,
     max_images = 20,
     backend = "python", -- 字符画：Python+Pillow（thumb.py）；none 关闭
     palette_size = 64,
-    thumb_scale = "width_full", -- width_full=宽100%高自适应；stretch=拉满
+    thumb_scale = "width_full", -- width_full=在 max_width 内宽优先高自适应；stretch=拉满
     -- 终端单元格 宽/高（约 0.5）。修正把字符格当正方形导致的图像比例失真
     cell_aspect = 0.5,
     open_with = "float",

@@ -183,6 +183,7 @@ require("mdview").setup({
   },
   image = {
     mode = "thumb",
+    max_width = 60,            -- max thumb columns; 0/nil = full preview width
     max_height = 0,
     max_images = 20,
     backend = "auto",

@@ -1,5 +1,5 @@
 ---@mod mdview.image
---- 预览内 █ 缩略；float 大图：█ 底层 + 终端支持时高清叠层
+--- 预览内 █ 缩略；float 大图：2x2 四分块（1/1/2/1/4/3/4）底层 + 终端支持时高清叠层
 local highlight = require("mdview.highlight")
 
 local M = {}
@@ -103,16 +103,22 @@ local function normalize_out(out)
   return t
 end
 
----已注册的真彩色 hl 缓存 hex6 -> group name
+---已注册的真彩色 hl 缓存 key -> group name
 local truecolor_hl = {}
 ---缩略结果缓存 key -> { lines, marks, width, height }
 local thumb_cache = {}
 
-local function ensure_truecolor_hl(hex6)
+local function normalize_hex6(hex6)
   hex6 = (hex6 or "808080"):lower():gsub("^#", "")
   if not hex6:match("^%x%x%x%x%x%x$") then
-    hex6 = "808080"
+    return "808080"
   end
+  return hex6
+end
+
+---仅前景色（预览 █）
+local function ensure_truecolor_hl(hex6)
+  hex6 = normalize_hex6(hex6)
   local name = "MdViewTC_" .. hex6
   local color = "#" .. hex6
   -- 每次都 set_hl：折叠重渲时组可能被清空，仅 hlexists 会留下灰色 █
@@ -121,19 +127,68 @@ local function ensure_truecolor_hl(hex6)
   return name
 end
 
+---前景 + 背景（float 四分块）
+local function ensure_truecolor_hl_fgbg(fg6, bg6)
+  fg6 = normalize_hex6(fg6)
+  bg6 = normalize_hex6(bg6)
+  local key = fg6 .. "_" .. bg6
+  local name = "MdViewTC_" .. key
+  pcall(vim.api.nvim_set_hl, 0, name, {
+    fg = "#" .. fg6,
+    bg = "#" .. bg6,
+    default = false,
+  })
+  truecolor_hl[key] = name
+  return name
+end
+
 ---重应用 marks 上的真彩色（缓存命中时必须调用）
 local function reapply_mark_colors(marks)
   for _, m in ipairs(marks or {}) do
     if m.hl and type(m.hl) == "string" then
-      local hex = m.hl:match("^MdViewTC_(%x%x%x%x%x%x)$")
-      if hex then
-        ensure_truecolor_hl(hex)
+      local fg, bg = m.hl:match("^MdViewTC_(%x%x%x%x%x%x)_(%x%x%x%x%x%x)$")
+      if fg and bg then
+        ensure_truecolor_hl_fgbg(fg, bg)
+      else
+        local hex = m.hl:match("^MdViewTC_(%x%x%x%x%x%x)$")
+        if hex then
+          ensure_truecolor_hl(hex)
+        end
       end
     end
   end
 end
 
----解析 MDVIEW_THUMB2 真彩协议（优先）或旧 THUMB1
+---codepoint hex → UTF-8 字符
+local function utf8_from_cp(cp)
+  cp = tonumber(cp, 16)
+  if not cp or cp < 0 then
+    return " "
+  end
+  if cp <= 0x7f then
+    return string.char(cp)
+  end
+  if vim.fn and vim.fn.nr2char then
+    local ok, ch = pcall(vim.fn.nr2char, cp)
+    if ok and type(ch) == "string" and ch ~= "" then
+      return ch
+    end
+  end
+  -- 回退：常见 BMP 三分量 UTF-8
+  if cp <= 0x7ff then
+    return string.char(0xc0 + math.floor(cp / 0x40), 0x80 + (cp % 0x40))
+  end
+  if cp <= 0xffff then
+    return string.char(
+      0xe0 + math.floor(cp / 0x1000),
+      0x80 + math.floor((cp % 0x1000) / 0x40),
+      0x80 + (cp % 0x40)
+    )
+  end
+  return "█"
+end
+
+---解析 MDVIEW_BLOCK2 / THUMB2 / THUMB1
 ---@param out string[]
 ---@return table|nil { lines, marks, width, height }
 local function parse_thumb_protocol(out)
@@ -147,6 +202,82 @@ local function parse_thumb_protocol(out)
     start = start + 1
   end
   local magic = out[start] or ""
+
+  -- float 四分块：每格 codepoint:fg:bg（1 / 1/2 / 1/4 / 3/4 色块）
+  if magic:match("MDVIEW_BLOCK2") then
+    local hdr = out[start + 1]
+    if not hdr then
+      return nil
+    end
+    local w, h = hdr:match("^(%d+)%s+(%d+)$")
+    w, h = tonumber(w), tonumber(h)
+    if not w or not h or w < 1 or h < 1 then
+      return nil
+    end
+    highlight.ensure()
+    local lines = {}
+    local marks = {}
+    for y = 1, h do
+      local line = out[start + 1 + y]
+      if not line then
+        return nil
+      end
+      local cells = {}
+      for tok in line:gmatch("%S+") do
+        local cp, fg, bg = tok:match("^(%x+):(%x%x%x%x%x%x):(%x%x%x%x%x%x)$")
+        if not cp then
+          -- 兼容大小写混排
+          cp, fg, bg = tok:match("^(%x+):([%xA-Fa-f]+):([%xA-Fa-f]+)$")
+          if fg then
+            fg = fg:lower()
+          end
+          if bg then
+            bg = bg:lower()
+          end
+        else
+          fg = fg:lower()
+          bg = bg:lower()
+        end
+        if cp and fg and bg and #fg == 6 and #bg == 6 then
+          cells[#cells + 1] = { ch = utf8_from_cp(cp), fg = fg, bg = bg }
+        else
+          cells[#cells + 1] = { ch = "█", fg = "808080", bg = "808080" }
+        end
+      end
+      while #cells < w do
+        cells[#cells + 1] = { ch = " ", fg = "000000", bg = "000000" }
+      end
+      local parts = {}
+      local byte_col = 0
+      local x = 1
+      while x <= w do
+        local c0 = cells[x]
+        local x2 = x + 1
+        while
+          x2 <= w
+          and cells[x2].ch == c0.ch
+          and cells[x2].fg == c0.fg
+          and cells[x2].bg == c0.bg
+        do
+          x2 = x2 + 1
+        end
+        local run = string.rep(c0.ch, x2 - x)
+        parts[#parts + 1] = run
+        local run_bytes = #run
+        -- 空格格：主要靠 bg 上色
+        marks[#marks + 1] = {
+          row = y - 1,
+          col = byte_col,
+          end_col = byte_col + run_bytes,
+          hl = ensure_truecolor_hl_fgbg(c0.fg, c0.bg),
+        }
+        byte_col = byte_col + run_bytes
+        x = x2
+      end
+      lines[y] = table.concat(parts)
+    end
+    return { lines = lines, marks = marks, width = w, height = h, glyph = "block" }
+  end
 
   -- 真彩色：每格直接 rrggbb，避免调色板聚类色偏
   if magic:match("MDVIEW_THUMB2") then
@@ -262,12 +393,12 @@ local function parse_thumb_protocol(out)
   return { lines = lines, marks = marks, width = w, height = h }
 end
 
----渲染缩略：宽 100%，高度按原图比例；仅 █，最多 palette_size 色
+---渲染缩略：目标宽 full_w（已由 max_width 截断），高度按原图比例
 ---@param abs_path string
----@param full_w number 目标列数（预览宽 100%）
+---@param full_w number 目标列数
 ---@param max_h number|nil 高度上限；nil/0 不限制（仅受比例约束）
 ---@param cfg table
----@return table|nil { lines, marks, palette, width, height }
+---@return table|nil { lines, marks, palette, width, height, glyph? }
 function M.render_thumb(abs_path, full_w, max_h, cfg)
   if not file_exists(abs_path) then
     return nil
@@ -290,6 +421,14 @@ function M.render_thumb(abs_path, full_w, max_h, cfg)
   if type(cell_aspect) ~= "number" or cell_aspect <= 0 then
     cell_aspect = 0.5
   end
+  -- glyph: full=█（预览）；block=2x2 四分块（float）
+  local glyph = (cfg.image and cfg.image.thumb_glyph) or "full"
+  if glyph == "quarter" then
+    glyph = "block"
+  end
+  if glyph ~= "block" then
+    glyph = "full"
+  end
 
   local path_arg = abs_path:gsub("\\", "/")
   local mtime = 0
@@ -302,6 +441,7 @@ function M.render_thumb(abs_path, full_w, max_h, cfg)
     tostring(max_h),
     scale_mode,
     tostring(cell_aspect),
+    glyph,
     tostring(mtime),
   }, "\0")
   local cached = thumb_cache[ckey]
@@ -312,6 +452,7 @@ function M.render_thumb(abs_path, full_w, max_h, cfg)
       marks = cached.marks,
       width = cached.width,
       height = cached.height,
+      glyph = cached.glyph,
     }
   end
 
@@ -339,6 +480,7 @@ function M.render_thumb(abs_path, full_w, max_h, cfg)
       or (scale_mode == "fit" and "fit")
       or "width_full",
     tostring(cell_aspect),
+    glyph,
   }
   local ok, out = pcall(vim.fn.systemlist, cmd)
   if ok and type(out) == "table" then
@@ -350,6 +492,7 @@ function M.render_thumb(abs_path, full_w, max_h, cfg)
         marks = parsed.marks,
         width = parsed.width,
         height = parsed.height,
+        glyph = parsed.glyph or glyph,
       }
       thumb_cache[ckey] = result
       -- 简单限量
@@ -530,7 +673,7 @@ function M.open_float(abs_path, cfg)
   local content_h = math.max(4, vim.api.nvim_win_get_height(win))
   local float_scale = (cfg.image and cfg.image.float_scale) or "fit"
 
-  -- 不透明 float + █ 真彩（默认）。Kitty 高清在 nvim 内不可靠且会 winblend 半透明，仅显式开启时尝试
+  -- 不透明 float + 四分块真彩（默认）。Kitty 高清在 nvim 内不可靠且会 winblend 半透明，仅显式开启时尝试
   pcall(function()
     vim.wo[win].winblend = 0
     vim.api.nvim_set_hl(0, "MdViewImageFloat", { default = false })
@@ -545,7 +688,7 @@ function M.open_float(abs_path, cfg)
     vim.wo[win].winhl = "Normal:MdViewImageFloat,NormalFloat:MdViewImageFloat,EndOfBuffer:MdViewImageFloat"
   end)
 
-  -- █ 底层（始终）
+  -- 四分块底层（始终）
   M._fill_float_block_art(buf, abs_path, content_w, content_h, cfg, float_scale)
 
   -- float 高清叠层（默认 always；detect 读 float_hd，不受预览 hd=never 影响）
@@ -670,7 +813,7 @@ local function letterbox_block_art(thumb, content_w, content_h)
   return { lines = lines, marks = marks, width = content_w, height = #lines }
 end
 
----float 内 █ 块渲染（无高清协议时）
+---float 内四分块渲染（1 / 1/2 / 1/4 / 3/4；无高清协议时）
 ---@param buf integer
 ---@param abs_path string
 ---@param content_w number
@@ -687,6 +830,8 @@ function M._fill_float_block_art(buf, abs_path, content_w, content_h, cfg, float
   local float_cfg = vim.deepcopy(cfg)
   float_cfg.image = vim.tbl_deep_extend("force", vim.deepcopy(cfg.image or {}), {
     thumb_scale = thumb_scale,
+    -- float 用 2x2 四分块（▘▝▖▗▀▄▌▐█），比纯 █ 更细
+    thumb_glyph = "block",
   })
   local thumb = M.render_thumb(abs_path, content_w, content_h, float_cfg)
   if thumb and thumb.lines and do_fit then

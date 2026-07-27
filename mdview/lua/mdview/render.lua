@@ -30,6 +30,47 @@ local function pad_right(s, width)
   return s .. string.rep(" ", width - w)
 end
 
+---整行内容在 display 宽内居中；返回 padded 文本与左侧空格数（= 字节偏移，空格 1 宽 1 字节）
+---@param s string
+---@param width number
+---@return string text, number left_pad
+local function pad_center(s, width)
+  s = s or ""
+  width = math.max(0, width or 0)
+  local w = str_width(s)
+  if width <= 0 or w >= width then
+    return s, 0
+  end
+  local left = math.floor((width - w) / 2)
+  return string.rep(" ", left) .. s, left
+end
+
+---将 ranges 的 col/end_col 整体右移（字节）
+---@param ranges table[]|nil
+---@param off number
+---@return table[]
+local function shift_ranges(ranges, off)
+  if not ranges or off == 0 then
+    return ranges or {}
+  end
+  local out = {}
+  for _, r in ipairs(ranges) do
+    out[#out + 1] = {
+      col = (r.col or 0) + off,
+      end_col = (r.end_col or 0) + off,
+      hl = r.hl,
+      href = r.href,
+      src = r.src,
+      kind = r.kind,
+      virt_text = r.virt_text,
+      virt_text_pos = r.virt_text_pos,
+      line_hl = r.line_hl,
+      url = r.url,
+    }
+  end
+  return out
+end
+
 local function pad_align(s, width, align)
   local w = str_width(s)
   if w > width then
@@ -629,8 +670,12 @@ local function cell_content_need(text, cfg, table_w, ncol)
     end
   end
   if #images > 0 then
-    -- 图占列宽 100%：至少预留总宽/列数，便于列分配后铺满
+    -- 图列至少预留总宽/列数，且不超过 image.max_width
     local share = math.max(4, math.floor((table_w or 40) / math.max(1, ncol or 1)))
+    local max_w = cfg.image and cfg.image.max_width
+    if max_w and max_w > 0 then
+      share = math.min(share, max_w)
+    end
     w = math.max(w, share)
   end
   return w
@@ -763,8 +808,12 @@ local function prepare_cell(raw, cell_w, align, cfg, ctx, ncol, table_w)
     end
   end
 
-  -- 表内图：宽度 = 列宽 100%；高度按比例（含 cell_aspect）自适应
+  -- 表内图：宽度 ≤ 列宽，且受 image.max_width 限制；高度按比例（含 cell_aspect）自适应
   local img_w = math.max(4, cell_w)
+  local max_w = cfg.image and cfg.image.max_width
+  if max_w and max_w > 0 then
+    img_w = math.min(img_w, max_w)
+  end
   local max_h = cfg.image and cfg.image.max_height or 0
   if max_h == nil then
     max_h = 0
@@ -1311,30 +1360,38 @@ function M._render_image(ctx, b)
   if mode == "off" then
     return
   end
+  local line_w = math.max(4, ctx.width or 80)
   local md_path = ctx.md_path
   local abs, err = image_mod.resolve_path(b.src, md_path)
   local alt = b.alt ~= "" and b.alt or (b.src or "image")
   local title = string.format("🖼 %s · %s", alt, b.src or "")
-  local pl0 = emit_line(ctx, title, b.source_start, {
-    { col = 0, end_col = #title, hl = "MdViewImage" },
+  local title_c, title_pad = pad_center(title, line_w)
+  local pl0 = emit_line(ctx, title_c, b.source_start, {
+    { col = title_pad, end_col = title_pad + #title, hl = "MdViewImage" },
   })
 
   ctx.image_count = (ctx.image_count or 0) + 1
   local max_imgs = (cfg.image and cfg.image.max_images) or 20
   local thumb = nil
   if mode == "thumb" and abs and ctx.image_count <= max_imgs then
-    -- 宽 100%；高按比例。max_height 为上限（nil/0 不限制）
+    -- 宽受 max_width 限制（默认 60 列）；高按比例。max_height 为上限（nil/0 不限制）
     local max_h = cfg.image and cfg.image.max_height
     if max_h == nil then
       max_h = 0 -- 不限制，完全按比例
     end
-    local w = ctx.width
-    if cfg.image and cfg.image.max_width and cfg.image.max_width > 0 then
-      w = math.min(w, cfg.image.max_width)
+    local w = line_w
+    local max_w = cfg.image and cfg.image.max_width
+    if max_w and max_w > 0 then
+      w = math.min(w, max_w)
     end
     w = math.max(4, w)
     thumb = image_mod.render_thumb(abs, w, max_h, cfg)
   end
+
+  ---@type number|nil 缩略显示列宽 / 字节起止（居中后供 image_hd 定位）
+  local thumb_dcols = nil
+  local thumb_col = nil
+  local thumb_end_col = nil
 
   if thumb and thumb.lines then
     for i, tl in ipairs(thumb.lines) do
@@ -1353,22 +1410,33 @@ function M._render_image(ctx, b)
       if #er == 0 then
         er[#er + 1] = { col = 0, end_col = #tl, hl = "MdViewImg0" }
       end
-      emit_line(ctx, tl, b.source_start, er)
+      -- 整行图在预览宽内居中
+      local centered, left = pad_center(tl, line_w)
+      er = shift_ranges(er, left)
+      if i == 1 then
+        thumb_dcols = thumb.width or str_width(tl)
+        thumb_col = left
+        thumb_end_col = left + #tl
+      end
+      emit_line(ctx, centered, b.source_start, er)
     end
   elseif err or not abs then
     local msg = "  [image unavailable: " .. (err or "missing") .. "]"
-    emit_line(ctx, msg, b.source_start, {
-      { col = 0, end_col = #msg, hl = "MdViewImage" },
+    local cmsg, pad = pad_center(msg, line_w)
+    emit_line(ctx, cmsg, b.source_start, {
+      { col = pad, end_col = pad + #msg, hl = "MdViewImage" },
     })
   elseif abs and vim.fn.filereadable(abs) ~= 1 then
     local msg = "  [file not found: " .. abs .. "]"
-    emit_line(ctx, msg, b.source_start, {
-      { col = 0, end_col = #msg, hl = "MdViewImage" },
+    local cmsg, pad = pad_center(msg, line_w)
+    emit_line(ctx, cmsg, b.source_start, {
+      { col = pad, end_col = pad + #msg, hl = "MdViewImage" },
     })
   else
     local msg = "  [thumb: pip install Pillow · <CR> open float]"
-    emit_line(ctx, msg, b.source_start, {
-      { col = 0, end_col = #msg, hl = "MdViewImage" },
+    local cmsg, pad = pad_center(msg, line_w)
+    emit_line(ctx, cmsg, b.source_start, {
+      { col = pad, end_col = pad + #msg, hl = "MdViewImage" },
     })
   end
 
@@ -1382,7 +1450,7 @@ function M._render_image(ctx, b)
         path = abs,
       }
     end
-    -- 高清叠层专用：缩略内容行（不含 🖼 标题）
+    -- 高清叠层专用：缩略内容行（不含 🖼 标题）；带 col/dcols 以便居中后正确定位
     local thumb_line = pl0 + 1
     if pl1 >= thumb_line then
       ctx.hits[#ctx.hits + 1] = {
@@ -1390,6 +1458,9 @@ function M._render_image(ctx, b)
         path = abs,
         line = thumb_line,
         line_end = pl1,
+        col = thumb_col,
+        end_col = thumb_end_col,
+        dcols = thumb_dcols,
       }
     elseif pl1 >= pl0 then
       -- 无缩略时至少标标题行下方占位

@@ -189,6 +189,7 @@ require("mdview").setup({
   },
   image = {
     mode = "thumb",
+    max_width = 60,            -- 缩略最大列数（字符宽）；0/nil = 占满预览宽
     max_height = 0,            -- 0 = 高度随宽比例；>0 限制最大行数
     max_images = 20,
     backend = "python",        -- python+Pillow 字符画；none 关闭
