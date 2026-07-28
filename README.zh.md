@@ -2,7 +2,7 @@
 
 [English](README.md) | **中文**
 
-> **About** — 面向 Neovim 的小型实验与工具插件集合：含 **mdview**（Markdown 预览）、**pdfview** / **xlsview**（文档表格预览）、**tts**（Windows 朗读）、**imgbuf**（图片）、**music**（音频 + Windows MIDI）、**nvimgames**（小游戏）、**drawbuf**（色块绘图）、**videobuf**（视频）、**es**（Everything 搜文件）、**qrbuf**（二维码）、**httpbuf**（HTTP 调试）、**weather**（天气）、**taskmgr**（进程管理）、**ntemoji**（NERDTree emoji 图标）。各插件可独立安装，互不强制依赖。
+> **About** — 面向 Neovim 的小型实验与工具插件集合：含 **mdview**（Markdown 预览）、**pdfview** / **xlsview**（文档表格预览）、**tts**（Windows 朗读）、**imgbuf**（图片）、**music**（音频 + Windows MIDI）、**nvimgames**（小游戏）、**drawbuf**（色块绘图）、**videobuf**（视频）、**es**（Everything 搜文件）、**qrbuf**（二维码）、**httpbuf**（HTTP 调试）、**weather**（天气）、**taskmgr**（进程管理）、**ntemoji**（NERDTree emoji 图标）、**tablemode**（Markdown 表格模式）。各插件可独立安装，互不强制依赖。
 
 面向终端里「好玩、好用、少依赖」的实验与日常小工具。多数 UI 支持**中/英文**切换（默认跟随系统语言，可记忆）。
 
@@ -17,14 +17,14 @@
 
 | 插件 | 简介 | 文档 |
 |------|------|------|
-| **[mdview](mdview/)** | Markdown 预览：单窗（`:MdView`）或侧边对照（`:MdSideView`）。标题/列表/GFM 表/代码块、TOC、链接锚点、色块图与可选高清叠层。预览内 **`L`** 切换中英文。 | [EN](mdview/README.md) · [中文](mdview/README.zh.md) |
+| **[mdview](mdview/)** | Markdown 预览：单窗（`:MdView`）或侧边对照（`:MdSideView`）。**标题加粗 + 层级配色**（H1–H6）、列表/GFM 表/代码块、TOC、链接锚点、色块图与可选高清叠层。预览内 **`L`** 切换中英文。 | [EN](mdview/README.md) · [中文](mdview/README.zh.md) |
 | **[pdfview](pdfview/)** | PDF / Word 预览：文字样式、表格、Python+Pillow 图；Enter/点击 float 高清，`gh` 页内临时高清。**`L`** 切换中英文。 | [EN](pdfview/README.md) · [中文](pdfview/README.zh.md) |
 | **[xlsview](xlsview/)** | Excel（.xlsx/.xlsm）预览：样式、多工作表、内容列宽 + 横滚、**单元格跳格 / Ctrl-v 格块选 / y 复制**。**`L`** 中英文。 | [EN](xlsview/README.md) · [中文](xlsview/README.zh.md) |
 | **[tts](tts/)** | Windows SAPI 朗读：`<leader>vo` **从光标所在段起播**（播放中再按可跳段）；控制条白底；音量/滚轮/语速；系统默认输出设备；**EN/中文** 按钮或 **`L`**。 | [EN](tts/README.md) · [中文](tts/README.zh.md) |
 | **[imgbuf](imgbuf/)** | 图片字符画（block/half/braille），等比/拉伸；自动预览、剪贴板；WezTerm/Kitty/Ghostty 可选像素高清。底栏 **`L`** 中英文。 | [EN](imgbuf/README.md) · [中文](imgbuf/README.zh.md) |
-| **[music](music/)** | 打开音频即 buffer 播放器：播放/暂停/进度条、音量、同目录切歌与列表、LRC 歌词。**Windows MIDI**（`.mid` / 内置预设，**winmm.dll**）：`:MusicMidi` / `<leader>mx`。**`Y`** 切换中英文（`L` = 循环）。 | [EN](music/README.md) · [中文](music/README.zh.md) |
-| **[nvimgames](nvimgames/)** | 扫雷、推箱子、**24 点**、俄罗斯方块。`:NvimGames` 选单。各游戏内 **`u`**（或按钮）切换中英文。 | [EN](nvimgames/README.md) · [中文](nvimgames/README.zh.md) |
-| **[drawbuf](drawbuf/)** | Unicode 色块画布：铅笔/橡皮/直线/矩形/椭圆/填充、真彩色、可点状态栏、撤销、`.draw` 存盘与演示图。状态栏 **`[中英]`** 或 **`Y`** 切换语言。 | [EN](drawbuf/README.md) · [中文](drawbuf/README.zh.md) |
+| **[music](music/)** | 打开音频即 buffer 播放器：播放/暂停/进度条、音量、同目录切歌与列表、LRC 歌词。**Windows MIDI**（`.mid` / 内置预设，**winmm.dll**）：`:MusicMidi` / `<leader>mx`。**`L`** 中英文（`o` = 循环）。 | [EN](music/README.md) · [中文](music/README.zh.md) |
+| **[nvimgames](nvimgames/)** | 扫雷、推箱子、**24 点**、俄罗斯方块。`:NvimGames` 选单。各游戏内 **`L`**（或按钮）切换中英文。 | [EN](nvimgames/README.md) · [中文](nvimgames/README.zh.md) |
+| **[drawbuf](drawbuf/)** | Unicode 色块画布：铅笔/橡皮/直线/矩形/椭圆/填充、真彩色、可点状态栏、撤销、`.draw` 存盘与演示图。状态栏 **`[中英]`** 或 **`L`** 切换语言（`|` = 直线）。 | [EN](drawbuf/README.md) · [中文](drawbuf/README.zh.md) |
 | **[videobuf](videobuf/)** | 终端视频预览（字符画帧 + 控制条）；与 music 类似的守护进程模式。 | [EN](videobuf/README.md) · [中文](videobuf/README.zh.md) |
 | **[es](es/)** | Windows **Everything** 文件搜索（`es.exe`）：`:ES` / `<leader>es` 浮窗即时搜，回车打开。 | [EN](es/README.md) · [中文](es/README.zh.md) |
 | **[qrbuf](qrbuf/)** | 文本 → 终端 **二维码** 浮窗：`:QrBuf` / `<leader>qr`，支持选区。 | [EN](qrbuf/README.md) · [中文](qrbuf/README.zh.md) |
@@ -32,6 +32,7 @@
 | **[weather](weather/)** | 状态栏 **城市/天气/温度** + `:Weather` / `<leader>we` 十天表格；**系统中文用国内源**，否则 Open-Meteo；小时缓存。 | [EN](weather/README.md) · [中文](weather/README.zh.md) |
 | **[taskmgr](taskmgr/)** | 进程管理 float：`:Taskmgr` / `<leader>ta`，排序 / 列显隐与列宽、CPU·内存高占用着色、结束进程。 | [EN](taskmgr/README.md) · [中文](taskmgr/README.zh.md) |
 | **[ntemoji](ntemoji/)** | **NERDTree** emoji 图标（无需 Nerd Font / vim-devicons；自动 conceal 中括号）。 | [EN](ntemoji/README.md) · [中文](ntemoji/README.zh.md) |
+| **[tablemode](tablemode/)** | **表格模式**（仿 vim-table-mode）：`:TableModeToggle` / `<leader>tm` 开启后输入 `\|` 即时对齐；Tableize、单元格移动、删/插列。 | [EN](tablemode/README.md) · [中文](tablemode/README.zh.md) |
 
 ## 界面语言（中 / 英）
 
@@ -39,11 +40,12 @@
 
 | 插件 | 切换方式 |
 |------|----------|
+| **全部带 UI 的插件** | **`L`**（统一） |
 | mdview / pdfview / xlsview / imgbuf | 预览内 **`L`** |
 | tts | 控制条 **EN / 中文** 或 **`L`** |
-| music | 按钮 **中英(Y)** 或 **`Y`**（`L` = 单曲循环；MIDI 下 **`m`** 选预设） |
-| nvimgames（含 24 点） | 底栏按钮或 **`u`** |
-| drawbuf | 状态栏 **[中英]** 或 **`Y`**（`L` 为直线工具） |
+| music / videobuf | **`L`** 中英文（`o` = 循环；MIDI 下 **`m`** 选预设） |
+| nvimgames（含 24 点） | 底栏按钮或 **`L`** |
+| drawbuf | 状态栏 **[中英]** 或 **`L`**（`|` 为直线工具） |
 | es | 浮窗内 **`L`** 或 **`Ctrl-l`**（默认跟随系统语言，可记忆） |
 | qrbuf / httpbuf / weather / taskmgr | 浮窗内 **`L`** |
 
@@ -129,6 +131,7 @@ tts 测试稿：[tts/testdata/](tts/testdata/)（`sample.zh.txt` / `sample.en.tx
 | weather | 0.9+ | curl（异步 HTTP）或 Python3 回退；国内源 + Open-Meteo，无 Key |
 | taskmgr | 0.9+ | Python3 + **必须** psutil；支持 Win / Linux / macOS |
 | ntemoji | 0.9+ | [NERDTree](https://github.com/preservim/nerdtree)；勿与 vim-devicons 同装 |
+| tablemode | 0.9+ | 无（纯 Lua） |
 
 **启动自动检测**：加载后只检查**必需** pip 包；缺失时弹出安装选项。安装过程打开预览窗口显示 pip 实时输出，结束后通知结果。  
 - 含推荐包的完整检查：`:NvimpluginsDeps`（可跟插件名）  
@@ -176,7 +179,7 @@ call plug#end()
 let g:nvimplugins_enable = ['mdview', 'pdfview', 'xlsview', 'tts', 'imgbuf', 'music', 'nvimgames']
 ```
 
-整仓默认启用：`mdview` · `pdfview` · `xlsview` · `tts` · `imgbuf` · `music` · `nvimgames` · `drawbuf` · `videobuf` · … · `weather` · `ntemoji`。
+整仓默认启用：`mdview` · `pdfview` · `xlsview` · `tts` · `imgbuf` · `music` · `nvimgames` · `drawbuf` · `videobuf` · … · `weather` · `ntemoji` · `tablemode`。
 
 #### lazy.nvim
 
@@ -289,13 +292,13 @@ require("music").setup({
   auto_play = true,
   toggle_key = "<M-m>",
   keys_midi = "<leader>mx", -- MIDI 播放器 / 预设
-  ui_lang = "auto", -- Y 切换；L 为单曲循环（音频）
+  ui_lang = "auto", -- L 中英文；o 单曲循环（音频）
   python = "python",
 })
 
--- nvimgames — 小游戏（界面语言见 i18n / 游戏内 u）
+-- nvimgames — 小游戏（界面语言见 i18n / 游戏内 L）
 require("nvimgames").setup({
-  lang = "auto", -- "auto" | "zh" | "en"
+  lang = "auto", -- "auto" | "zh" | "en"；L 切换
   mine = { difficulty = "beginner" },
   sokoban = { remember_level = true },
   twentyfour = { solvable_only = true },
@@ -308,7 +311,7 @@ require("drawbuf").setup({
   height = 24,
   canvas_bg = "ffffff",
   statusline = true,
-  ui_lang = "auto", -- 状态栏 [中英] 或 Y
+  ui_lang = "auto", -- 状态栏 [中英] 或 L；| 为直线工具
 })
 ```
 
@@ -323,13 +326,15 @@ require("drawbuf").setup({
 | xlsview | 打开 xlsx · `n`/`p` · 方向键 · `Ctrl-v`/`y` · `L` | 预览 · 跳格 · 格块选复制 · 中英文 |
 | tts | `<leader>vo` / `<leader>vs` · `L` | 从光标段播 / 停止 · 中英文 |
 | imgbuf | 打开图片 · `L` | 预览 · 中英文 |
-| music | 打开音频 · `<M-m>` · `Y` | 播放器 · 显隐 UI · 中英文 |
-| music | `:Music` / `:MusicMidi` / `<leader>mx` · `Y` | 音频 + Windows MIDI |
+| music | 打开音频 · `<M-m>` · `L` · `o` | 播放器 · 中英文 · 循环 |
+| music | `:Music` / `:MusicMidi` / `<leader>mx` · `L` | 音频 + Windows MIDI · 中英文 |
+| videobuf | 打开视频 · `L` · `o` | 预览 · 中英文 · 循环 |
 | weather | `:Weather` / `<leader>we` · `L` | 十天预报 · 中英文 |
 | taskmgr | `:Taskmgr` / `<leader>ta` · `L` | 进程列表 · 中英文 |
 | ntemoji | （配合 NERDTree 自动） | emoji 图标 |
-| nvimgames | `:NvimGames` · 游戏内 `u` | 选单 · 中英文 |
-| drawbuf | `:Draw` · `Y` | 画布 · 中英文 |
+| tablemode | `:TableModeToggle` / `<leader>tm` · `<leader>tr` | 表格模式 · 对齐 |
+| nvimgames | `:NvimGames` · 游戏内 `L` | 选单 · 中英文 |
+| drawbuf | `:Draw` · `L` · `\|` | 画布 · 中英文 · 直线 |
 | 合集 | `<leader>hh` | 帮助（仅已加载插件） |
 
 ## 文档索引
@@ -351,6 +356,7 @@ require("drawbuf").setup({
 | weather | [EN](weather/README.md) · [中文](weather/README.zh.md) |
 | taskmgr | [EN](taskmgr/README.md) · [中文](taskmgr/README.zh.md) |
 | ntemoji | [EN](ntemoji/README.md) · [中文](ntemoji/README.zh.md) |
+| tablemode | [EN](tablemode/README.md) · [中文](tablemode/README.zh.md) |
 
 ## 许可与说明
 

@@ -81,7 +81,8 @@ call plug#end()
 | `Space` | Draw / confirm shape |
 | `Esc` | Cancel shape |
 | `p` | Continuous paint toggle |
-| `a`/`d`/`L`/`R`/`O`/`f` | Pencil/eraser/line/rect/ellipse/fill |
+| `a`/`d`/`|`/`R`/`O`/`f` | Pencil/eraser/line/rect/ellipse/fill |
+| `L` | Toggle UI language (zh/en) |
 | `[]` `,` `.` `<>` | Glyph / fg / bg |
 | `u` / `Ctrl-r` | Undo / redo |
 | `C` | Clear |

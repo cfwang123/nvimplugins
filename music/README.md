@@ -102,17 +102,18 @@ call plug#end()
 
 ### Keys / clickable labels
 
-Example action row: `Prev PgUp, Play Space, Next PgDn, Stop x, Loop:off L, Replay r, Lyrics g, List f, Quit q`
+Example action row: `Prev PgUp, Play Space, Next PgDn, Stop x, Loop:off o, Replay r, Lyrics g, List f, Lang L, Quit q`
 
 | Action | Key |
 |--------|-----|
 | Play/pause | `Space` |
 | Prev/next | `PgUp` / `PgDn` |
 | Stop | `x` |
-| Loop | `L` (audio only) |
+| Loop | `o` (audio only) |
 | Replay | `r` |
 | Lyrics | `g`: full lyrics split above; current line embedded (CN/EN highlight together) |
 | List | `f`: same-folder track list; focus moves to list |
+| Language | **`L`** |
 | MIDI presets | **`m`**: built-in songs float (MIDI mode) |
 | Focus swap | `Tab`: player ↔ list (when list open) |
 | Close & stop | `q` |

@@ -13,6 +13,7 @@ local float_state = {
   path = nil,
   graphics = false, ---@type boolean float 高清叠层是否挂上
   resize_au = nil,
+  scroll_au = nil, ---@type integer|nil 禁止滚动时的 WinScrolled 锁定
 }
 
 ---用系统默认程序打开本地图片路径
@@ -515,6 +516,10 @@ function M.close_float()
     pcall(vim.api.nvim_del_autocmd, float_state.resize_au)
     float_state.resize_au = nil
   end
+  if float_state.scroll_au then
+    pcall(vim.api.nvim_del_autocmd, float_state.scroll_au)
+    float_state.scroll_au = nil
+  end
   if float_state.au then
     pcall(vim.api.nvim_del_autocmd, float_state.au)
     float_state.au = nil
@@ -552,6 +557,197 @@ local function editor_size()
   return vim.o.columns, vim.o.lines
 end
 
+---图片 float：禁止滚动 / Visual 选区（避免 █ 与高清叠层错位、误选文字）
+---@param win integer
+---@param buf integer
+local function lock_float_scroll(win, buf)
+  if not win or not vim.api.nvim_win_is_valid(win) then
+    return
+  end
+  if not buf or not vim.api.nvim_buf_is_valid(buf) then
+    return
+  end
+
+  pcall(function()
+    vim.wo[win].scrolloff = 0
+    vim.wo[win].sidescrolloff = 0
+    vim.wo[win].scrollbind = false
+    vim.wo[win].cursorbind = false
+  end)
+
+  local opts = { buffer = buf, silent = true, nowait = true, desc = "mdview: no scroll/select" }
+  local nops = {
+    "j",
+    "k",
+    "h",
+    "l",
+    "<Down>",
+    "<Up>",
+    "<Left>",
+    "<Right>",
+    "<C-d>",
+    "<C-u>",
+    "<C-f>",
+    "<C-b>",
+    "<C-e>",
+    "<C-y>",
+    "<PageUp>",
+    "<PageDown>",
+    "<S-Up>",
+    "<S-Down>",
+    "G",
+    "gg",
+    "H",
+    "M",
+    "L",
+    "zt",
+    "zz",
+    "zb",
+    "+",
+    "-",
+    "<CR>",
+    "<Space>",
+    "<BS>",
+    "w",
+    "b",
+    "e",
+    "0",
+    "$",
+    "^",
+    "gj",
+    "gk",
+    -- Visual / Select 入口
+    "v",
+    "V",
+    "<C-v>",
+    "<C-q>",
+    "gv",
+    "gh",
+    "gH",
+    "g<C-h>",
+    -- 鼠标拖选
+    "<LeftDrag>",
+    "<RightDrag>",
+    "<MiddleDrag>",
+    "<2-LeftMouse>",
+    "<3-LeftMouse>",
+    "<4-LeftMouse>",
+    "<ScrollWheelUp>",
+    "<ScrollWheelDown>",
+    "<ScrollWheelLeft>",
+    "<ScrollWheelRight>",
+    "<C-ScrollWheelUp>",
+    "<C-ScrollWheelDown>",
+  }
+  for _, key in ipairs(nops) do
+    pcall(vim.keymap.set, "n", key, "<Nop>", opts)
+  end
+  -- Visual/Select 内：任意操作直接回 Normal，不扩展选区
+  local v_opts = { buffer = buf, silent = true, nowait = true, desc = "mdview: no visual select" }
+  for _, key in ipairs({
+    "v",
+    "V",
+    "<C-v>",
+    "j",
+    "k",
+    "h",
+    "l",
+    "<Down>",
+    "<Up>",
+    "<Left>",
+    "<Right>",
+    "w",
+    "b",
+    "e",
+    "0",
+    "$",
+    "G",
+    "gg",
+    "o",
+    "O",
+    "y",
+    "d",
+    "c",
+    "x",
+    "s",
+    "r",
+    "p",
+    "P",
+    "<LeftDrag>",
+    "<LeftRelease>",
+    "<RightDrag>",
+    "<ScrollWheelUp>",
+    "<ScrollWheelDown>",
+    "<ScrollWheelLeft>",
+    "<ScrollWheelRight>",
+  }) do
+    pcall(vim.keymap.set, "v", key, "<Esc>", v_opts)
+    pcall(vim.keymap.set, "x", key, "<Esc>", v_opts)
+    pcall(vim.keymap.set, "s", key, "<Esc>", v_opts)
+  end
+  -- 滚轮在 insert 也吞掉
+  for _, key in ipairs({
+    "<ScrollWheelUp>",
+    "<ScrollWheelDown>",
+    "<ScrollWheelLeft>",
+    "<ScrollWheelRight>",
+  }) do
+    pcall(vim.keymap.set, "i", key, "<Nop>", opts)
+  end
+
+  local locking = false
+  local function reset_view()
+    if locking then
+      return
+    end
+    if not float_state.win or float_state.win ~= win then
+      return
+    end
+    if not vim.api.nvim_win_is_valid(win) then
+      return
+    end
+    locking = true
+    pcall(vim.api.nvim_win_call, win, function()
+      -- 若已进 Visual/Select，先退回 Normal
+      local mode = vim.fn.mode(1)
+      if type(mode) == "string" and mode:find("[vV\22sS]") then
+        pcall(vim.cmd, "normal! \27")
+      end
+      pcall(vim.api.nvim_win_set_cursor, win, { 1, 0 })
+      pcall(vim.fn.winrestview, {
+        lnum = 1,
+        col = 0,
+        topline = 1,
+        leftcol = 0,
+        curswant = 0,
+      })
+    end)
+    locking = false
+  end
+
+  if float_state.scroll_au then
+    pcall(vim.api.nvim_del_autocmd, float_state.scroll_au)
+    float_state.scroll_au = nil
+  end
+  float_state.scroll_au = vim.api.nvim_create_autocmd({
+    "WinScrolled",
+    "CursorMoved",
+    "CursorMovedI",
+    "ModeChanged",
+  }, {
+    buffer = buf,
+    callback = function()
+      local mode = vim.fn.mode(1)
+      if type(mode) == "string" and mode:find("[vV\22sS]") then
+        -- 立刻退出 Visual，不留给高亮帧
+        pcall(vim.api.nvim_feedkeys, vim.api.nvim_replace_termcodes("<Esc>", true, false, true), "n", false)
+      end
+      vim.schedule(reset_view)
+    end,
+  })
+  reset_view()
+end
+
 ---@param win integer
 ---@param buf integer
 ---@param title string
@@ -584,6 +780,7 @@ local function setup_float_chrome(win, buf, title, abs_path)
   end
 
   map_close(buf)
+  lock_float_scroll(win, buf)
 
   -- 点击外部（焦点离开 float）自动关闭
   float_state.leave_au = vim.api.nvim_create_autocmd({ "WinLeave", "BufLeave" }, {
@@ -737,6 +934,10 @@ function M.open_float(abs_path, cfg)
       if float_state.resize_au then
         pcall(vim.api.nvim_del_autocmd, float_state.resize_au)
         float_state.resize_au = nil
+      end
+      if float_state.scroll_au then
+        pcall(vim.api.nvim_del_autocmd, float_state.scroll_au)
+        float_state.scroll_au = nil
       end
       float_state.win = nil
       float_state.buf = nil

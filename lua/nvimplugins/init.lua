@@ -20,6 +20,7 @@ M.plugins = {
   "weather",
   "taskmgr",
   "ntemoji",
+  "tablemode",
 }
 
 ---返回当前已加载的子插件名列表（依据 vim.g.loaded_*）

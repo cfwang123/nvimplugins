@@ -458,10 +458,9 @@ local function render_blocks(ctx, blocks)
         end
       end
       local hl = "MdViewH" .. tostring(math.min(6, b.level or 1))
-      -- 整行标题：层级色 + bold
+      -- 整行标题：MdViewH* 已含 bold + 层级色（勿再叠 MdViewBold，会盖掉颜色）
       local pl = emit_line(ctx, text, b.source_start, {
         { col = 0, end_col = #text, hl = hl },
-        { col = 0, end_col = #text, hl = "MdViewBold" },
       }, { force_rev_map = true })
       for _, r in ipairs(ranges) do
         ctx.extmarks[#ctx.extmarks + 1] = {

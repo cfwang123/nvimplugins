@@ -804,8 +804,8 @@ function M.open(opts)
     render(buf)
   end
 
-  -- 中英文：仅 u
-  map("n", "u", do_toggle_lang, "lang")
+  -- 中英文：L（与其它插件统一）
+  map("n", "L", do_toggle_lang, "lang")
 
   map("n", "?", function()
     vim.notify(i18n.t("tf_help_box"), vim.log.levels.INFO)

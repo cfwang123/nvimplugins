@@ -14,7 +14,7 @@ Pure Lua parse + read-only preview buffer; code highlighting, TOC, tables, image
 | Area | Description |
 |------|-------------|
 | Single / side | `:MdView` source ⇄ preview; `:MdSideView` paired view + scroll sync / `_` cursor mark |
-| Style | Headings (optional auto numbers), bold, italic, `` code ``, strike, `==mark==` (preview + **editor yellow + conceal `==`**), links |
+| Style | Headings (**bold + distinct H1–H6 colors**, optional auto numbers), bold, italic, `` code ``, strike, `==mark==` (preview + **editor yellow + conceal `==`**), links |
 | Lists / quotes / HR / tables | GFM tables; dynamic columns; images in cells; escaped `\|` |
 | Code blocks | Border, language, line numbers, gray bg, fold after 10 lines, **`c` / `yc` / [Copy]**, TS→syntax→plain |
 | TOC | Top of preview; `t` in preview / **`<leader>toc`** in editor (configurable) opens TOC float |

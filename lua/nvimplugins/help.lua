@@ -194,7 +194,8 @@ local function catalog()
         { cmd = "MusicStop", desc_zh = "停止", desc_en = "Stop" },
       },
       keys = {
-        { default = "Y", desc_zh = "播放器内中英", desc_en = "In player: language" },
+        { default = "L", desc_zh = "播放器内中英", desc_en = "In player: language" },
+        { default = "o", desc_zh = "单曲循环（音频）", desc_en = "Loop (audio)" },
         { field = "keys_midi", default = "<leader>mx", desc_zh = "打开 MIDI 播放器", desc_en = "Open MIDI player" },
         { default = "m", desc_zh = "MIDI 内置预设", desc_en = "MIDI presets (in MIDI mode)" },
       },
@@ -214,7 +215,10 @@ local function catalog()
         { cmd = "VideobufClose", desc_zh = "关闭", desc_en = "Close" },
         { cmd = "VideobufFps", desc_zh = "设置 FPS", desc_en = "Set FPS" },
       },
-      keys = {},
+      keys = {
+        { default = "L", desc_zh = "控制条中英", desc_en = "Control bar: language" },
+        { default = "o", desc_zh = "循环", desc_en = "Loop" },
+      },
     },
     {
       plugin = "ntemoji",
@@ -255,7 +259,7 @@ local function catalog()
         { cmd = "Tetris", desc_zh = "俄罗斯方块", desc_en = "Tetris" },
       },
       keys = {
-        { default = "-", desc_zh = "局内 u 切换中英", desc_en = "In-game: u lang" },
+        { default = "L", desc_zh = "局内中英", desc_en = "In-game: language" },
       },
     },
     {
@@ -268,7 +272,8 @@ local function catalog()
         { cmd = "Draw", desc_zh = "打开画布", desc_en = "Open canvas" },
       },
       keys = {
-        { default = "-", desc_zh = "画布内 Y 中英", desc_en = "On canvas: Y lang" },
+        { default = "L", desc_zh = "画布内中英", desc_en = "On canvas: language" },
+        { default = "|", desc_zh = "直线工具", desc_en = "Line tool" },
       },
     },
     {
@@ -348,6 +353,27 @@ local function catalog()
       },
       keys = {
         { field = "keys_open", default = "<leader>ta", desc_zh = "打开进程管理", desc_en = "Open process manager" },
+      },
+    },
+    {
+      plugin = "tablemode",
+      title_zh = "表格模式",
+      title_en = "Table mode",
+      desc_zh = "即时对齐 Markdown 表格（仿 table-mode）",
+      desc_en = "Live Markdown table align (table-mode style)",
+      commands = {
+        { cmd = "TableModeToggle", desc_zh = "开/关表格模式", desc_en = "Toggle table mode" },
+        { cmd = "TableModeEnable", desc_zh = "开启", desc_en = "Enable" },
+        { cmd = "TableModeDisable", desc_zh = "关闭", desc_en = "Disable" },
+        { cmd = "TableModeRealign", desc_zh = "重新对齐", desc_en = "Realign table" },
+        { cmd = "Tableize", desc_zh = "选区转表格", desc_en = "Tableize range" },
+      },
+      keys = {
+        { field = "keys_toggle", default = "<leader>tm", desc_zh = "开/关表格模式", desc_en = "Toggle table mode" },
+        { field = "keys_realign", default = "<leader>tr", desc_zh = "重新对齐", desc_en = "Realign" },
+        { field = "keys_tableize", default = "<leader>tt", desc_zh = "转表格", desc_en = "Tableize" },
+        { default = "Tab / S-Tab", desc_zh = "模式下换单元格", desc_en = "In mode: next/prev cell" },
+        { default = "←→↑↓ / hjkl", desc_zh = "normal 按格移动，边界可出表", desc_en = "normal: by cell, edge exits" },
       },
     },
     {

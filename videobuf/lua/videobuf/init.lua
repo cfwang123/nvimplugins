@@ -778,7 +778,7 @@ local function map_ctrl_keys(buf)
   map("r", function()
     run_action("replay")
   end, "replay")
-  map("L", function()
+  map("o", function()
     run_action("loop")
   end, "loop")
   map("m", function()
@@ -861,7 +861,7 @@ local function map_ctrl_keys(buf)
     last_info = scale == "fill" and i18n.t("scale_fill") or i18n.t("scale_fit")
     paint_controls()
   end, "scale")
-  map("u", function()
+  map("L", function()
     run_action("lang")
   end, "lang")
   map("<PageUp>", function()
@@ -876,10 +876,10 @@ local function map_ctrl_keys(buf)
     l = true,
     H = true,
     L = true,
+    o = true,
     ["+"] = true,
     ["-"] = true,
     s = true,
-    u = true,
     ["1"] = true,
     ["2"] = true,
     ["3"] = true,

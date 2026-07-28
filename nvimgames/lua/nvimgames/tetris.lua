@@ -1634,17 +1634,7 @@ function M.open(opts)
     pcall(vim.cmd, "bdelete!")
   end, "quit")
 
-  map("u", function(s)
-    i18n.toggle()
-    s.message = i18n.t("lang_switched")
-    if s.player then
-      s.player.label = i18n.t("tetris_label_you")
-    end
-    if s.ai then
-      s.ai.label = i18n.t("tetris_label_ai")
-    end
-  end, "lang")
-  map("U", function(s)
+  map("L", function(s)
     i18n.toggle()
     s.message = i18n.t("lang_switched")
     if s.player then

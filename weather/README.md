@@ -42,7 +42,7 @@ vim.o.statusline = vim.o.statusline .. " %{%v:lua.require'weather'.statusline()%
 | `r` | Refresh |
 | **`L`** | Toggle language |
 
-Footer shows **fetch time** (e.g. `Fetched 2026-07-17 16:42:08 (Cache 12m)`) and data source.
+Footer shows **fetch time**, **web elapsed** (e.g. `Fetched 2026-07-17 16:42:08  (Cache 12m)  Took 1.23s`) and data source.
 
 ## Config
 

@@ -967,10 +967,14 @@ local function fetch_remote(on_done)
   local lang = i18n.get()
   local source = resolve_source()
   local days = 10
+  -- web 请求起止计时（curl / Python 回退均计入）
+  local t0 = vim.fn.reltime()
 
   local function finish(ok, data, err)
     state.busy = false
     if ok and data then
+      local sec = tonumber(vim.fn.reltimefloat(vim.fn.reltime(t0))) or 0
+      data.fetch_ms = math.max(0, math.floor(sec * 1000 + 0.5))
       data.query_city = state.city or config.city
       data.query_source = config.source or "auto"
       state.data = data
@@ -1192,7 +1196,7 @@ function M._render_popup()
         age_s = string.format("%s %dh%dm", i18n.t("cache"), math.floor(age / 3600), math.floor((age % 3600) / 60))
       end
     end
-    -- 获取时间 + 缓存年龄 + 数据源
+    -- 获取时间 + 缓存年龄 + web 用时 + 数据源
     local meta = string.format(
       "%s %s",
       i18n.t("fetched"),
@@ -1200,6 +1204,16 @@ function M._render_popup()
     )
     if age_s ~= "" then
       meta = meta .. "  (" .. age_s .. ")"
+    end
+    local fetch_ms = tonumber(data.fetch_ms)
+    if fetch_ms and fetch_ms >= 0 then
+      local elapsed_s
+      if fetch_ms < 1000 then
+        elapsed_s = string.format("%dms", math.floor(fetch_ms))
+      else
+        elapsed_s = string.format("%.2fs", fetch_ms / 1000)
+      end
+      meta = meta .. "  " .. i18n.t("elapsed") .. " " .. elapsed_s
     end
     meta = meta .. "  " .. i18n.t("source") .. " " .. (data.source or "open-meteo.com")
     lines[#lines + 1] = meta

@@ -48,7 +48,7 @@ local STR = {
       "  直线/矩形/椭圆：按下起点→拖动预览→松开确认；Esc 取消",
       "  底部状态栏：工具 / 字符 / 前景 / 背景 / 演示 / 保存 / 清空 / 撤销 / 退出 / 中英",
       "  色块：100% █ + 1/2 + 1/4；选色 float 真彩色",
-      "  hjkl 移动  u 撤销  C 清空  s 保存  Y 中英  q 退出",
+      "  hjkl 移动  u 撤销  C 清空  s 保存  L 中英  | 直线  q 退出",
     }, "\n"),
     block = {
       ["█"] = "100% 全方格",
@@ -113,7 +113,7 @@ local STR = {
       "  Line/Rect/Ellipse: press start → drag preview → release; Esc cancel",
       "  Status bar: tool / char / FG / BG / demo / save / clear / undo / quit / lang",
       "  Blocks: 100% █ + 1/2 + 1/4; color float truecolor",
-      "  hjkl move  u undo  C clear  s save  Y lang  q quit",
+      "  hjkl move  u undo  C clear  s save  L lang  | line  q quit",
     }, "\n"),
     block = {
       ["█"] = "100% full",

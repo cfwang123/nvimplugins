@@ -227,8 +227,7 @@ function M.open()
       pick(i)
     end, { buffer = buf, silent = true, nowait = true })
   end
-  vim.keymap.set("n", "u", toggle_lang, { buffer = buf, silent = true, nowait = true, desc = "toggle language" })
-  vim.keymap.set("n", "U", toggle_lang, { buffer = buf, silent = true, nowait = true })
+  vim.keymap.set("n", "L", toggle_lang, { buffer = buf, silent = true, nowait = true, desc = "toggle language" })
   vim.keymap.set("n", "<Esc>", dismiss, { buffer = buf, silent = true, nowait = true })
   vim.keymap.set("n", "q", dismiss, { buffer = buf, silent = true, nowait = true })
 

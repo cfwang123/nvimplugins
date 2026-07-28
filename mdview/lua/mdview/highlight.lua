@@ -3,13 +3,24 @@ local M = {}
 
 local defined = false
 
+-- 标题默认色（层级递减饱和度，强制 bold；不链 Title，避免与正文同色）
+local heading_defaults = {
+  { fg = "#61afef", bold = true }, -- H1 亮蓝
+  { fg = "#56b6c2", bold = true }, -- H2 青
+  { fg = "#c678dd", bold = true }, -- H3 紫
+  { fg = "#e5c07b", bold = true }, -- H4 金
+  { fg = "#98c379", bold = true }, -- H5 绿
+  { fg = "#d19a66", bold = true }, -- H6 橙
+}
+
 local links = {
-  MdViewH1 = "Title",
-  MdViewH2 = "Title",
-  MdViewH3 = "Title",
-  MdViewH4 = "Statement",
-  MdViewH5 = "Statement",
-  MdViewH6 = "Statement",
+  -- MdViewH1..H6 在 setup 中单独设色+bold，不用 link
+  MdViewH1 = "",
+  MdViewH2 = "",
+  MdViewH3 = "",
+  MdViewH4 = "",
+  MdViewH5 = "",
+  MdViewH6 = "",
   -- Bold/Italic/Strike 不用 link：很多主题没有 Italic 组，Strike 链 Comment 会丢删除线
   MdViewBold = "",
   MdViewItalic = "",
@@ -97,9 +108,19 @@ local function style_attrs(kind)
   return out
 end
 
+local function is_heading_hl(name)
+  return type(name) == "string" and name:match("^MdViewH[1-6]$") ~= nil
+end
+
 function M.setup(user_hls)
   for name, link in pairs(links) do
-    if name == "MdViewCodeBg" or name == "MdViewBold" or name == "MdViewItalic" or name == "MdViewStrike" then
+    if
+      name == "MdViewCodeBg"
+      or name == "MdViewBold"
+      or name == "MdViewItalic"
+      or name == "MdViewStrike"
+      or is_heading_hl(name)
+    then
       goto continue
     end
     local override = user_hls and user_hls[name]
@@ -157,33 +178,25 @@ function M.setup(user_hls)
     })
   end
 
-  -- 标题层级：保留链到 Title 的同时强制 bold
+  -- 标题层级：强制 bold + 独立色（不依赖 Title，避免被 MdViewBold 叠层冲掉）
   for i = 1, 6 do
     local name = "MdViewH" .. i
     local override = user_hls and user_hls[name]
     if type(override) == "table" then
       local o = vim.tbl_extend("force", { bold = true, default = false }, override)
+      o.bold = true -- 用户可改色，仍保证加粗
       vim.api.nvim_set_hl(0, name, o)
     elseif type(override) == "string" then
-      vim.api.nvim_set_hl(0, name, { link = override, default = false })
-      -- link 无法保证 bold，再叠一层（nvim 以最后设置为准时用显式属性）
       local ok, base = pcall(vim.api.nvim_get_hl, 0, { name = override, link = false })
       if ok and base then
         base.bold = true
         base.default = false
         vim.api.nvim_set_hl(0, name, base)
       else
-        vim.api.nvim_set_hl(0, name, { bold = true, default = false })
+        vim.api.nvim_set_hl(0, name, vim.tbl_extend("force", { default = false }, heading_defaults[i]))
       end
     else
-      local ok, base = pcall(vim.api.nvim_get_hl, 0, { name = "Title", link = false })
-      if ok and base then
-        base.bold = true
-        base.default = false
-        vim.api.nvim_set_hl(0, name, base)
-      else
-        vim.api.nvim_set_hl(0, name, { bold = true, default = false })
-      end
+      vim.api.nvim_set_hl(0, name, vim.tbl_extend("force", { default = false }, heading_defaults[i]))
     end
   end
 

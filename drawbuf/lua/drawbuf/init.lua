@@ -51,7 +51,7 @@ local default_config = {
   -- 默认：白底纸 + 黑线
   canvas_bg = "ffffff",
   statusline = true,
-  --- 界面语言："auto" | "zh" | "en"；Y 切换
+  --- 界面语言："auto" | "zh" | "en"；L 切换（| 为直线工具）
   ui_lang = "auto",
 }
 
@@ -1985,18 +1985,12 @@ local function bind(buf)
   map("a", function(st)
     set_tool(st, TOOL_PENCIL)
   end, "pencil")
-  map("L", function(st)
+  map("|", function(st)
     set_tool(st, TOOL_LINE)
   end, "line")
-  -- Y：中英文界面（L 已用作直线工具）
+  -- L：中英文界面（| 为直线工具）
   -- 不用 with_st：避免二次增量 refresh 干扰 full 重绘
-  vim.keymap.set("n", "Y", function()
-    local st = state_by_buf[buf]
-    if st then
-      toggle_ui_lang(st, buf)
-    end
-  end, { buffer = buf, silent = true, nowait = true, desc = "drawbuf: toggle UI language" })
-  vim.keymap.set("n", "y", function()
+  vim.keymap.set("n", "L", function()
     local st = state_by_buf[buf]
     if st then
       toggle_ui_lang(st, buf)

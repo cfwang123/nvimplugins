@@ -4,6 +4,70 @@ All notable changes to this repository are documented in this file.
 
 ---
 
+## 2026-07-28
+
+### English
+
+#### bundle / i18n keys
+
+- **UI language toggle unified to `L`** across plugins:
+  - **music** / **videobuf**: `L` = language; **`o`** = loop (was `L`).
+  - **drawbuf**: `L` = language; **`|`** = line tool (was `L`).
+  - **nvimgames** (menu + all games): `L` = language (was `u`/`U`).
+- Root README, help catalog, and plugin READMEs updated.
+
+#### mdview
+
+- Preview **headings** (`#`…`######`): forced **bold** and distinct level colors (`MdViewH1`–`MdViewH6`; no longer link-only to `Title` / stack `MdViewBold`).
+
+#### tablemode
+
+- **Live cell realign** while table mode is on: typing inside a cell debounced-realigns the whole table (`auto_align_live`, default on; `auto_align_ms = 60`).
+- Final realign on **InsertLeave**; changes joined with **undojoin** so one undo undoes type+align.
+- Cursor kept on the same cell/content offset across padding changes.
+
+#### tablemode (new)
+
+- New sub-plugin **tablemode** (vim-table-mode style, pure Lua; name avoids shadowing Lua `table`).
+- **`:TableModeToggle`** / **`<leader>tm`**: buffer-local table mode; insert **`|`** live-aligns; **`||`** expands to a header separator.
+- **`:TableModeRealign`** / **`<leader>tr`**, **`:Tableize`** / **`<leader>tt`**, delimiter prompt **`<leader>T`**.
+- Cell motions **`]|` `[|` `}|` `{|`**, text objects **`i|` `a|`**, delete/insert row & column maps.
+- GFM alignment (`:---`, `---:`, `:---:`); markdown/rst smart corners; `vim.g.tablemode_status` for statusline.
+- Registered in bundle defaults, help catalog, root README.
+
+---
+
+### 中文
+
+#### 合集 / 中英快捷键
+
+- **界面语言切换统一为 `L`**：
+  - **music** / **videobuf**：`L` = 中英；**`o`** = 循环（原 `L`）。
+  - **drawbuf**：`L` = 中英；**`|`** = 直线工具（原 `L`）。
+  - **nvimgames**（选单与各游戏）：`L` = 中英（原 `u`/`U`）。
+- 已更新总 README、帮助目录与相关子插件文档。
+
+#### mdview
+
+- 预览 **标题**（`#`…`######`）：强制 **加粗**，并按层级使用独立颜色（`MdViewH1`–`MdViewH6`；不再只链 `Title` 或叠 `MdViewBold` 盖色）。
+
+#### tablemode
+
+- **编辑单元格时实时对齐**：表格模式开启后，在格内输入会防抖重排整表（`auto_align_live`，默认开；`auto_align_ms = 60`）。
+- **InsertLeave** 再对齐一次；用 **undojoin** 合并输入与对齐，撤销一步即可。
+- 光标保持在同一单元格/内容偏移（适配 padding 变化）。
+
+#### tablemode（新插件）
+
+- 新增子插件 **tablemode**（仿 vim-table-mode，纯 Lua；不用 `table` 作模块名以免覆盖 Lua 内置库）。
+- **`:TableModeToggle`** / **`<leader>tm`**：按 buffer 开启；插入 **`|`** 即时对齐；**`||`** 展开为表头分隔行。
+- **`:TableModeRealign`** / **`<leader>tr`**，**`:Tableize`** / **`<leader>tt`**，自定义分隔符 **`<leader>T`**。
+- 单元格移动 **`]|` `[|` `}|` `{|`**，文本对象 **`i|` `a|`**，删行/删列/插列快捷键。
+- GFM 对齐标记；markdown/rst 智能角样式；`vim.g.tablemode_status` 可供 statusline。
+- 已加入整仓默认加载、帮助目录与根 README。
+
+---
+
 ## 2026-07-21
 
 ### English

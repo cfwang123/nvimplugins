@@ -77,6 +77,7 @@ local function load_bundle()
     "weather",
     "taskmgr",
     "ntemoji",
+    "tablemode",
   }
 
   local enable = vim.g.nvimplugins_enable

@@ -11,7 +11,7 @@ In-Neovim video preview/playback: character-art frames above, lyrics + control b
 - Open a video into a preview buffer (`:Videobuf` / optional auto-open)
 - Play / pause / stop / replay, seek, volume, loop
 - Adjustable FPS; timed lyrics (current line highlight)
-- zh/en UI (control-bar language button, similar to music)
+- zh/en UI: **`L`** (or control-bar language button); loop key **`o`**
 
 ## Dependencies
 

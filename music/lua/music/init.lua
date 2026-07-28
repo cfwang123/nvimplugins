@@ -58,7 +58,7 @@ local default_config = {
   --- true：只要在播/暂停就写 statusline（不要求隐藏 UI）
   statusline_always = false,
   python = "python",
-  --- 界面语言："auto" | "zh" | "en"；Y 切换（L 为单曲循环）
+  --- 界面语言："auto" | "zh" | "en"；L 切换（o 为单曲循环）
   ui_lang = "auto",
   --- Windows：打开 MIDI 模式播放器（预设 / .mid）
   keys_midi = "<leader>mx",
@@ -993,9 +993,9 @@ local function build_ui(buf, st)
     L:sep(", ")
     if not midi_mode then
       if pst.loop then
-        L:btn(i18n.t("loop_on"), "L", "MusicBtnLoopOn", "loop")
+        L:btn(i18n.t("loop_on"), "o", "MusicBtnLoopOn", "loop")
       else
-        L:btn(i18n.t("loop_off"), "L", "MusicBtnLoopOff", "loop")
+        L:btn(i18n.t("loop_off"), "o", "MusicBtnLoopOff", "loop")
       end
       L:sep(", ")
       L:btn(i18n.t("restart"), "r", "MusicBtn", "restart")
@@ -1014,7 +1014,7 @@ local function build_ui(buf, st)
       L:btn(i18n.t("presets"), "m", "MusicBtn", "presets")
     end
     L:sep(", ")
-    L:btn(i18n.t("lang"), "Y", "MusicBtn", "lang")
+    L:btn(i18n.t("lang"), "L", "MusicBtn", "lang")
     L:sep(", ")
     L:btn(i18n.t("close"), "q", "MusicBtn", "close")
     push(L)
@@ -2195,7 +2195,7 @@ local function bind(buf)
   map("r", with_st(function(st)
     run_action(buf, st, "restart", nil, 0)
   end), "music: restart")
-  map("L", with_st(function(st)
+  map("o", with_st(function(st)
     if is_midi_mode(st) then
       return
     end
@@ -2204,7 +2204,7 @@ local function bind(buf)
     vim.notify(on and i18n.t("loop_notify_on") or i18n.t("loop_notify_off"), vim.log.levels.INFO)
     paint(buf)
   end), "music: loop")
-  map("Y", function()
+  map("L", function()
     M.toggle_ui_lang(buf)
   end, "music: toggle UI language")
   map("g", function()
