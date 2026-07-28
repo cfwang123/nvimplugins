@@ -2,7 +2,7 @@
 
 **English** | [中文](README.zh.md)
 
-> **About** — Small experimental Neovim plugins: **mdview** (Markdown preview), **pdfview** / **xlsview** (document previews), **tts** (Windows SAPI speech), **imgbuf** (images), **music** (audio + Windows MIDI), **nvimgames** (mini-games), **drawbuf** (block drawing), **videobuf** (video), **es** (Everything file search), **qrbuf** (QR codes), **httpbuf** (HTTP scratch), **weather** (forecast), **taskmgr** (process manager), **ntemoji** (NERDTree emoji icons), **tablemode** (Markdown table mode), **calendar** (month float). Each plugin installs independently; no hard dependencies.
+> **About** — Small experimental Neovim plugins: **mdview** (Markdown preview), **pdfview** / **xlsview** (document previews), **tts** (Windows SAPI speech), **imgbuf** (images), **music** (audio + Windows MIDI), **nvimgames** (mini-games), **drawbuf** (block drawing), **videobuf** (video), **es** (Everything file search), **qrbuf** (QR codes), **httpbuf** (HTTP scratch), **weather** (forecast), **taskmgr** (process manager), **ntemoji** (NERDTree emoji icons), **tablemode** (Markdown table mode), **calendar** (month float), **colorpicker** (HSV picker). Each plugin installs independently; no hard dependencies.
 
 Focused on fun, practical, low-dependency terminal tooling. Most UIs support **Chinese / English** (default: follow system language; preference is remembered).
 
@@ -34,6 +34,7 @@ Focused on fun, practical, low-dependency terminal tooling. Most UIs support **C
 | **[ntemoji](ntemoji/)** | **NERDTree** emoji icons (no Nerd Font / no vim-devicons; brackets concealed). | [EN](ntemoji/README.md) · [中文](ntemoji/README.zh.md) |
 | **[tablemode](tablemode/)** | **Table mode** (vim-table-mode style): `:TableModeToggle` / `<leader>tm`; type `\|` to live-align; Tableize, cell motions, insert/delete columns; **Ctrl-v cell block** + **TSV yank**. | [EN](tablemode/README.md) · [中文](tablemode/README.zh.md) |
 | **[calendar](calendar/)** | **Month calendar float**: solar / lunar / holidays; `:Calendar` / `<leader>cal`; month-year nav, notes (red **●**) & color marks. | [EN](calendar/README.md) · [中文](calendar/README.zh.md) |
+| **[colorpicker](colorpicker/)** | **HSV color picker**: `:ColorPicker` / `<leader>co`; SV+H/S/V/A; **cell** steps; **Enter/double-click** insert or replace; in-buffer **`██`**, click **`#`** to edit. | [EN](colorpicker/README.md) · [中文](colorpicker/README.zh.md) |
 
 ## UI language (zh / en)
 
@@ -48,7 +49,7 @@ Most plugin UIs support Chinese and English. Default is **`ui_lang = "auto"`** (
 | nvimgames (incl. 24-point) | Footer button or **`L`** |
 | drawbuf | Status **[EN/中]** or **`L`** (`|` = line tool) |
 | es | **`L`** or **`Ctrl-l`** in picker (default follows system language; remembered) |
-| qrbuf / httpbuf / weather / taskmgr / calendar | **`L`** in float |
+| qrbuf / httpbuf / weather / taskmgr / calendar / colorpicker | **`L`** in float |
 
 ```lua
 require("mdview").setup({ ui_lang = "auto" }) -- or "zh" | "en"
@@ -134,6 +135,7 @@ TTS samples: [tts/testdata/](tts/testdata/) (`sample.zh.txt` / `sample.en.txt`).
 | ntemoji | 0.9+ | [NERDTree](https://github.com/preservim/nerdtree); do **not** load vim-devicons together |
 | tablemode | 0.9+ | none (pure Lua) |
 | calendar | 0.9+ | none (pure Lua; lunar 1900–2100) |
+| colorpicker | 0.9+ | none (pure Lua; `termguicolors` recommended) |
 
 **Startup check**: on load, only **required** pip packages are checked; if missing you get an install prompt. Install opens a log float with live pip output and notifies when done.  
 - Full check (incl. recommended): `:NvimpluginsDeps` (optional plugin names)  

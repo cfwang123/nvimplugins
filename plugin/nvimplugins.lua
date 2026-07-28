@@ -79,6 +79,7 @@ local function load_bundle()
     "ntemoji",
     "tablemode",
     "calendar",
+    "colorpicker",
   }
 
   local enable = vim.g.nvimplugins_enable

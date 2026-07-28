@@ -22,6 +22,7 @@ M.plugins = {
   "ntemoji",
   "tablemode",
   "calendar",
+  "colorpicker",
 }
 
 ---返回当前已加载的子插件名列表（依据 vim.g.loaded_*）

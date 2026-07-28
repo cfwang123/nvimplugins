@@ -397,6 +397,28 @@ local function catalog()
       },
     },
     {
+      plugin = "colorpicker",
+      title_zh = "HSV 取色器",
+      title_en = "HSV color picker",
+      desc_zh = "浮窗 HSV 选色，插入 CSS 颜色代码",
+      desc_en = "Float HSV picker → insert CSS color",
+      commands = {
+        { cmd = "ColorPicker", desc_zh = "打开取色器（可选格式）", desc_en = "Open picker (optional format)" },
+        { cmd = "ColorPickerClose", desc_zh = "关闭浮窗", desc_en = "Close float" },
+      },
+      keys = {
+        { field = "keys_open", default = "<leader>co", desc_zh = "打开取色器", desc_en = "Open color picker" },
+        { default = "[ ] , .", desc_zh = "色相 1 格（0°↔最右环绕）", desc_en = "hue 1 cell (wrap 0°↔end)" },
+        { default = "h/l j/k", desc_zh = "通道/平面 1 格", desc_en = "channel/plane 1 cell" },
+        { default = "5 / a", desc_zh = "透明度 A（默认 100%）", desc_en = "alpha A (default 100%)" },
+        { default = "双击 / Enter", desc_zh = "完成选色（插入或替换）", desc_en = "confirm pick (insert|replace)" },
+        { default = "单击 hex 的 #", desc_zh = "打开取色器替换该色", desc_en = "click # of hex to edit" },
+        { default = "Tab / y", desc_zh = "格式 / 复制", desc_en = "format / yank" },
+        { default = "1-5 Space", desc_zh = "焦点 H/S/V/平面/A", desc_en = "focus H/S/V/plane/A" },
+        { default = "L", desc_zh = "中英文", desc_en = "language" },
+      },
+    },
+    {
       plugin = "nvimplugins",
       title_zh = "合集元命令",
       title_en = "Bundle meta",

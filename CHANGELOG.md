@@ -8,6 +8,17 @@ All notable changes to this repository are documented in this file.
 
 ### English
 
+#### colorpicker (new)
+
+- New sub-plugin **colorpicker**: HSV float with SV plane + **H/S/V/A** sliders (truecolor); pure Lua.
+- **`:ColorPicker`** / **`<leader>co`**: **Enter** or **double-click** inserts/replaces CSS (`hex` / `rgb` / `rgba` / `hsl` / `hsla` / `hex_alpha`); **`y`** yanks; **`Tab`** format; **`L`** language.
+- **Keyboard steps by UI cell** (not 1% / 1°): **`hjkl`** / **`[]`** / **`,` `.`** = 1 cell; coarse default **5** cells (`step_*_coarse`).
+- Hue **wraps**: at leftmost (0°), **`[`** jumps to rightmost cell (stored as 360°, same color as 0°); **`]`** from rightmost back to 0°.
+- Cursor on color token → load and **replace** on confirm; float disables visual UI select; mouse hit-test by character cell.
+- **In-buffer `██`**: display only (no bg on code text); **click hex `#`** to open/replace; does not block mouse-drag visual select; **`:ColorPickerPreview`**.
+- **Fixed highlight pool** (`hlpool`: `ColorpickerC*` / `ColorpickerPrev*`) + dynamic `set_hl` — avoids **E849 Too many highlight groups**.
+- Registered in bundle defaults, help catalog, root README.
+
 #### calendar (new)
 
 - New sub-plugin **calendar**: month float with solar date, live clock, Chinese lunar (1900–2100), solar terms & holidays.
@@ -52,6 +63,17 @@ All notable changes to this repository are documented in this file.
 ---
 
 ### 中文
+
+#### colorpicker（新插件）
+
+- 新增子插件 **colorpicker**：HSV 浮窗（SV 平面 + **H/S/V/A** 滑条，真彩色）；纯 Lua。
+- **`:ColorPicker`** / **`<leader>co`**：**Enter** 或 **双击** 插入/替换 CSS；**`y`** 复制；**`Tab`** 格式；**`L`** 中英。
+- **键盘按 UI 格步进**（非 1% / 1°）：**`hjkl`** / **`[]`** / **`,` `.`** = 1 格；粗调默认 **5** 格（`step_*_coarse`）。
+- 色相**环绕**：最左 0° 时 **`[`** 到最右格（内部 360°，与 0° 同色）；最右 **`]`** 回到 0°。
+- 光标在色码上 → 确认时**替换**；浮窗禁 visual；鼠标按字符格命中。
+- **文件内 `██`**：仅展示（色码无背景）；**单击 hex 的 `#`** 打开并替换；不挡拖选；**`:ColorPickerPreview`**。
+- **固定高亮池**（`hlpool`）+ 动态 `set_hl`，避免 **E849 Too many highlight groups**。
+- 已加入整仓默认加载、帮助目录与根 README。
 
 #### calendar（新插件）
 
