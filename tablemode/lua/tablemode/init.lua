@@ -55,6 +55,16 @@ local default_config = {
   map_arrows = true,
   ---normal 模式 hjkl：表内按格移动，边界再按可移出表格
   map_hjkl = true,
+  ---Ctrl-v 单元格块选：进入选中当前整格；hjkl/方向键按格扩展；y 复制为 TSV（去 |）
+  map_vblock = true,
+  ---开启模式后高亮表头背景与表格线（| / 分隔行）
+  highlight = true,
+  ---表头行高亮组（背景）
+  hl_header = "TableModeHeader",
+  ---表格线高亮组（| - : + =）
+  hl_border = "TableModeBorder",
+  ---高亮刷新防抖（毫秒）
+  highlight_ms = 80,
 }
 
 local config = vim.deepcopy(default_config)
@@ -68,6 +78,18 @@ local buf_enabled = {}
 local aligning = {}
 ---防抖 timer id
 local live_timers = {}
+---单元格块选：buf → { r1, c1, r2, c2, table_s, table_e }
+---r* 为 buffer 行号（数据行），c* 为单元格索引（1-based）；(r1,c1) 锚点，(r2,c2) 自由角
+local buf_vblock = {}
+---正在 apply 块选（先退可视再进），避免 ModeChanged 清掉状态
+local applying_vblock = {}
+---块选期间临时 virtualedit：win → 原值
+local vblock_ve_save = {}
+---高亮刷新 timer
+local hl_timers = {}
+---extmark 命名空间
+local NS_HL = vim.api.nvim_create_namespace("tablemode_hl")
+local hl_defined = false
 
 local AUGROUP = "tablemode_nvim"
 local AUGROUP_LIVE = "tablemode_nvim_live"
@@ -225,7 +247,171 @@ local function realign_range(buf, start_line, end_line, cur_lnum, cur_col, opts)
       pcall(vim.api.nvim_win_set_cursor, win, { start_line + rel_row - 1, math.max(0, col - 1) })
     end
   end
+  -- 对齐后刷新表头/表格线高亮
+  M.refresh_highlights(buf)
   return true
+end
+
+---定义默认高亮组（ColorScheme / setup 时重设；可用 hi 覆盖）
+local function ensure_highlight_groups()
+  -- 表头：淡蓝底；表格线：加粗 + 清晰前景
+  vim.api.nvim_set_hl(0, "TableModeHeader", {
+    bg = "#6b8fb5",
+    ctermbg = 67,
+  })
+  vim.api.nvim_set_hl(0, "TableModeBorder", {
+    bold = true,
+    fg = "#89b4fa",
+    ctermfg = 111,
+  })
+  hl_defined = true
+end
+
+---@param buf integer
+local function clear_highlights(buf)
+  if vim.api.nvim_buf_is_valid(buf) then
+    pcall(vim.api.nvim_buf_clear_namespace, buf, NS_HL, 0, -1)
+  end
+end
+
+---为单行打表格线高亮（| +，分隔行另含 - = :）
+---@param buf integer
+---@param row0 integer  0-based
+---@param line string
+---@param is_sep boolean
+---@param hl_border string
+local function highlight_borders_on_line(buf, row0, line, is_sep, hl_border)
+  if not line or line == "" then
+    return
+  end
+  local i = 1
+  local n = #line
+  while i <= n do
+    local ch = line:sub(i, i)
+    local paint = ch == "|" or ch == "+"
+    if is_sep and (ch == "-" or ch == "=" or ch == ":" or ch == "+") then
+      paint = true
+    end
+    if paint then
+      local j = i
+      while j + 1 <= n do
+        local c2 = line:sub(j + 1, j + 1)
+        local ok2 = c2 == "|" or c2 == "+"
+        if is_sep and (c2 == "-" or c2 == "=" or c2 == ":" or c2 == "+") then
+          ok2 = true
+        end
+        if not ok2 then
+          break
+        end
+        j = j + 1
+      end
+      pcall(vim.api.nvim_buf_set_extmark, buf, NS_HL, row0, i - 1, {
+        end_row = row0,
+        end_col = j,
+        hl_group = hl_border,
+        priority = 120,
+        strict = false,
+      })
+      i = j + 1
+    else
+      i = i + 1
+    end
+  end
+end
+
+---扫描 buffer 内所有表格并刷新高亮
+---@param buf? integer
+function M.refresh_highlights(buf)
+  buf = buf or vim.api.nvim_get_current_buf()
+  if not vim.api.nvim_buf_is_valid(buf) then
+    return
+  end
+  clear_highlights(buf)
+  if not buf_enabled[buf] or config.highlight == false then
+    return
+  end
+  ensure_highlight_groups()
+  local hl_header = config.hl_header or "TableModeHeader"
+  local hl_border = config.hl_border or "TableModeBorder"
+  local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
+  local i = 1
+  local n = #lines
+  while i <= n do
+    if F.is_table_row(lines[i]) then
+      local s = i
+      while i <= n and F.is_table_row(lines[i]) do
+        i = i + 1
+      end
+      local e = i - 1
+      -- 首条分隔行之前的那一行视为表头（GFM）
+      local header_lnum = nil
+      for r = s, e do
+        if F.is_separator_line(lines[r]) then
+          if r > s then
+            header_lnum = r - 1
+          end
+          break
+        end
+      end
+      for r = s, e do
+        local line = lines[r] or ""
+        local row0 = r - 1
+        local is_sep = F.is_separator_line(line)
+        -- 表头：仅单元格正文有背景（不含两侧空格与 |）
+        if header_lnum and r == header_lnum and not is_sep then
+          local ncol = F.cell_count(line)
+          for c = 1, ncol do
+            local sp = F.cell_span(line, c)
+            if sp.content_start <= sp.content_end then
+              pcall(vim.api.nvim_buf_set_extmark, buf, NS_HL, row0, sp.content_start - 1, {
+                end_row = row0,
+                end_col = sp.content_end, -- 1-based 闭区间 → nvim 半开 end
+                hl_group = hl_header,
+                priority = 90,
+                strict = false,
+              })
+            end
+          end
+        end
+        highlight_borders_on_line(buf, row0, line, is_sep, hl_border)
+      end
+    else
+      i = i + 1
+    end
+  end
+end
+
+local function clear_hl_timer(buf)
+  local t = hl_timers[buf]
+  if t then
+    pcall(vim.fn.timer_stop, t)
+    hl_timers[buf] = nil
+  end
+end
+
+---@param buf integer
+local function schedule_hl_refresh(buf)
+  if not buf_enabled[buf] or config.highlight == false then
+    return
+  end
+  clear_hl_timer(buf)
+  local ms = tonumber(config.highlight_ms) or 80
+  if ms <= 0 then
+    vim.schedule(function()
+      if buf_enabled[buf] then
+        M.refresh_highlights(buf)
+      end
+    end)
+    return
+  end
+  hl_timers[buf] = vim.fn.timer_start(ms, function()
+    hl_timers[buf] = nil
+    vim.schedule(function()
+      if buf_enabled[buf] and vim.api.nvim_buf_is_valid(buf) then
+        M.refresh_highlights(buf)
+      end
+    end)
+  end)
 end
 
 local function clear_live_timer(buf)
@@ -305,6 +491,7 @@ local function attach_live_align(buf)
     buffer = buf,
     callback = function(ev)
       schedule_live_align(ev.buf)
+      schedule_hl_refresh(ev.buf)
     end,
   })
   if config.auto_align_on_insert_leave ~= false then
@@ -314,6 +501,7 @@ local function attach_live_align(buf)
       callback = function(ev)
         clear_live_timer(ev.buf)
         live_align_now(ev.buf)
+        schedule_hl_refresh(ev.buf)
       end,
     })
   end
@@ -321,6 +509,7 @@ end
 
 local function detach_live_align(buf)
   clear_live_timer(buf)
+  clear_hl_timer(buf)
   pcall(vim.api.nvim_clear_autocmds, { group = AUGROUP_LIVE, buffer = buf })
 end
 
@@ -605,6 +794,333 @@ local function default_motion(motion, count)
     return
   end
   pcall(vim.cmd, "normal! " .. tostring(count) .. motion)
+end
+
+---退出可视模式（若在）
+local function leave_visual()
+  local mode = vim.fn.mode()
+  if mode == "v" or mode == "V" or mode == "\22" then
+    pcall(vim.cmd, "normal! \27")
+  end
+end
+
+---单元格内容的屏幕列范围（1-based virtcol，含端点）
+---@param lnum integer
+---@param line string
+---@param cell_idx integer
+---@return integer vc_left
+---@return integer vc_right
+local function cell_virt_range(lnum, line, cell_idx)
+  local a, b = F.cell_select_range(line, cell_idx)
+  a = math.max(1, a or 1)
+  b = math.max(a, b or a)
+  local vc_a = vim.fn.virtcol({ lnum, a })
+  if type(vc_a) ~= "number" or vc_a < 1 then
+    vc_a = 1
+  end
+  local text = line:sub(a, b)
+  local w = vim.fn.strdisplaywidth(text)
+  if w < 1 then
+    w = 1
+  end
+  return vc_a, vc_a + w - 1
+end
+
+---应用单元格矩形块选（真正的 Ctrl-v 覆盖锚点→自由角矩形）
+---左右边界取所选各数据行中该列的最小/最大屏幕列，避免短行裁掉长行右侧
+---@param buf integer
+local function apply_cell_block(buf)
+  local vb = buf_vblock[buf]
+  if not vb then
+    return
+  end
+  local win = vim.api.nvim_get_current_win()
+  if vim.api.nvim_win_get_buf(win) ~= buf then
+    return
+  end
+  local r_top = math.min(vb.r1, vb.r2)
+  local r_bot = math.max(vb.r1, vb.r2)
+  local c_lo = math.min(vb.c1, vb.c2)
+  local c_hi = math.max(vb.c1, vb.c2)
+
+  local vc_left, vc_right = math.huge, 0
+  for lnum = r_top, r_bot do
+    local line = vim.api.nvim_buf_get_lines(buf, lnum - 1, lnum, false)[1] or ""
+    if F.is_table_row(line) and not F.is_separator_line(line) then
+      local vl, _vr_lo = cell_virt_range(lnum, line, c_lo)
+      local _vl_hi, vr = cell_virt_range(lnum, line, c_hi)
+      if vl < vc_left then
+        vc_left = vl
+      end
+      if vr > vc_right then
+        vc_right = vr
+      end
+    end
+  end
+  if vc_left == math.huge or vc_right < 1 then
+    return
+  end
+  if vc_right < vc_left then
+    vc_right = vc_left
+  end
+
+  ---把光标放到 (lnum, virtcol)，短行靠 virtualedit + curswant
+  ---@param lnum integer
+  ---@param vc integer
+  local function goto_virtcol(lnum, vc)
+    local line = vim.api.nvim_buf_get_lines(buf, lnum - 1, lnum, false)[1] or ""
+    local bcol = vim.fn.virtcol2col(win, lnum, vc)
+    if type(bcol) ~= "number" or bcol < 1 then
+      -- 超出实字符：落到行尾字节，靠 curswant 伸到虚拟列
+      bcol = math.max(1, #line)
+    end
+    -- setpos 第 5 项为 curswant（期望屏幕列）
+    vim.fn.setpos(".", { 0, lnum, bcol, 0, vc })
+    -- 再强制一次 | ，在 virtualedit 下尽量贴齐 vc
+    pcall(vim.cmd, "normal! " .. tostring(vc) .. "|")
+  end
+
+  applying_vblock[buf] = true
+  leave_visual()
+  -- 块选期间保持 virtualedit=all，短行才能落到虚拟列盖住长行右侧；
+  -- 退出可视时再恢复（见 restore_vblock_virtualedit）
+  if vblock_ve_save[win] == nil then
+    vblock_ve_save[win] = vim.wo[win].virtualedit
+  end
+  vim.wo[win].virtualedit = "all"
+  local ok, err = pcall(function()
+    goto_virtcol(r_top, vc_left)
+    vim.cmd("normal! \22")
+    goto_virtcol(r_bot, vc_right)
+  end)
+  applying_vblock[buf] = nil
+  if not ok then
+    vim.notify("tablemode: vblock " .. tostring(err), vim.log.levels.DEBUG)
+  end
+end
+
+---退出块选后恢复窗口 virtualedit
+local function restore_vblock_virtualedit()
+  for win, ve in pairs(vblock_ve_save) do
+    if vim.api.nvim_win_is_valid(win) then
+      pcall(function()
+        vim.wo[win].virtualedit = ve
+      end)
+    end
+    vblock_ve_save[win] = nil
+  end
+end
+
+---Ctrl-v：从当前格开始块选（至少选中一格内容）
+function M.vblock_start()
+  local buf = vim.api.nvim_get_current_buf()
+  if not buf_enabled[buf] then
+    pcall(vim.cmd, "normal! \22")
+    return
+  end
+  local pos = vim.api.nvim_win_get_cursor(0)
+  local lnum, col = pos[1], pos[2] + 1
+  local s, e = find_table_range(buf, lnum)
+  if not s then
+    buf_vblock[buf] = nil
+    pcall(vim.cmd, "normal! \22")
+    return
+  end
+  local line = vim.api.nvim_buf_get_lines(buf, lnum - 1, lnum, false)[1] or ""
+  if F.is_separator_line(line) or not F.is_table_row(line) then
+    local nl = next_data_line(buf, lnum, e, 1) or next_data_line(buf, lnum, s, -1)
+    if not nl then
+      buf_vblock[buf] = nil
+      pcall(vim.cmd, "normal! \22")
+      return
+    end
+    lnum = nl
+    line = vim.api.nvim_buf_get_lines(buf, lnum - 1, lnum, false)[1] or ""
+    col = 1
+  end
+  local cell_idx = F.cursor_cell(line, col)
+  local parsed = parse_range(buf, s, e)
+  local ncol = parsed and parsed.col_count or F.cell_count(line)
+  cell_idx = math.max(1, math.min(ncol, cell_idx))
+  buf_vblock[buf] = {
+    r1 = lnum,
+    c1 = cell_idx,
+    r2 = lnum,
+    c2 = cell_idx,
+    table_s = s,
+    table_e = e,
+  }
+  apply_cell_block(buf)
+end
+
+---块选中扩展：一次一行/一列单元格（移动自由角 r2,c2）
+---@param dr integer
+---@param dc integer
+function M.vblock_extend(dr, dc)
+  local buf = vim.api.nvim_get_current_buf()
+  local vb = buf_vblock[buf]
+  if not vb then
+    local motion = (dr == 1 and "j") or (dr == -1 and "k") or (dc == 1 and "l") or "h"
+    default_motion(motion, vim.v.count1)
+    return
+  end
+  local count = vim.v.count1
+  local s, e = vb.table_s, vb.table_e
+  -- 表范围可能因编辑变化，尽量刷新
+  local ns, ne = find_table_range(buf, vb.r2)
+  if ns then
+    s, e = ns, ne
+    vb.table_s, vb.table_e = s, e
+  end
+  local parsed = parse_range(buf, s, e)
+  local ncol = parsed and parsed.col_count or 1
+  for _ = 1, count do
+    if dr ~= 0 then
+      local step = dr > 0 and 1 or -1
+      local last = dr > 0 and e or s
+      local nl = next_data_line(buf, vb.r2, last, step)
+      if nl then
+        vb.r2 = nl
+      end
+    end
+    if dc ~= 0 then
+      local line = vim.api.nvim_buf_get_lines(buf, vb.r2 - 1, vb.r2, false)[1] or ""
+      local row_cols = math.max(ncol, F.cell_count(line))
+      local nc = vb.c2 + dc
+      if nc < 1 then
+        nc = 1
+      elseif nc > row_cols then
+        nc = row_cols
+      end
+      vb.c2 = nc
+    end
+  end
+  apply_cell_block(buf)
+end
+
+---从可视选区推导表内单元格矩形（无 vblock 状态时）
+---@param buf integer
+---@return integer|nil r1
+---@return integer|nil c1
+---@return integer|nil r2
+---@return integer|nil c2
+local function visual_table_cell_range(buf)
+  local mode = vim.fn.mode()
+  if not mode:match("[vV\22]") then
+    return nil
+  end
+  local p1 = vim.fn.getpos("v")
+  local p2 = vim.fn.getpos(".")
+  local l1, bcol1 = p1[2], math.max(1, p1[3])
+  local l2, bcol2 = p2[2], math.max(1, p2[3])
+  if l1 > l2 then
+    l1, l2 = l2, l1
+    bcol1, bcol2 = bcol2, bcol1
+  end
+  local s1, e1 = find_table_range(buf, l1)
+  local s2 = find_table_range(buf, l2)
+  if not s1 or not s2 or s1 ~= s2 then
+    return nil
+  end
+  local line1 = vim.api.nvim_buf_get_lines(buf, l1 - 1, l1, false)[1] or ""
+  local line2 = vim.api.nvim_buf_get_lines(buf, l2 - 1, l2, false)[1] or ""
+  if not F.is_table_row(line1) and not F.is_table_row(line2) then
+    return nil
+  end
+  local parsed = parse_range(buf, s1, e1)
+  local ncol = parsed and parsed.col_count or 1
+  local c1, c2
+  if mode == "V" then
+    c1, c2 = 1, ncol
+  else
+    c1 = F.cursor_cell(line1, bcol1)
+    c2 = F.cursor_cell(line2, bcol2)
+  end
+  -- 端点落在分隔行时夹到邻近数据行
+  if F.is_separator_line(line1) then
+    local nl = next_data_line(buf, l1, e1, 1) or next_data_line(buf, l1, s1, -1)
+    if nl then
+      l1 = nl
+    end
+  end
+  if F.is_separator_line(line2) then
+    local nl = next_data_line(buf, l2, s1, -1) or next_data_line(buf, l2, e1, 1)
+    if nl then
+      l2 = nl
+    end
+  end
+  return l1, c1, l2, c2
+end
+
+---矩形单元格 → Tab 分隔文本（Excel 风格，去掉 |）
+---@param buf integer
+---@param r1 integer
+---@param c1 integer
+---@param r2 integer
+---@param c2 integer
+---@return string
+---@return integer nrows
+---@return integer ncols
+local function format_cells_tsv(buf, r1, c1, r2, c2)
+  local top, bot = math.min(r1, r2), math.max(r1, r2)
+  local clo, chi = math.min(c1, c2), math.max(c1, c2)
+  local out = {}
+  for lnum = top, bot do
+    local line = vim.api.nvim_buf_get_lines(buf, lnum - 1, lnum, false)[1] or ""
+    if F.is_table_row(line) and not F.is_separator_line(line) then
+      local cells = F.split_row(line)
+      local parts = {}
+      for c = clo, chi do
+        local t = cells[c] or ""
+        -- 格内换行收成空格，便于粘贴
+        t = t:gsub("\r\n", "\n"):gsub("\r", "\n"):gsub("\n+", " ")
+        parts[#parts + 1] = t
+      end
+      out[#out + 1] = table.concat(parts, "\t")
+    end
+  end
+  local text = table.concat(out, "\n")
+  return text, #out, chi - clo + 1
+end
+
+---可视模式 y：复制选中单元格为 TSV（去 |）；非表内回落默认 yank
+function M.yank_visual()
+  local buf = vim.api.nvim_get_current_buf()
+  local r1, c1, r2, c2
+  local vb = buf_vblock[buf]
+  if vb then
+    r1, c1, r2, c2 = vb.r1, vb.c1, vb.r2, vb.c2
+  else
+    r1, c1, r2, c2 = visual_table_cell_range(buf)
+  end
+  if not r1 then
+    pcall(vim.cmd, "normal! y")
+    return
+  end
+  local text, nrows, ncols = format_cells_tsv(buf, r1, c1, r2, c2)
+  if text == "" then
+    leave_visual()
+    buf_vblock[buf] = nil
+    return
+  end
+  if not text:match("\n$") then
+    text = text .. "\n"
+  end
+  vim.fn.setreg('"', text, "l")
+  pcall(vim.fn.setreg, "+", text, "l")
+  pcall(vim.fn.setreg, "*", text, "l")
+  leave_visual()
+  buf_vblock[buf] = nil
+  restore_vblock_virtualedit()
+  pcall(vim.api.nvim_echo, {
+    { i18n.t("yanked_cells", nrows, ncols), "ModeMsg" },
+  }, false, {})
+end
+
+function M.clear_vblock(buf)
+  buf = buf or vim.api.nvim_get_current_buf()
+  buf_vblock[buf] = nil
+  restore_vblock_virtualedit()
 end
 
 ---表内按格移动；到边界或表外则用默认运动（可移出表格）
@@ -922,6 +1438,10 @@ local function clear_buf_maps(buf)
     "j",
     "k",
     "l",
+    "<C-v>",
+    "<C-q>",
+    "y",
+    "<C-c>",
   }) do
     pcall(vim.keymap.del, "n", lhs, { buffer = buf })
     pcall(vim.keymap.del, "x", lhs, { buffer = buf })
@@ -1019,6 +1539,44 @@ local function apply_buf_maps(buf)
       M.select_cell(true)
     end, { buffer = buf, silent = true, desc = "tablemode: around cell" })
   end
+
+  -- Ctrl-v 单元格块选 + 可视扩展 + TSV 复制
+  if config.map_vblock ~= false then
+    vim.keymap.set("n", "<C-v>", function()
+      M.vblock_start()
+    end, { buffer = buf, silent = true, desc = "tablemode: cell block select" })
+    -- Windows 终端里 Ctrl-v 常被占用，Ctrl-q 作备用
+    vim.keymap.set("n", "<C-q>", function()
+      M.vblock_start()
+    end, { buffer = buf, silent = true, desc = "tablemode: cell block select" })
+
+    local xopts = { buffer = buf, silent = true, desc = "tablemode: extend cell block" }
+    local function xext(dr, dc)
+      return function()
+        if buf_vblock[buf] then
+          M.vblock_extend(dr, dc)
+        else
+          local motion = (dr == 1 and "j") or (dr == -1 and "k") or (dc == 1 and "l") or "h"
+          default_motion(motion, vim.v.count1)
+        end
+      end
+    end
+    vim.keymap.set("x", "<Right>", xext(0, 1), xopts)
+    vim.keymap.set("x", "<Left>", xext(0, -1), xopts)
+    vim.keymap.set("x", "<Down>", xext(1, 0), xopts)
+    vim.keymap.set("x", "<Up>", xext(-1, 0), xopts)
+    vim.keymap.set("x", "l", xext(0, 1), xopts)
+    vim.keymap.set("x", "h", xext(0, -1), xopts)
+    vim.keymap.set("x", "j", xext(1, 0), xopts)
+    vim.keymap.set("x", "k", xext(-1, 0), xopts)
+
+    vim.keymap.set("x", "y", function()
+      M.yank_visual()
+    end, { buffer = buf, silent = true, desc = "tablemode: yank cells as TSV" })
+    vim.keymap.set("x", "<C-c>", function()
+      M.yank_visual()
+    end, { buffer = buf, silent = true, desc = "tablemode: yank cells as TSV" })
+  end
 end
 
 function M.enable(buf)
@@ -1027,14 +1585,17 @@ function M.enable(buf)
   apply_buf_maps(buf)
   attach_live_align(buf)
   update_status(buf)
+  M.refresh_highlights(buf)
   notify(i18n.t("enabled"))
 end
 
 function M.disable(buf)
   buf = buf or vim.api.nvim_get_current_buf()
   buf_enabled[buf] = false
+  buf_vblock[buf] = nil
   detach_live_align(buf)
   clear_buf_maps(buf)
+  clear_highlights(buf)
   update_status(buf)
   notify(i18n.t("disabled"))
 end
@@ -1138,15 +1699,46 @@ function M.setup(user)
     group = aug,
     callback = function(ev)
       detach_live_align(ev.buf)
+      clear_highlights(ev.buf)
       buf_enabled[ev.buf] = nil
       aligning[ev.buf] = nil
+      buf_vblock[ev.buf] = nil
+      hl_timers[ev.buf] = nil
+    end,
+  })
+  -- 进入 normal 时清块选状态并恢复 virtualedit（apply 重绘期间跳过）
+  vim.api.nvim_create_autocmd("ModeChanged", {
+    group = aug,
+    pattern = "*:n",
+    callback = function(ev)
+      local b = ev.buf
+      if b and not applying_vblock[b] then
+        if buf_vblock[b] then
+          buf_vblock[b] = nil
+        end
+        restore_vblock_virtualedit()
+      end
+    end,
+  })
+  -- colorscheme 切换后重设默认高亮并刷新已开启 buffer
+  vim.api.nvim_create_autocmd("ColorScheme", {
+    group = aug,
+    callback = function()
+      hl_defined = false
+      ensure_highlight_groups()
+      for b, on in pairs(buf_enabled) do
+        if on and vim.api.nvim_buf_is_valid(b) then
+          M.refresh_highlights(b)
+        end
+      end
     end,
   })
 
-  -- 已开启的 buffer 按新配置重挂 live autocmd
+  -- 已开启的 buffer 按新配置重挂 live autocmd + 高亮
   for b, on in pairs(buf_enabled) do
     if on and vim.api.nvim_buf_is_valid(b) then
       attach_live_align(b)
+      M.refresh_highlights(b)
     end
   end
 

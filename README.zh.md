@@ -2,7 +2,7 @@
 
 [English](README.md) | **中文**
 
-> **About** — 面向 Neovim 的小型实验与工具插件集合：含 **mdview**（Markdown 预览）、**pdfview** / **xlsview**（文档表格预览）、**tts**（Windows 朗读）、**imgbuf**（图片）、**music**（音频 + Windows MIDI）、**nvimgames**（小游戏）、**drawbuf**（色块绘图）、**videobuf**（视频）、**es**（Everything 搜文件）、**qrbuf**（二维码）、**httpbuf**（HTTP 调试）、**weather**（天气）、**taskmgr**（进程管理）、**ntemoji**（NERDTree emoji 图标）、**tablemode**（Markdown 表格模式）。各插件可独立安装，互不强制依赖。
+> **About** — 面向 Neovim 的小型实验与工具插件集合：含 **mdview**（Markdown 预览）、**pdfview** / **xlsview**（文档表格预览）、**tts**（Windows 朗读）、**imgbuf**（图片）、**music**（音频 + Windows MIDI）、**nvimgames**（小游戏）、**drawbuf**（色块绘图）、**videobuf**（视频）、**es**（Everything 搜文件）、**qrbuf**（二维码）、**httpbuf**（HTTP 调试）、**weather**（天气）、**taskmgr**（进程管理）、**ntemoji**（NERDTree emoji 图标）、**tablemode**（Markdown 表格模式）、**calendar**（月历浮窗）。各插件可独立安装，互不强制依赖。
 
 面向终端里「好玩、好用、少依赖」的实验与日常小工具。多数 UI 支持**中/英文**切换（默认跟随系统语言，可记忆）。
 
@@ -32,7 +32,8 @@
 | **[weather](weather/)** | 状态栏 **城市/天气/温度** + `:Weather` / `<leader>we` 十天表格；**系统中文用国内源**，否则 Open-Meteo；小时缓存。 | [EN](weather/README.md) · [中文](weather/README.zh.md) |
 | **[taskmgr](taskmgr/)** | 进程管理 float：`:Taskmgr` / `<leader>ta`，排序 / 列显隐与列宽、CPU·内存高占用着色、结束进程。 | [EN](taskmgr/README.md) · [中文](taskmgr/README.zh.md) |
 | **[ntemoji](ntemoji/)** | **NERDTree** emoji 图标（无需 Nerd Font / vim-devicons；自动 conceal 中括号）。 | [EN](ntemoji/README.md) · [中文](ntemoji/README.zh.md) |
-| **[tablemode](tablemode/)** | **表格模式**（仿 vim-table-mode）：`:TableModeToggle` / `<leader>tm` 开启后输入 `\|` 即时对齐；Tableize、单元格移动、删/插列。 | [EN](tablemode/README.md) · [中文](tablemode/README.zh.md) |
+| **[tablemode](tablemode/)** | **表格模式**（仿 vim-table-mode）：`:TableModeToggle` / `<leader>tm` 开启后输入 `\|` 即时对齐；Tableize、单元格移动、删/插列；**Ctrl-v 格块选**与 **TSV 复制**。 | [EN](tablemode/README.md) · [中文](tablemode/README.zh.md) |
+| **[calendar](calendar/)** | **月历浮窗**：公历 / 农历 / 节气节日；`:Calendar` / `<leader>cal`；换月换年、备注（红 **●**）与颜色标记。 | [EN](calendar/README.md) · [中文](calendar/README.zh.md) |
 
 ## 界面语言（中 / 英）
 
@@ -47,7 +48,7 @@
 | nvimgames（含 24 点） | 底栏按钮或 **`L`** |
 | drawbuf | 状态栏 **[中英]** 或 **`L`**（`|` 为直线工具） |
 | es | 浮窗内 **`L`** 或 **`Ctrl-l`**（默认跟随系统语言，可记忆） |
-| qrbuf / httpbuf / weather / taskmgr | 浮窗内 **`L`** |
+| qrbuf / httpbuf / weather / taskmgr / calendar | 浮窗内 **`L`** |
 
 ```lua
 require("mdview").setup({ ui_lang = "auto" }) -- 或 "zh" | "en"
@@ -132,6 +133,7 @@ tts 测试稿：[tts/testdata/](tts/testdata/)（`sample.zh.txt` / `sample.en.tx
 | taskmgr | 0.9+ | Python3 + **必须** psutil；支持 Win / Linux / macOS |
 | ntemoji | 0.9+ | [NERDTree](https://github.com/preservim/nerdtree)；勿与 vim-devicons 同装 |
 | tablemode | 0.9+ | 无（纯 Lua） |
+| calendar | 0.9+ | 无（纯 Lua；农历 1900–2100） |
 
 **启动自动检测**：加载后只检查**必需** pip 包；缺失时弹出安装选项。安装过程打开预览窗口显示 pip 实时输出，结束后通知结果。  
 - 含推荐包的完整检查：`:NvimpluginsDeps`（可跟插件名）  

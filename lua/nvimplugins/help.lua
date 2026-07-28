@@ -374,6 +374,26 @@ local function catalog()
         { field = "keys_tableize", default = "<leader>tt", desc_zh = "转表格", desc_en = "Tableize" },
         { default = "Tab / S-Tab", desc_zh = "模式下换单元格", desc_en = "In mode: next/prev cell" },
         { default = "←→↑↓ / hjkl", desc_zh = "normal 按格移动，边界可出表", desc_en = "normal: by cell, edge exits" },
+        { default = "Ctrl-v", desc_zh = "单元格块选（至少一格）", desc_en = "Cell block select (≥1 cell)" },
+        { default = "y (visual)", desc_zh = "复制为 TSV（去 |）", desc_en = "Yank as TSV (strip |)" },
+        { default = "highlight", desc_zh = "表头背景 + 表格线颜色", desc_en = "Header bg + border color" },
+      },
+    },
+    {
+      plugin = "calendar",
+      title_zh = "日历",
+      title_en = "Calendar",
+      desc_zh = "月历浮窗：农历 / 节假日 / 备注与颜色",
+      desc_en = "Month float: lunar, holidays, notes & colors",
+      commands = {
+        { cmd = "Calendar", desc_zh = "打开月历浮窗", desc_en = "Open month float" },
+        { cmd = "CalendarClose", desc_zh = "关闭浮窗", desc_en = "Close float" },
+      },
+      keys = {
+        { field = "keys_open", default = "<leader>cal", desc_zh = "打开月历", desc_en = "Open calendar" },
+        { default = "h/l j/k", desc_zh = "日 / 周", desc_en = "day / week" },
+        { default = "[ ] { }", desc_zh = "月 / 年", desc_en = "month / year" },
+        { default = "t n c x", desc_zh = "今天 / 备注 / 颜色 / 清除", desc_en = "today / note / color / clear" },
       },
     },
     {

@@ -487,7 +487,12 @@ local function cell_spans(line)
       if i > #s then
         break
       end
+      -- 下一个 field 起点（跳过当前 |）
       field_start = i + 1
+      -- 行以 | 结尾且其后无内容时不再追加空格（与 split_row 列数一致）
+      if field_start > #s then
+        break
+      end
     end
     i = i + 1
   end
@@ -495,6 +500,47 @@ local function cell_spans(line)
     spans[1] = { field_start = 1, content_start = 1, content_end = 0, field_end = 0 }
   end
   return spans
+end
+
+---导出：某格的 field/content 字节范围（1-based）
+---@param line string
+---@param cell_idx integer
+---@return { field_start: integer, content_start: integer, content_end: integer, field_end: integer }
+function M.cell_span(line, cell_idx)
+  local spans = cell_spans(line)
+  if not spans or #spans == 0 then
+    return { field_start = 1, content_start = 1, content_end = 0, field_end = 0 }
+  end
+  cell_idx = math.max(1, math.min(#spans, cell_idx or 1))
+  return spans[cell_idx]
+end
+
+---一行单元格数量
+---@param line string
+---@return integer
+function M.cell_count(line)
+  return #cell_spans(line)
+end
+
+---块选用：单元格可高亮的 [start, end] 字节列（1-based，含端点）
+---有内容时用 content；空格时用 field 内 padding，保证至少 1 列
+---@param line string
+---@param cell_idx integer
+---@return integer start_col
+---@return integer end_col
+function M.cell_select_range(line, cell_idx)
+  local sp = M.cell_span(line, cell_idx)
+  if sp.content_start <= sp.content_end then
+    return sp.content_start, sp.content_end
+  end
+  -- 空内容：尽量覆盖 field 内空白
+  local a = sp.field_start
+  local b = sp.field_end
+  if a > b then
+    a = math.max(1, sp.content_start > 0 and sp.content_start or 1)
+    b = a
+  end
+  return a, b
 end
 
 ---光标列 → 单元格索引（1-based）与格内偏移

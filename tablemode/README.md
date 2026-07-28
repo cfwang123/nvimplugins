@@ -44,7 +44,8 @@ Plug '/path/to/nvimplugins/tablemode'
 ```
 
 3. While typing inside a cell, the table **live-realigns** (debounced, default ~60ms); one more pass on InsertLeave.  
-4. Toggle off with **`<leader>tm`**. Manual realign: **`<leader>tr`** / **`:TableModeRealign`**.
+4. While mode is on, **header rows** get a background and **borders** (`|` / separator lines) are colored.  
+5. Toggle off with **`<leader>tm`**. Manual realign: **`<leader>tr`** / **`:TableModeRealign`**.
 
 ## Commands
 
@@ -76,9 +77,30 @@ Plug '/path/to/nvimplugins/tablemode'
 | **`|`** (insert) | Insert bar + realign; bare `||` → separator row |
 | **`Tab` / `Shift-Tab`** | Next / previous cell (skip separators; Tab on last cell appends a row) |
 | **`←` `→` `↑` `↓` / `hjkl` (normal)** | One cell at a time; **at edge, further press exits** the table (default motion) |
+| **`Ctrl-v` (or `Ctrl-q`)** | **Cell block select**: enters with at least the **current cell** selected |
+| **`hjkl` / arrows in block select** | Expand by **one column / row** of cells (skips separator rows) |
+| **`y` / `Ctrl-c` after selection** | Yank as **Excel-style TSV** (tab-separated, strips `\|`) |
 | **`]|` / `[|`** | Next / previous cell (wraps across rows) |
 | **`}|` / `{|`** | Cell below / above |
 | **`i|` / `a|`** | Cell text objects |
+
+### Block yank example
+
+`Ctrl-v` a cell rectangle inside the table, then `y`:
+
+```text
+| name            | address                  | phone      |
+|-----------------|--------------------------|------------|
+| John Adams      | 1600 Pennsylvania Avenue | 0123456789 |
+| Sherlock Holmes | 221B Baker Street        | 0987654321 |
+```
+
+Clipboard (tabs between columns — paste into Excel):
+
+```text
+John Adams	1600 Pennsylvania Avenue	0123456789
+Sherlock Holmes	221B Baker Street	0987654321
+```
 
 ## Alignment
 
@@ -133,10 +155,24 @@ require("tablemode").setup({
   tab_insert_row = true,   -- Tab on last cell appends empty row
   map_arrows = true,       -- arrows by cell; edge exits table
   map_hjkl = true,         -- same for hjkl
+  map_vblock = true,       -- Ctrl-v cell block; visual hjkl expand; y → TSV
+  highlight = true,        -- header bg + border colors while mode is on
+  hl_header = "TableModeHeader",
+  hl_border = "TableModeBorder",
+  highlight_ms = 80,
 })
 ```
 
 Set any key to `false` to disable it.
+
+### Highlight groups
+
+| Group | Role | Default |
+|-------|------|---------|
+| **`TableModeHeader`** | Header **cell text** background only (not spaces / `\|`) | pale blue bg `#6b8fb5` |
+| **`TableModeBorder`** | Borders: `\|` and separator `-` `:` `=` `+` | blue fg + **bold** |
+
+Override with `hi TableModeHeader ...` / `hi TableModeBorder ...` (`default` links — your definitions win).
 
 ## vs vim-table-mode
 

@@ -78,6 +78,7 @@ local function load_bundle()
     "taskmgr",
     "ntemoji",
     "tablemode",
+    "calendar",
   }
 
   local enable = vim.g.nvimplugins_enable

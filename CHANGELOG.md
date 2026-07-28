@@ -8,6 +8,18 @@ All notable changes to this repository are documented in this file.
 
 ### English
 
+#### calendar (new)
+
+- New sub-plugin **calendar**: month float with solar date, live clock, Chinese lunar (1900–2100), solar terms & holidays.
+- **`:Calendar`** / **`<leader>cal`**: navigate day/week/month/year; **`n`** notes, **`c`** color marks, **`x`** clear; **`L`** language.
+- Notes/colors in `stdpath("data")/calendar-nvim-notes.json`; pure Lua, no network.
+- Registered in bundle defaults, help catalog, root README.
+
+#### calendar
+
+- **Selection / cell highlights** use UTF-8 **byte** ranges (fixes misaligned lunar-line HL on CJK).
+- Days with a note show a trailing red **`●`** (`CalendarNoteDot`; light red on selected cell).
+
 #### bundle / i18n keys
 
 - **UI language toggle unified to `L`** across plugins:
@@ -25,6 +37,8 @@ All notable changes to this repository are documented in this file.
 - **Live cell realign** while table mode is on: typing inside a cell debounced-realigns the whole table (`auto_align_live`, default on; `auto_align_ms = 60`).
 - Final realign on **InsertLeave**; changes joined with **undojoin** so one undo undoes type+align.
 - Cursor kept on the same cell/content offset across padding changes.
+- **Cell block select** (like xlsview): **`Ctrl-v` / `Ctrl-q`** selects at least the current cell; visual **`hjkl` / arrows** expand by one column/row; **`y` / `Ctrl-c`** yanks **TSV** (tabs, strips `|`). Config: `map_vblock`.
+- **Table highlights** while mode is on: header row background (`TableModeHeader`) and border color (`TableModeBorder` for `|` / separator). Config: `highlight`, `hl_header`, `hl_border`.
 
 #### tablemode (new)
 
@@ -38,6 +52,18 @@ All notable changes to this repository are documented in this file.
 ---
 
 ### 中文
+
+#### calendar（新插件）
+
+- 新增子插件 **calendar**：月历浮窗，公历 + 实时时钟 + 农历（1900–2100）+ 节气/节日。
+- **`:Calendar`** / **`<leader>cal`**：按日/周/月/年浏览；**`n`** 备注、**`c`** 颜色、**`x`** 清除；**`L`** 中英。
+- 备注与颜色存 `stdpath("data")/calendar-nvim-notes.json`；纯 Lua，无网络。
+- 已加入整仓默认加载、帮助目录与根 README。
+
+#### calendar
+
+- **选中/格子高亮**按 UTF-8 **字节**偏移计算（修复中文农历行高亮错位）。
+- 有备注的日期在农历标签后显示红色 **`●`**（`CalendarNoteDot`；选中格内为浅红）。
 
 #### 合集 / 中英快捷键
 
@@ -56,6 +82,8 @@ All notable changes to this repository are documented in this file.
 - **编辑单元格时实时对齐**：表格模式开启后，在格内输入会防抖重排整表（`auto_align_live`，默认开；`auto_align_ms = 60`）。
 - **InsertLeave** 再对齐一次；用 **undojoin** 合并输入与对齐，撤销一步即可。
 - 光标保持在同一单元格/内容偏移（适配 padding 变化）。
+- **单元格块选**（对齐 xlsview）：**`Ctrl-v` / `Ctrl-q`** 至少选中当前整格；可视 **`hjkl` / 方向键** 每次扩一列/行；**`y` / `Ctrl-c`** 复制为 **TSV**（Tab 分列，去掉 `|`）。配置项：`map_vblock`。
+- **表格高亮**（模式开启时）：表头行背景（`TableModeHeader`）、表格线颜色（`TableModeBorder`，含 `|` 与分隔行）。配置：`highlight`、`hl_header`、`hl_border`。
 
 #### tablemode（新插件）
 

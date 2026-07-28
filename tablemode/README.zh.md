@@ -44,7 +44,8 @@ Plug '/path/to/nvimplugins/tablemode'
 ```
 
 3. 在单元格里继续输入文字时，**会防抖自动重排整表列宽**（默认约 60ms）；退出插入模式时再对齐一次。  
-4. 关掉模式：再按一次 **`<leader>tm`**。需要手动对齐时用 **`<leader>tr`** / **`:TableModeRealign`**。
+4. 开启后表格会**高亮表头背景**与**表格线**（`|` / 分隔行）；关掉模式时清除。  
+5. 关掉模式：再按一次 **`<leader>tm`**。需要手动对齐时用 **`<leader>tr`** / **`:TableModeRealign`**。
 
 ## 命令
 
@@ -76,9 +77,30 @@ Plug '/path/to/nvimplugins/tablemode'
 | **`|`**（插入） | 插入竖线并自动对齐；空行 `||` → 分隔行 |
 | **`Tab` / `Shift-Tab`** | 下一 / 上一单元格（跳过分隔行；末格 Tab 追加空行） |
 | **`←` `→` `↑` `↓` / `hjkl`（normal）** | 一次一格；**到边界再按**则按默认运动**移出表格** |
+| **`Ctrl-v`（或 `Ctrl-q`）** | **单元格块选**：进入时至少选中当前**整格**内容 |
+| **块选中 `hjkl` / 方向键** | 每次扩展 **一列 / 一行** 单元格（跳过分隔行） |
+| **块选 / 表内可视后 `y` / `Ctrl-c`** | 复制为 **Excel 风格 TSV**（Tab 分列，去掉 `\|`） |
 | **`]|` / `[|`** | 下一 / 上一单元格（行末绕到下一行） |
 | **`}|` / `{|`** | 下 / 上一行同列单元格 |
 | **`i|` / `a|`** | 单元格文本对象（内 / 含右侧 `\|`） |
+
+### 块选复制示例
+
+在表格内 `Ctrl-v` 选中格矩形后按 `y`：
+
+```text
+| name            | address                  | phone      |
+|-----------------|--------------------------|------------|
+| John Adams      | 1600 Pennsylvania Avenue | 0123456789 |
+| Sherlock Holmes | 221B Baker Street        | 0987654321 |
+```
+
+剪贴板内容（Tab 分隔，可直接粘贴到 Excel）：
+
+```text
+John Adams	1600 Pennsylvania Avenue	0123456789
+Sherlock Holmes	221B Baker Street	0987654321
+```
 
 ## 对齐
 
@@ -133,10 +155,24 @@ require("tablemode").setup({
   tab_insert_row = true,   -- 最后一格再 Tab 追加空行
   map_arrows = true,       -- normal 方向键按单元格移动（边界可移出）
   map_hjkl = true,         -- normal hjkl 同上
+  map_vblock = true,       -- Ctrl-v 格块选；可视 hjkl 扩格；y 复制 TSV
+  highlight = true,        -- 开启后高亮表头背景与表格线
+  hl_header = "TableModeHeader",
+  hl_border = "TableModeBorder",
+  highlight_ms = 80,       -- 高亮刷新防抖
 })
 ```
 
 任意键设为 `false` 可关闭。
+
+### 高亮组
+
+| 组 | 作用 | 默认 |
+|----|------|------|
+| **`TableModeHeader`** | 表头**单元格文字**背景（不含空格 / `\|`） | 淡蓝底 `#6b8fb5` |
+| **`TableModeBorder`** | 表格线：`\|` 与分隔行 `-` `:` `=` `+` | 蓝色前景 + **加粗** |
+
+可用 `hi TableModeHeader ...` / `hi TableModeBorder ...` 自定义（`default` 组，不覆盖你已有定义）。
 
 ### ReST 风格
 
