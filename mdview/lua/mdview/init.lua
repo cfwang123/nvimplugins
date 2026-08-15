@@ -1012,11 +1012,11 @@ end
 
 local HIT_PRIORITY = {
   link = 100,
-  code_copy = 95, -- 顶栏 [Copy] 优先于整块折叠
+  code_copy = 95, -- 顶栏 [Copy] 优先于整块
   image_inline = 90,
   image = 80,
   toc = 70,
-  -- 代码块优先于 details，便于块内任意位置回车折叠
+  -- 折叠仅底部灰字行；code_block 仅供 c/yc 范围检测
   code_fold = 65,
   code_block = 60,
   details = 50,
@@ -1128,6 +1128,10 @@ function M._activate_at_mouse(st)
   end
   local hit = M._hit_at(st, row, col)
   if not hit then
+    return false
+  end
+  -- 鼠标：代码块正文不折叠，仅底部灰字行（Enter 仍可在块内切换）
+  if hit.kind == "code_block" then
     return false
   end
   M._activate_hit(st, hit, row)
@@ -1909,6 +1913,11 @@ function M._open_href(href, st, opts)
         return
       end
     end
+    -- 本地相对路径但文件不存在：提示后仍尝试系统打开（可能是目录/特殊协议）
+    if file_part and file_part ~= "" and not (abs and vim.fn.filereadable(abs) == 1) then
+      local show = abs or file_part
+      vim.notify(require("mdview.i18n").t("link_nf") .. show, vim.log.levels.INFO)
+    end
   end
 
   if vim.ui and vim.ui.open then
@@ -1927,13 +1936,23 @@ function M._open_href(href, st, opts)
   end
 end
 
----重渲后把光标限制在指定代码块内
+---折叠后把光标放回块内（相对块顶偏移）；prefer_fold 则优先落在灰字行
 ---@param st table
 ---@param block_id number
----@param rel number 相对块顶的行偏移（0-based 优先）
-local function cursor_in_code_block(st, block_id, rel)
+---@param rel number|nil 相对块顶 0-based
+---@param prefer_fold boolean|nil
+local function cursor_after_code_fold(st, block_id, rel, prefer_fold)
   if not st.result then
     return
+  end
+  if prefer_fold then
+    for _, h in ipairs(st.result.hits or {}) do
+      if h.kind == "code_fold" and h.block_id == block_id then
+        local win = vim.api.nvim_get_current_win()
+        pcall(vim.api.nvim_win_set_cursor, win, { h.line or 1, 0 })
+        return
+      end
+    end
   end
   local block
   for _, h in ipairs(st.result.hits or {}) do
@@ -1962,38 +1981,75 @@ local function cursor_in_code_block(st, block_id, rel)
   pcall(vim.api.nvim_win_set_cursor, win, { target, 0 })
 end
 
----切换代码块折叠；成功返回 true
+---切换代码块折叠（增量 patch，不整文件 re-render）；成功返回 true
 ---@param st table
 ---@param hit table code_fold 或 code_block
----@param cursor_row number
+---@param cursor_row number|nil
 local function toggle_code_fold(st, hit, cursor_row)
   local block_id = hit.block_id
   if not block_id then
     return false
   end
   local fold_n = config.get().code_fold_lines or 10
-  local total = hit.lines and #hit.lines or hit.total_lines or 0
-  -- code_fold 命中时 lines 可能只在 code_block 上
-  if total <= 0 then
-    for _, h in ipairs(st.result and st.result.hits or {}) do
-      if h.kind == "code_block" and h.block_id == block_id then
-        total = h.lines and #h.lines or 0
-        hit = h
-        break
-      end
+  local block_hit = nil
+  for _, h in ipairs(st.result and st.result.hits or {}) do
+    if h.kind == "code_block" and h.block_id == block_id then
+      block_hit = h
+      break
     end
   end
+  local total = block_hit and block_hit.lines and #block_hit.lines
+    or hit.total_lines
+    or 0
   if fold_n <= 0 or total <= fold_n then
     return false
   end
-  local top = hit.line or cursor_row
-  local rel = cursor_row - top
-  if rel < 0 then
-    rel = 0
+  if not st.result or not block_hit then
+    return false
   end
-  st.expanded_codes[block_id] = not st.expanded_codes[block_id]
-  do_render(st)
-  cursor_in_code_block(st, block_id, rel)
+
+  local top = block_hit.line or cursor_row or 1
+  local rel = 0
+  if cursor_row then
+    rel = cursor_row - top
+    if rel < 0 then
+      rel = 0
+    end
+  end
+  local prefer_fold = hit.kind == "code_fold"
+
+  local was = st.expanded_codes[block_id] and true or false
+  st.expanded_codes[block_id] = not was
+  local cfg = config.get()
+  local cols = preview_width(st)
+  local info = render.patch_code_block(st.result, {
+    block_id = block_id,
+    lines = block_hit.lines,
+    lang = block_hit.lang,
+    source_end = block_hit.source_end,
+    expanded = st.expanded_codes[block_id],
+    cfg = cfg,
+    width = cols,
+  })
+  if not info then
+    -- 回退全量
+    do_render(st)
+  else
+    render.apply_range(st.preview_buf, st.result, info)
+    -- 标题预览行号随插入/删除平移
+    for _, h in ipairs(st.headings or {}) do
+      if h.preview_line and h.preview_line > info.old_end then
+        h.preview_line = h.preview_line + info.delta
+      end
+    end
+    -- 行数变化时清掉页内高清叠层（与全量 render 一致）
+    if info.delta ~= 0 and st.preview_buf then
+      pcall(function()
+        require("mdview.graphics").clear_buf(st.preview_buf)
+      end)
+    end
+  end
+  cursor_after_code_fold(st, block_id, rel, prefer_fold)
   return true
 end
 
@@ -2010,7 +2066,7 @@ function M._activate_hit(st, hit, row)
   elseif hit.kind == "code_copy" then
     M._yank_code_lines(hit.lines, hit.lang, st, hit)
   elseif hit.kind == "code_fold" or hit.kind == "code_block" then
-    -- 光标在代码块任意位置：回车切换展开/折叠
+    -- Enter：块内任意位置可折叠；鼠标在 _activate_at_mouse 已过滤 code_block
     if not toggle_code_fold(st, hit, row) then
       -- 不可折叠：忽略
     end

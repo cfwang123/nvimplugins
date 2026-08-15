@@ -37,7 +37,7 @@ local links = {
   MdViewListBullet = "Special",
   MdViewTableBorder = "Comment",
   MdViewQuote = "Comment",
-  MdViewLink = "Underlined",
+  MdViewLink = "", -- 蓝字+下划线，见 setup
   MdViewImage = "Directory",
   MdViewImageBorder = "Comment",
   MdViewDetailsMarker = "Special",
@@ -119,6 +119,7 @@ function M.setup(user_hls)
       or name == "MdViewBold"
       or name == "MdViewItalic"
       or name == "MdViewStrike"
+      or name == "MdViewLink"
       or is_heading_hl(name)
     then
       goto continue
@@ -241,9 +242,77 @@ function M.setup(user_hls)
   else
     vim.api.nvim_set_hl(0, "MdViewCodeBg", { bg = code_bg_color(), default = true })
   end
-  pcall(function()
-    vim.api.nvim_set_hl(0, "MdViewLink", { underline = true, default = true })
-  end)
+  -- 链接：蓝字 + 蓝色下划线
+  -- 必须同时设 fg 与 sp：只设 underline 时 guisp 常跟主题变成红/粉，看起来像源码里的 markdown 链
+  local function link_blue()
+    -- 仅采用明确偏蓝的 markdown 链接色；不要用 Underlined（常带红/粉 sp）
+    for _, name in ipairs({
+      "@markup.link",
+      "@markup.link.label",
+      "@markup.link.url",
+      "markdownLinkText",
+      "markdownUrl",
+      "htmlLink",
+    }) do
+      local ok, hl = pcall(vim.api.nvim_get_hl, 0, { name = name, link = false })
+      if ok and hl and hl.fg then
+        local fg = hl.fg
+        if type(fg) == "number" then
+          fg = string.format("#%06x", fg)
+        end
+        if type(fg) == "string" and fg:match("^#%x%x%x%x%x%x$") then
+          local n = tonumber(fg:sub(2), 16) or 0
+          local r = math.floor(n / 65536) % 256
+          local g = math.floor(n / 256) % 256
+          local b = n % 256
+          local lum = 0.299 * r + 0.587 * g + 0.114 * b
+          -- 要求明显偏蓝且亮度适中
+          if lum > 40 and lum < 230 and b >= r + 20 and b >= g then
+            return fg
+          end
+        end
+      end
+    end
+    -- 按背景明暗：浅底深链蓝、深底亮链蓝
+    local ok_n, normal = pcall(vim.api.nvim_get_hl, 0, { name = "Normal", link = false })
+    local bg = ok_n and normal and normal.bg
+    if type(bg) == "number" then
+      local r = math.floor(bg / 65536) % 256
+      local g = math.floor(bg / 256) % 256
+      local b = bg % 256
+      local lum = 0.299 * r + 0.587 * g + 0.114 * b
+      if lum > 140 then
+        return "#0969da" -- 浅色底 GitHub 链接蓝
+      end
+    end
+    return "#58a6ff" -- 深色底
+  end
+  local link_ov = user_hls and user_hls.MdViewLink
+  if type(link_ov) == "table" then
+    local blue = link_blue()
+    local o = vim.tbl_extend("force", {
+      fg = blue,
+      sp = blue,
+      underline = true,
+      default = false,
+    }, link_ov)
+    if o.fg and (o.sp == nil or o.sp == "") then
+      o.sp = o.fg
+    end
+    o.underline = true
+    o.default = false
+    vim.api.nvim_set_hl(0, "MdViewLink", o)
+  elseif type(link_ov) == "string" and link_ov ~= "" then
+    vim.api.nvim_set_hl(0, "MdViewLink", { link = link_ov, default = false })
+  else
+    local blue = link_blue()
+    vim.api.nvim_set_hl(0, "MdViewLink", {
+      fg = blue,
+      sp = blue,
+      underline = true,
+      default = false,
+    })
+  end
 
   -- TOC / Help float：强制纯白底（不 default，覆盖 colorscheme）
   local function set_white_float(name, opts)

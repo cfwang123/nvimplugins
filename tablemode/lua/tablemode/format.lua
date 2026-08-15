@@ -2,6 +2,7 @@
 local M = {}
 
 ---@alias Align "left"|"right"|"center"
+---@alias TableStyle "gfm"|"unicode"
 
 ---@class TableOpts
 ---@field corner string  单元格角/竖线，Markdown 多为 "|"
@@ -10,6 +11,22 @@ local M = {}
 ---@field header_fillchar string  表头分隔填充，默认同 fillchar；ReST 可用 "="
 ---@field align_char string  对齐标记 ":"
 ---@field separator string  列分隔符，默认 "|"
+---@field table_style? TableStyle  "gfm"（| --- |）或 "unicode"（mdview 框线）
+
+-- mdview 风格 Unicode 框线
+local BOX = {
+  h = "─",
+  v = "│",
+  tl = "┌",
+  tr = "┐",
+  bl = "└",
+  br = "┘",
+  tm = "┬",
+  bm = "┴",
+  ml = "├",
+  mr = "┤",
+  mm = "┼",
+}
 
 ---@param s string
 ---@return integer
@@ -32,7 +49,48 @@ local function trim(s)
   return (s:gsub("^%s+", ""):gsub("%s+$", ""))
 end
 
----是否为分隔行（---|:---| 等）
+---是否含 Unicode 框线字符
+---@param s string
+---@return boolean
+function M.has_box_chars(s)
+  if not s or s == "" then
+    return false
+  end
+  return s:find("[│┌┐└┘├┤┬┴┼─]", 1) ~= nil
+    or s:find(BOX.v, 1, true) ~= nil
+    or s:find(BOX.h, 1, true) ~= nil
+end
+
+---Unicode 顶/中/底框线行（无单元格正文）
+---@param line string
+---@return boolean
+function M.is_box_frame_line(line)
+  local s = trim(line or "")
+  if s == "" or not M.has_box_chars(s) then
+    return false
+  end
+  -- 仅允许框线、对齐冒号、空白
+  local stripped = s
+    :gsub(BOX.tl, "")
+    :gsub(BOX.tr, "")
+    :gsub(BOX.bl, "")
+    :gsub(BOX.br, "")
+    :gsub(BOX.tm, "")
+    :gsub(BOX.bm, "")
+    :gsub(BOX.ml, "")
+    :gsub(BOX.mr, "")
+    :gsub(BOX.mm, "")
+    :gsub(BOX.h, "")
+    :gsub(":", "")
+    :gsub("%s+", "")
+  if stripped ~= "" then
+    return false
+  end
+  -- 至少有一段横线
+  return s:find(BOX.h, 1, true) ~= nil
+end
+
+---是否为分隔行（GFM ---|:---| 或 Unicode 框线）
 ---@param line string
 ---@return boolean
 function M.is_separator_line(line)
@@ -43,26 +101,26 @@ function M.is_separator_line(line)
   if s == "" then
     return false
   end
-  -- 允许 | --- | :---: | ---+--- |
+  if M.is_box_frame_line(s) then
+    return true
+  end
+  -- GFM：允许 | --- | :---: | ---+--- |
   if not s:find("[%-%=%:]", 1) then
     return false
   end
-  -- 去掉首尾 |
   if s:sub(1, 1) == "|" then
     s = s:sub(2)
   end
   if s:sub(-1) == "|" then
     s = s:sub(1, -2)
   end
-  -- 只允许 - = : | + 空白
   if s:find("[^%s%-%=%:%|+]") then
     return false
   end
-  -- 至少有一段横线
   return s:find("%-+") ~= nil or s:find("%=+") ~= nil
 end
 
----是否像表格数据行（含 |）
+---是否像表格数据行（GFM | 或 Unicode │ / 框线）
 ---@param line string
 ---@return boolean
 function M.is_table_row(line)
@@ -76,7 +134,12 @@ function M.is_table_row(line)
   if M.is_separator_line(s) then
     return true
   end
-  -- 至少两个 | 或 以 | 开头
+  -- Unicode 数据行
+  if s:find(BOX.v, 1, true) then
+    local _, n = s:gsub(BOX.v, BOX.v)
+    return n >= 2
+  end
+  -- GFM
   local _, n = s:gsub("|", "")
   if n >= 2 then
     return true
@@ -85,6 +148,21 @@ function M.is_table_row(line)
     return true
   end
   return false
+end
+
+---当前行使用的竖线字符（"|" 或 "│"）
+---@param line string
+---@return string
+function M.row_vbar(line)
+  local s = line or ""
+  if s:find(BOX.v, 1, true) then
+    return BOX.v
+  end
+  return "|"
+end
+
+function M.box_chars()
+  return BOX
 end
 
 ---解析分隔格对齐
@@ -108,39 +186,109 @@ function M.parse_align_cell(cell, align_char)
   return "left"
 end
 
----拆分一行单元格（保留空单元格）
----@param line string
----@return string[] cells
----@return boolean is_sep
-function M.split_row(line)
-  local s = line or ""
-  -- 去掉行尾 \r
-  s = s:gsub("\r$", "")
-  local is_sep = M.is_separator_line(s)
-  local raw = trim(s)
-  -- 去掉首尾 |
-  if raw:sub(1, 1) == "|" then
-    raw = raw:sub(2)
-  end
-  if raw:sub(-1) == "|" then
-    raw = raw:sub(1, -2)
-  end
+---按竖线/交叉角拆分（支持 | 与 Unicode │ ┼ ┬ ┴ 等）
+---@param raw string  已去掉首尾框的内容
+---@param is_sep boolean
+---@return string[]
+local function split_cells_raw(raw, is_sep)
   local cells = {}
-  -- 按 | 或分隔行的 + 拆分
-  if is_sep then
+  if raw == "" then
+    return { "" }
+  end
+  if is_sep and M.has_box_chars(raw) then
+    -- Unicode 分隔：按 ┼ ┬ ┴ 拆；无交叉角时整段为一格
+    local parts = {}
+    local buf = {}
+    local i = 1
+    while i <= #raw do
+      local ch3 = raw:sub(i, i + 2)
+      if ch3 == BOX.mm or ch3 == BOX.tm or ch3 == BOX.bm then
+        parts[#parts + 1] = table.concat(buf)
+        buf = {}
+        i = i + 3
+      else
+        buf[#buf + 1] = raw:sub(i, i)
+        i = i + 1
+      end
+    end
+    parts[#parts + 1] = table.concat(buf)
+    for _, p in ipairs(parts) do
+      cells[#cells + 1] = trim(p)
+    end
+  elseif is_sep then
     for part in (raw .. "|"):gmatch("([^|+]*)[+|]") do
       cells[#cells + 1] = trim(part)
+    end
+  elseif raw:find(BOX.v, 1, true) then
+    -- 用 plain find 按 │ 拆
+    local start = 1
+    while true do
+      local a, b = raw:find(BOX.v, start, true)
+      if not a then
+        cells[#cells + 1] = trim(raw:sub(start))
+        break
+      end
+      cells[#cells + 1] = trim(raw:sub(start, a - 1))
+      start = b + 1
+    end
+    -- 去掉因首尾 │ 产生的空端（与 GFM 一致：│ a │ b │ → a, b）
+    if #cells >= 2 and cells[1] == "" then
+      table.remove(cells, 1)
+    end
+    if #cells >= 1 and cells[#cells] == "" then
+      cells[#cells] = nil
     end
   else
     for part in (raw .. "|"):gmatch("([^|]*)|") do
       cells[#cells + 1] = trim(part)
     end
   end
-  -- 全空一行（如单独的 |）→ 一个空格
   if #cells == 0 then
     cells = { "" }
   end
-  return cells, is_sep
+  return cells
+end
+
+---拆分一行单元格（保留空单元格）
+---@param line string
+---@return string[] cells
+---@return boolean is_sep
+function M.split_row(line)
+  local s = (line or ""):gsub("\r$", "")
+  local is_sep = M.is_separator_line(s)
+  local raw = trim(s)
+  -- 去掉首尾竖线 / 框角
+  local function strip_ends(str)
+    local t = str
+    local changed = true
+    while changed do
+      changed = false
+      for _, ch in ipairs({
+        "|",
+        BOX.v,
+        BOX.tl,
+        BOX.tr,
+        BOX.bl,
+        BOX.br,
+        BOX.ml,
+        BOX.mr,
+        BOX.tm,
+        BOX.bm,
+      }) do
+        if t:sub(1, #ch) == ch then
+          t = t:sub(#ch + 1)
+          changed = true
+        end
+        if t:sub(-#ch) == ch then
+          t = t:sub(1, #t - #ch)
+          changed = true
+        end
+      end
+    end
+    return t
+  end
+  raw = strip_ends(raw)
+  return split_cells_raw(raw, is_sep), is_sep
 end
 
 ---@param text string
@@ -172,7 +320,17 @@ end
 ---@param align_char string
 ---@return string
 function M.make_sep_cell(width, align, fillchar, align_char)
-  fillchar = (fillchar and fillchar ~= "") and fillchar:sub(1, 1) or "-"
+  -- 支持多字节填充（如 ─）；只取第一个“字符”而非第一个字节
+  if not fillchar or fillchar == "" then
+    fillchar = "-"
+  else
+    local ok, first = pcall(vim.fn.strcharpart, fillchar, 0, 1)
+    if ok and first and first ~= "" then
+      fillchar = first
+    else
+      fillchar = fillchar:sub(1, 1)
+    end
+  end
   align_char = align_char or ":"
   width = math.max(width, 3)
   if align == "center" then
@@ -197,6 +355,29 @@ end
 ---@return string
 function M.format_row(cells, widths, aligns, opts, is_sep, is_header_sep)
   opts = opts or {}
+  local style = opts.table_style or "gfm"
+  if style == "unicode" then
+    -- unicode 整表由 format_table 处理；单行数据/中线兜底
+    local fill = BOX.h
+    local align_char = opts.align_char or ":"
+    local parts = {}
+    local ncol = #widths
+    for i = 1, ncol do
+      local w = widths[i] or 3
+      local al = aligns[i] or "left"
+      if is_sep then
+        -- 中线格宽 = 内容宽 + 两侧空格
+        parts[i] = M.make_sep_cell(w + 2, al, fill, align_char)
+      else
+        parts[i] = M.pad_cell(cells[i] or "", w, al)
+      end
+    end
+    if is_sep then
+      return BOX.ml .. table.concat(parts, BOX.mm) .. BOX.mr
+    end
+    return BOX.v .. " " .. table.concat(parts, " " .. BOX.v .. " ") .. " " .. BOX.v
+  end
+
   local corner = opts.corner or "|"
   local corner_corner = opts.corner_corner or corner
   local fill = is_header_sep and (opts.header_fillchar or opts.fillchar or "-") or (opts.fillchar or "-")
@@ -218,6 +399,21 @@ function M.format_row(cells, widths, aligns, opts, is_sep, is_header_sep)
   end
   -- GFM 惯例：| cell | cell |（竖线两侧空格）
   return corner .. " " .. table.concat(parts, " " .. corner .. " ") .. " " .. corner
+end
+
+---Unicode 顶/底边框行
+---@param widths integer[]
+---@param left string
+---@param mid string
+---@param right string
+---@return string
+function M.format_box_border(widths, left, mid, right)
+  local parts = {}
+  for i = 1, #widths do
+    -- 与 " " .. pad(w) .. " " 同宽
+    parts[i] = string.rep(BOX.h, (widths[i] or 3) + 2)
+  end
+  return left .. table.concat(parts, mid) .. right
 end
 
 ---@class ParsedTable
@@ -258,19 +454,34 @@ function M.parse_lines(lines, opts)
       r.cells[#r.cells + 1] = ""
     end
   end
-  -- 对齐：取第一条分隔行
+  -- 对齐：优先取「首条数据行之后」的分隔行（Unicode 中线）；否则第一条分隔行
   local aligns = {}
   for i = 1, max_cols do
     aligns[i] = "left"
   end
   local align_char = opts.align_char or ":"
+  local first_sep_aligns = nil
+  local mid_aligns = nil
+  local seen_data = false
   for _, r in ipairs(rows) do
     if r.is_sep then
+      local a = {}
       for i = 1, max_cols do
-        aligns[i] = M.parse_align_cell(r.cells[i], align_char)
+        a[i] = M.parse_align_cell(r.cells[i], align_char)
       end
-      break
+      if not first_sep_aligns then
+        first_sep_aligns = a
+      end
+      if seen_data and not mid_aligns then
+        mid_aligns = a
+      end
+    else
+      seen_data = true
     end
+  end
+  local use = mid_aligns or first_sep_aligns
+  if use then
+    aligns = use
   end
   -- 列宽：非分隔行内容 + 分隔至少 3
   local widths = {}
@@ -297,27 +508,67 @@ function M.parse_lines(lines, opts)
   }
 end
 
+---从 parsed.rows 提取数据行，并判断是否曾有分隔/中线
+---@param rows { cells: string[], is_sep: boolean }[]
+---@return { cells: string[], is_sep: boolean }[] data
+---@return boolean had_sep
+local function extract_data_rows(rows)
+  local data = {}
+  local had_sep = false
+  for _, r in ipairs(rows) do
+    if r.is_sep then
+      had_sep = true
+    else
+      data[#data + 1] = r
+    end
+  end
+  return data, had_sep
+end
+
 ---格式化整表为行列表
 ---@param parsed ParsedTable
 ---@param opts? TableOpts
 ---@return string[]
 function M.format_table(parsed, opts)
   opts = opts or {}
-  local out = {}
-  local saw_data = false
-  local first_sep_done = false
-  for _, r in ipairs(parsed.rows) do
-    local is_header_sep = false
-    if r.is_sep then
-      if not saw_data and not first_sep_done then
-        is_header_sep = true
-        first_sep_done = true
-      end
-    else
-      saw_data = true
+  local style = opts.table_style or "gfm"
+  local data, had_sep = extract_data_rows(parsed.rows)
+  local widths = parsed.widths
+  local aligns = parsed.aligns
+
+  if style == "unicode" then
+    local uopts = vim.tbl_extend("force", {}, opts, { table_style = "unicode" })
+    local out = {}
+    out[#out + 1] = M.format_box_border(widths, BOX.tl, BOX.tm, BOX.tr)
+    if #data == 0 then
+      out[#out + 1] = M.format_box_border(widths, BOX.bl, BOX.bm, BOX.br)
+      return out
     end
-    out[#out + 1] =
-      M.format_row(r.cells, parsed.widths, parsed.aligns, opts, r.is_sep, is_header_sep)
+    out[#out + 1] = M.format_row(data[1].cells, widths, aligns, uopts, false, false)
+    if had_sep or #data > 1 then
+      out[#out + 1] = M.format_row({}, widths, aligns, uopts, true, true)
+    end
+    for i = 2, #data do
+      out[#out + 1] = M.format_row(data[i].cells, widths, aligns, uopts, false, false)
+    end
+    out[#out + 1] = M.format_box_border(widths, BOX.bl, BOX.bm, BOX.br)
+    return out
+  end
+
+  -- GFM：始终用数据行 + 可选表头分隔重建（兼容从 Unicode 还原）
+  local gopts = vim.tbl_extend("force", {}, opts, { table_style = "gfm" })
+  -- 去掉 unicode 专用
+  gopts.table_style = nil
+  local out = {}
+  if #data == 0 then
+    return out
+  end
+  out[#out + 1] = M.format_row(data[1].cells, widths, aligns, gopts, false, false)
+  if had_sep or #data > 1 then
+    out[#out + 1] = M.format_row({}, widths, aligns, gopts, true, true)
+  end
+  for i = 2, #data do
+    out[#out + 1] = M.format_row(data[i].cells, widths, aligns, gopts, false, false)
   end
   return out
 end
@@ -433,68 +684,80 @@ function M.matrix_to_table_lines(matrix, opts, with_header_sep)
   return M.format_table(parsed, opts)
 end
 
+---行内竖线字节位置列表（| 或 │）
+---@param s string
+---@return integer[] byte_starts  每个竖线起始字节（1-based）
+---@return integer vlen  竖线字节长度
+local function vbar_positions(s)
+  local pos = {}
+  local vlen = 1
+  if s:find(BOX.v, 1, true) then
+    vlen = #BOX.v
+    local start = 1
+    while true do
+      local a = s:find(BOX.v, start, true)
+      if not a then
+        break
+      end
+      pos[#pos + 1] = a
+      start = a + vlen
+    end
+  else
+    for i = 1, #s do
+      if s:sub(i, i) == "|" then
+        pos[#pos + 1] = i
+      end
+    end
+  end
+  return pos, vlen
+end
+
 ---解析一行中每个单元格的 [field_start, content_start, content_end, field_end]
----field: | 后到下一个 | 前；content: 去掉两侧空格后的正文（可为空）
+---field: 竖线后到下一个竖线前；content: 去掉两侧空格后的正文（可为空）
 ---@param line string
 ---@return { field_start: integer, content_start: integer, content_end: integer, field_end: integer }[]
 local function cell_spans(line)
   local s = line or ""
   local spans = {}
-  local i = 1
-  while i <= #s and s:sub(i, i):match("%s") do
-    i = i + 1
+  local bars, vlen = vbar_positions(s)
+  if #bars < 2 then
+    -- 回退：无成对竖线
+    spans[1] = { field_start = 1, content_start = 1, content_end = 0, field_end = 0 }
+    return spans
   end
-  if s:sub(i, i) == "|" then
-    i = i + 1
-  end
-  local field_start = i
-  while i <= #s + 1 do
-    local ch = i <= #s and s:sub(i, i) or "|"
-    if ch == "|" or i > #s then
-      local field_end = i - 1
-      local cs = field_start
-      while cs <= field_end and s:sub(cs, cs) == " " do
-        cs = cs + 1
-      end
-      local ce = field_end
-      while ce >= cs and s:sub(ce, ce) == " " do
-        ce = ce - 1
-      end
-      -- content_end 为最后一个内容字节下标；空内容时 content_start = field 内首写位置
-      if cs > ce then
-        -- 空单元格：光标落在 field 内第一个可写位置（跳过一个前导空格若有）
-        local write = field_start
-        if write <= field_end and s:sub(write, write) == " " then
-          write = write + 1
-        end
-        if write > field_end + 1 then
-          write = field_end + 1
-        end
-        spans[#spans + 1] = {
-          field_start = field_start,
-          content_start = write,
-          content_end = write - 1,
-          field_end = field_end,
-        }
-      else
-        spans[#spans + 1] = {
-          field_start = field_start,
-          content_start = cs,
-          content_end = ce,
-          field_end = field_end,
-        }
-      end
-      if i > #s then
-        break
-      end
-      -- 下一个 field 起点（跳过当前 |）
-      field_start = i + 1
-      -- 行以 | 结尾且其后无内容时不再追加空格（与 split_row 列数一致）
-      if field_start > #s then
-        break
-      end
+  for b = 1, #bars - 1 do
+    local field_start = bars[b] + vlen
+    local field_end = bars[b + 1] - 1
+    local cs = field_start
+    while cs <= field_end and s:sub(cs, cs) == " " do
+      cs = cs + 1
     end
-    i = i + 1
+    local ce = field_end
+    while ce >= cs and s:sub(ce, ce) == " " do
+      ce = ce - 1
+    end
+    if cs > ce then
+      local write = field_start
+      if write <= field_end and s:sub(write, write) == " " then
+        write = write + 1
+      end
+      if write > field_end + 1 then
+        write = field_end + 1
+      end
+      spans[#spans + 1] = {
+        field_start = field_start,
+        content_start = write,
+        content_end = write - 1,
+        field_end = field_end,
+      }
+    else
+      spans[#spans + 1] = {
+        field_start = field_start,
+        content_start = cs,
+        content_end = ce,
+        field_end = field_end,
+      }
+    end
   end
   if #spans == 0 then
     spans[1] = { field_start = 1, content_start = 1, content_end = 0, field_end = 0 }
@@ -566,9 +829,13 @@ function M.cursor_cell(line, col)
       idx = c
     end
   end
-  -- 光标正好在 | 上：算右侧格
-  if col >= 1 and col <= #s and s:sub(col, col) == "|" then
-    idx = math.min(idx + 1, #spans)
+  -- 光标正好在竖线（| / │）上：算右侧格
+  if col >= 1 and col <= #s then
+    local on_bar = s:sub(col, col) == "|"
+      or s:sub(col, col + #BOX.v - 1) == BOX.v
+    if on_bar then
+      idx = math.min(idx + 1, #spans)
+    end
   end
   local sp = spans[idx] or spans[1]
   local offset

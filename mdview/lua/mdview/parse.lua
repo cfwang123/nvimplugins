@@ -22,6 +22,27 @@ local function trim(s)
   return (s:gsub("^%s+", ""):gsub("%s+$", ""))
 end
 
+---去掉 markdown 目标里的可选 title / 尖括号：path "t" / <path>
+---@param s string|nil
+---@return string
+local function clean_dest(s)
+  s = trim(s or "")
+  if s == "" then
+    return s
+  end
+  local angled = s:match("^<([^>]+)>$")
+  if angled then
+    s = trim(angled)
+  end
+  local bare = s:match('^(%S+)%s+".-"%s*$')
+    or s:match("^(%S+)%s+'.-'%s*$")
+    or s:match("^(%S+)%s+%b()%s*$")
+  if bare then
+    return bare
+  end
+  return s
+end
+
 ---行内解析：产出 spans 列表
 ---@param text string
 ---@param cfg table
@@ -80,7 +101,7 @@ function M.parse_inlines(text, cfg)
         local endp = text:find("%)", close + 2)
         if endp then
           local alt = text:sub(i + 2, close - 1)
-          local src = text:sub(close + 2, endp - 1)
+          local src = clean_dest(text:sub(close + 2, endp - 1))
           spans[#spans + 1] = { type = "image", text = alt, src = src }
           i = endp + 1
         else
@@ -101,7 +122,7 @@ function M.parse_inlines(text, cfg)
         local endp = text:find("%)", close + 2)
         if endp then
           local label = text:sub(i + 1, close - 1)
-          local href = text:sub(close + 2, endp - 1)
+          local href = clean_dest(text:sub(close + 2, endp - 1))
           spans[#spans + 1] = { type = "link", text = label, href = href }
           i = endp + 1
         else

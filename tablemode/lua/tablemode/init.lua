@@ -35,12 +35,13 @@ local default_config = {
   ---快捷键；false 关闭
   keys_toggle = "<leader>tm",
   keys_realign = "<leader>tr",
-  keys_tableize = "<leader>tt",
-  keys_tableize_op = "<leader>T",
-  keys_delete_row = "<leader>tdd",
-  keys_delete_col = "<leader>tdc",
-  keys_insert_col_after = "<leader>tic",
-  keys_insert_col_before = "<leader>tiC",
+  ---以下默认关闭；需要时在 setup 中设为字符串 lhs
+  keys_tableize = false,
+  keys_tableize_op = false,
+  keys_delete_row = false,
+  keys_delete_col = false,
+  keys_insert_col_after = false,
+  keys_insert_col_before = false,
   ---单元格移动（始终 buffer 映射，仅在表内生效）
   map_motions = true,
   ---文本对象 i| / a|
@@ -55,16 +56,21 @@ local default_config = {
   map_arrows = true,
   ---normal 模式 hjkl：表内按格移动，边界再按可移出表格
   map_hjkl = true,
-  ---Ctrl-v 单元格块选：进入选中当前整格；hjkl/方向键按格扩展；y 复制为 TSV（去 |）
+  ---Ctrl-v 单元格块选：进入选中当前整格；hjkl/方向键按格扩展；gy 复制为 TSV（去 |）
   map_vblock = true,
-  ---开启模式后高亮表头背景与表格线（| / 分隔行）
+  ---开启模式后高亮表头背景与表格线（| / 分隔行 / Unicode 框线）
   highlight = true,
   ---表头行高亮组（背景）
   hl_header = "TableModeHeader",
-  ---表格线高亮组（| - : + =）
+  ---表格线高亮组（| - : + = / ─ │ ┌┐ 等）
   hl_border = "TableModeBorder",
   ---高亮刷新防抖（毫秒）
   highlight_ms = 80,
+  ---开启 tablemode 时的表格外观："unicode"（mdview 框线）| "gfm"（保持 | --- |）
+  ---退出模式 / 写入文件时自动还原为 GFM ASCII
+  preview_style = "unicode",
+  ---开启模式时将窗口 conceallevel 置 0（避免 ** 等隐藏导致竖线错位），退出时恢复
+  disable_conceal = true,
 }
 
 local config = vim.deepcopy(default_config)
@@ -90,6 +96,10 @@ local hl_timers = {}
 ---extmark 命名空间
 local NS_HL = vim.api.nvim_create_namespace("tablemode_hl")
 local hl_defined = false
+---开启模式时保存的 conceallevel：win → 原值
+local conceal_save = {}
+---写入时临时还原 GFM：buf → true
+local write_restore_unicode = {}
 
 local AUGROUP = "tablemode_nvim"
 local AUGROUP_LIVE = "tablemode_nvim_live"
@@ -98,7 +108,9 @@ local function notify(msg, level)
   vim.notify(msg, level or vim.log.levels.INFO)
 end
 
-local function opts_for_buf(buf)
+---@param buf integer
+---@param style? "gfm"|"unicode"  强制样式；默认按是否开启 + preview_style
+local function opts_for_buf(buf, style)
   local o = {
     corner = config.corner,
     corner_corner = config.corner_corner,
@@ -106,22 +118,110 @@ local function opts_for_buf(buf)
     header_fillchar = config.header_fillchar,
     align_char = config.align_char,
   }
-  if not config.smart_syntax then
-    return o
+  if config.smart_syntax then
+    local ft = vim.bo[buf].filetype or ""
+    if ft == "rst" then
+      o.corner = "|"
+      o.corner_corner = "+"
+      o.header_fillchar = "="
+      o.fillchar = "-"
+    elseif ft == "markdown" or ft == "markdown.mdx" or ft == "rmd" or ft == "quarto" then
+      o.corner = "|"
+      o.corner_corner = "|"
+      o.header_fillchar = "-"
+      o.fillchar = "-"
+    end
   end
-  local ft = vim.bo[buf].filetype or ""
-  if ft == "rst" then
-    o.corner = "|"
-    o.corner_corner = "+"
-    o.header_fillchar = "="
-    o.fillchar = "-"
-  elseif ft == "markdown" or ft == "markdown.mdx" or ft == "rmd" or ft == "quarto" then
-    o.corner = "|"
-    o.corner_corner = "|"
-    o.header_fillchar = "-"
-    o.fillchar = "-"
+  if style == "unicode" or style == "gfm" then
+    o.table_style = style
+  elseif buf_enabled[buf] and config.preview_style == "unicode" then
+    o.table_style = "unicode"
+  else
+    o.table_style = "gfm"
   end
   return o
+end
+
+---将 buffer 内所有表格转为指定样式（gfm / unicode）
+---@param buf integer
+---@param style "gfm"|"unicode"
+---@param opts? { undojoin?: boolean }
+local function restyle_all_tables(buf, style, opts)
+  opts = opts or {}
+  if aligning[buf] or not vim.api.nvim_buf_is_valid(buf) then
+    return
+  end
+  local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
+  local ranges = {}
+  local i = 1
+  local n = #lines
+  while i <= n do
+    if F.is_table_row(lines[i]) then
+      local s = i
+      while i <= n and F.is_table_row(lines[i]) do
+        i = i + 1
+      end
+      ranges[#ranges + 1] = { s, i - 1 }
+    else
+      i = i + 1
+    end
+  end
+  if #ranges == 0 then
+    return
+  end
+  local o = opts_for_buf(buf, style)
+  aligning[buf] = true
+  local save_ul = nil
+  if opts.no_undo then
+    save_ul = vim.bo[buf].undolevels
+    vim.bo[buf].undolevels = -1
+  elseif opts.undojoin ~= false then
+    pcall(vim.cmd, "silent! undojoin")
+  end
+  -- 自下而上改行号
+  for r = #ranges, 1, -1 do
+    local s, e = ranges[r][1], ranges[r][2]
+    local chunk = vim.api.nvim_buf_get_lines(buf, s - 1, e, false)
+    local parsed = F.parse_lines(chunk, o)
+    if parsed and parsed.col_count > 0 then
+      local new_lines = F.format_table(parsed, o)
+      if new_lines and #new_lines > 0 then
+        vim.api.nvim_buf_set_lines(buf, s - 1, e, false, new_lines)
+      end
+    end
+  end
+  if save_ul ~= nil then
+    vim.bo[buf].undolevels = save_ul
+  end
+  aligning[buf] = false
+end
+
+---@param buf integer
+local function apply_conceal_off(buf)
+  if config.disable_conceal == false then
+    return
+  end
+  for _, win in ipairs(vim.fn.win_findbuf(buf)) do
+    if conceal_save[win] == nil then
+      conceal_save[win] = vim.wo[win].conceallevel
+    end
+    vim.wo[win].conceallevel = 0
+  end
+end
+
+---@param buf integer
+local function restore_conceal(buf)
+  if config.disable_conceal == false then
+    return
+  end
+  for _, win in ipairs(vim.fn.win_findbuf(buf)) do
+    if conceal_save[win] ~= nil then
+      pcall(function()
+        vim.wo[win].conceallevel = conceal_save[win]
+      end)
+      conceal_save[win] = nil
+    end
+  end
 end
 
 local function update_status(buf)
@@ -254,10 +354,10 @@ end
 
 ---定义默认高亮组（ColorScheme / setup 时重设；可用 hi 覆盖）
 local function ensure_highlight_groups()
-  -- 表头：淡蓝底；表格线：加粗 + 清晰前景
+  -- 表头：很淡的蓝底；表格线：加粗 + 清晰前景
   vim.api.nvim_set_hl(0, "TableModeHeader", {
-    bg = "#6b8fb5",
-    ctermbg = 67,
+    bg = "#e3f0fb",
+    ctermbg = 189,
   })
   vim.api.nvim_set_hl(0, "TableModeBorder", {
     bold = true,
@@ -274,7 +374,30 @@ local function clear_highlights(buf)
   end
 end
 
----为单行打表格线高亮（| +，分隔行另含 - = :）
+---是否为表格线/框线字节起点（返回占用字节数，0=否）
+---@param line string
+---@param i integer 1-based
+---@param is_sep boolean
+---@return integer
+local function border_glyph_len(line, i, is_sep)
+  local box = F.box_chars()
+  local ch3 = line:sub(i, i + 2)
+  if ch3 == box.v or ch3 == box.h or ch3 == box.tl or ch3 == box.tr
+    or ch3 == box.bl or ch3 == box.br or ch3 == box.tm or ch3 == box.bm
+    or ch3 == box.ml or ch3 == box.mr or ch3 == box.mm then
+    return 3
+  end
+  local ch = line:sub(i, i)
+  if ch == "|" or ch == "+" then
+    return 1
+  end
+  if is_sep and (ch == "-" or ch == "=" or ch == ":") then
+    return 1
+  end
+  return 0
+end
+
+---为单行打表格线高亮（| + / Unicode 框线，分隔行另含 - = :）
 ---@param buf integer
 ---@param row0 integer  0-based
 ---@param line string
@@ -287,23 +410,15 @@ local function highlight_borders_on_line(buf, row0, line, is_sep, hl_border)
   local i = 1
   local n = #line
   while i <= n do
-    local ch = line:sub(i, i)
-    local paint = ch == "|" or ch == "+"
-    if is_sep and (ch == "-" or ch == "=" or ch == ":" or ch == "+") then
-      paint = true
-    end
-    if paint then
-      local j = i
+    local glen = border_glyph_len(line, i, is_sep)
+    if glen > 0 then
+      local j = i + glen - 1
       while j + 1 <= n do
-        local c2 = line:sub(j + 1, j + 1)
-        local ok2 = c2 == "|" or c2 == "+"
-        if is_sep and (c2 == "-" or c2 == "=" or c2 == ":" or c2 == "+") then
-          ok2 = true
-        end
-        if not ok2 then
+        local glen2 = border_glyph_len(line, j + 1, is_sep)
+        if glen2 == 0 then
           break
         end
-        j = j + 1
+        j = j + glen2
       end
       pcall(vim.api.nvim_buf_set_extmark, buf, NS_HL, row0, i - 1, {
         end_row = row0,
@@ -343,13 +458,12 @@ function M.refresh_highlights(buf)
         i = i + 1
       end
       local e = i - 1
-      -- 首条分隔行之前的那一行视为表头（GFM）
+      -- 表头：首条数据行（GFM 在分隔行前；Unicode 在顶框后）
       local header_lnum = nil
       for r = s, e do
-        if F.is_separator_line(lines[r]) then
-          if r > s then
-            header_lnum = r - 1
-          end
+        local L = lines[r] or ""
+        if F.is_table_row(L) and not F.is_separator_line(L) then
+          header_lnum = r
           break
         end
       end
@@ -357,7 +471,7 @@ function M.refresh_highlights(buf)
         local line = lines[r] or ""
         local row0 = r - 1
         local is_sep = F.is_separator_line(line)
-        -- 表头：仅单元格正文有背景（不含两侧空格与 |）
+        -- 表头：仅单元格正文有背景（不含两侧空格与竖线）
         if header_lnum and r == header_lnum and not is_sep then
           local ncol = F.cell_count(line)
           for c = 1, ncol do
@@ -542,67 +656,164 @@ local function realign_silent()
   realign_range(buf, s, e, lnum, col, { undojoin = true })
 end
 
----当前行是否“空表格行”（仅 | 与空白，用于生成分隔线）
+---当前行是否“空表格行”（仅竖线与空白，用于生成分隔线 / 新数据行）
 local function is_pipe_only_line(line)
   local s = vim.trim(line or "")
   if s == "" then
     return false
   end
-  return s:match("^|[%s|]*$") ~= nil or s:match("^|%s*|$") ~= nil or s == "||" or s == "|"
+  local box = F.box_chars()
+  if s == "||" or s == "|" or s == box.v or s == (box.v .. box.v) then
+    return true
+  end
+  if s:match("^|[%s|]*$") or s:match("^|%s*|$") then
+    return true
+  end
+  -- Unicode：仅 │ 与空白
+  local t = s:gsub(box.v, ""):gsub("%s+", "")
+  return t == "" and s:find(box.v, 1, true) ~= nil
 end
 
----在当前行插入分隔线（基于上一行表格宽度）
-local function expand_separator_if_needed()
+---是否为「表头/中线」分隔（GFM `---` 或 Unicode `├─┼─┤`）；顶/底框线不算
+---@param line string
+---@return boolean
+local function is_header_sep_line(line)
+  if not F.is_separator_line(line) then
+    return false
+  end
+  if not F.is_box_frame_line(line) then
+    return true
+  end
+  local box = F.box_chars()
+  local t = vim.trim(line)
+  if t:sub(1, #box.ml) == box.ml then
+    return true
+  end
+  if t:find(box.mm, 1, true) then
+    return true
+  end
+  return false
+end
+
+---pipe-only 行：建表时展开为表头分隔；表已完整则收成空数据行（避免底部 | 变成底线）
+---@return boolean handled
+local function expand_pipe_only_line()
   local buf = vim.api.nvim_get_current_buf()
   local lnum = vim.api.nvim_win_get_cursor(0)[1]
   local line = vim.api.nvim_buf_get_lines(buf, lnum - 1, lnum, false)[1] or ""
   if not is_pipe_only_line(line) then
     return false
   end
-  -- 需要上一行是表
   if lnum <= 1 then
     return false
   end
   local prev = vim.api.nvim_buf_get_lines(buf, lnum - 2, lnum - 1, false)[1] or ""
-  if not F.is_table_row(prev) or F.is_separator_line(prev) then
-    -- 也可能整表已有，用整表宽度
-    local s, e = find_table_range(buf, lnum - 1)
-    if not s then
-      return false
-    end
-    local parsed = parse_range(buf, s, e)
-    if not parsed then
-      return false
-    end
-    local sep = F.make_separator_line(parsed, opts_for_buf(buf), true)
-    vim.api.nvim_buf_set_lines(buf, lnum - 1, lnum, false, { sep })
-    local win = vim.api.nvim_get_current_win()
-    pcall(vim.api.nvim_win_set_cursor, win, { lnum, #sep })
-    return true
-  end
-  local s, e = find_table_range(buf, lnum - 1)
-  if not s then
-    -- 仅上一行
-    local parsed = F.parse_lines({ prev }, opts_for_buf(buf))
-    if not parsed then
-      return false
-    end
-    local sep = F.make_separator_line(parsed, opts_for_buf(buf), true)
-    vim.api.nvim_buf_set_lines(buf, lnum - 1, lnum, false, { sep })
-    return true
-  end
-  local parsed = parse_range(buf, s, math.max(e, lnum - 1))
-  if not parsed then
+  if not F.is_table_row(prev) then
     return false
   end
-  local sep = F.make_separator_line(parsed, opts_for_buf(buf), true)
-  vim.api.nvim_buf_set_lines(buf, lnum - 1, lnum, false, { sep })
+
+  local s, e = find_table_range(buf, lnum - 1)
+  if not s then
+    return false
+  end
+  -- 当前行夹在表中间时不特殊处理，交给 realign
+  if e > lnum then
+    return false
+  end
+
+  -- 解析「当前行之上」的表格（不含本行刚敲的 | / │）
+  local table_end = math.min(e, lnum - 1)
+  local parsed = parse_range(buf, s, table_end)
+  if not parsed or parsed.col_count < 1 then
+    return false
+  end
+
+  local data_count = 0
+  local has_header_sep = false
+  for i, r in ipairs(parsed.rows) do
+    if r.is_sep then
+      local L = vim.api.nvim_buf_get_lines(buf, s - 1 + i - 1, s - 1 + i, false)[1] or ""
+      if is_header_sep_line(L) then
+        has_header_sep = true
+      end
+    else
+      data_count = data_count + 1
+    end
+  end
+
+  local o = opts_for_buf(buf)
   local win = vim.api.nvim_get_current_win()
-  pcall(vim.api.nvim_win_set_cursor, win, { lnum, #sep })
+
+  ---写回 s..lnum（吃掉当前 pipe-only 行）并刷新高亮
+  ---@param new_lines string[]
+  ---@param cursor_lnum integer
+  ---@param cursor_col0 integer
+  local function commit(new_lines, cursor_lnum, cursor_col0)
+    aligning[buf] = true
+    pcall(vim.cmd, "silent! undojoin")
+    vim.api.nvim_buf_set_lines(buf, s - 1, lnum, false, new_lines)
+    aligning[buf] = false
+    if vim.api.nvim_win_get_buf(win) == buf then
+      pcall(vim.api.nvim_win_set_cursor, win, {
+        cursor_lnum,
+        math.max(0, cursor_col0),
+      })
+    end
+    M.refresh_highlights(buf)
+  end
+
+  -- 仅「一行数据且尚无表头分隔」：展开为分隔行（从零画表 ||）
+  if not has_header_sep and data_count == 1 then
+    local new_rows = {}
+    local inserted = false
+    for _, r in ipairs(parsed.rows) do
+      new_rows[#new_rows + 1] = r
+      if not inserted and not r.is_sep then
+        local sep_cells = {}
+        for j = 1, parsed.col_count do
+          sep_cells[j] = ""
+        end
+        new_rows[#new_rows + 1] = { cells = sep_cells, is_sep = true }
+        inserted = true
+      end
+    end
+    parsed.rows = new_rows
+    local new_lines = F.format_table(parsed, o)
+    -- 光标放到表头分隔行末
+    local cur_l, cur_c0 = s + #new_lines - 1, 0
+    for i, nl in ipairs(new_lines) do
+      if is_header_sep_line(nl) then
+        cur_l = s + i - 1
+        cur_c0 = #nl
+        break
+      end
+    end
+    commit(new_lines, cur_l, cur_c0)
+    return true
+  end
+
+  -- 表已有分隔（或已有多行数据）：底部 | 收成空数据行，而不是再画一条分隔/底线
+  local cells = {}
+  for i = 1, parsed.col_count do
+    cells[i] = ""
+  end
+  parsed.rows[#parsed.rows + 1] = { cells = cells, is_sep = false }
+  local new_lines = F.format_table(parsed, o)
+  -- 光标落在最后一行数据的首格
+  local cur_l, cur_c0 = s + #new_lines - 1, 0
+  for i = #new_lines, 1, -1 do
+    local nl = new_lines[i]
+    if F.is_table_row(nl) and not F.is_separator_line(nl) then
+      cur_l = s + i - 1
+      cur_c0 = math.max(0, F.cell_to_col(nl, 1, 0) - 1)
+      break
+    end
+  end
+  commit(new_lines, cur_l, cur_c0)
   return true
 end
 
----插入模式下按 | 后的处理
+---插入模式下按 | 后的处理（unicode 预览时写入 │）
 function M.on_pipe_insert()
   local buf = vim.api.nvim_get_current_buf()
   if not buf_enabled[buf] then
@@ -610,23 +821,26 @@ function M.on_pipe_insert()
     vim.api.nvim_feedkeys("|", "n", false)
     return
   end
-  -- 先插入 |
+  local bar = "|"
+  if config.preview_style == "unicode" then
+    bar = F.box_chars().v
+  end
   local row, col = unpack(vim.api.nvim_win_get_cursor(0))
   local line = vim.api.nvim_buf_get_lines(buf, row - 1, row, false)[1] or ""
   local before = line:sub(1, col)
   local after = line:sub(col + 1)
-  local new_line = before .. "|" .. after
+  local new_line = before .. bar .. after
   aligning[buf] = true
   pcall(vim.cmd, "silent! undojoin")
   vim.api.nvim_buf_set_lines(buf, row - 1, row, false, { new_line })
   aligning[buf] = false
-  vim.api.nvim_win_set_cursor(0, { row, col + 1 })
+  vim.api.nvim_win_set_cursor(0, { row, col + #bar })
 
   if not config.auto_align then
     return
   end
-  -- 尝试扩展分隔行
-  if expand_separator_if_needed() then
+  -- pipe-only：分隔行 或 表末空数据行
+  if expand_pipe_only_line() then
     return
   end
   -- 对齐当前表
@@ -1083,7 +1297,7 @@ local function format_cells_tsv(buf, r1, c1, r2, c2)
   return text, #out, chi - clo + 1
 end
 
----可视模式 y：复制选中单元格为 TSV（去 |）；非表内回落默认 yank
+---可视模式 gy：复制选中单元格为 TSV（去 |）；非表内回落默认 yank
 function M.yank_visual()
   local buf = vim.api.nvim_get_current_buf()
   local r1, c1, r2, c2
@@ -1540,7 +1754,7 @@ local function apply_buf_maps(buf)
     end, { buffer = buf, silent = true, desc = "tablemode: around cell" })
   end
 
-  -- Ctrl-v 单元格块选 + 可视扩展 + TSV 复制
+  -- Ctrl-v 单元格块选 + 可视扩展；gy 复制 TSV（普通 y 不接管）
   if config.map_vblock ~= false then
     vim.keymap.set("n", "<C-v>", function()
       M.vblock_start()
@@ -1570,10 +1784,7 @@ local function apply_buf_maps(buf)
     vim.keymap.set("x", "j", xext(1, 0), xopts)
     vim.keymap.set("x", "k", xext(-1, 0), xopts)
 
-    vim.keymap.set("x", "y", function()
-      M.yank_visual()
-    end, { buffer = buf, silent = true, desc = "tablemode: yank cells as TSV" })
-    vim.keymap.set("x", "<C-c>", function()
+    vim.keymap.set("x", "gy", function()
       M.yank_visual()
     end, { buffer = buf, silent = true, desc = "tablemode: yank cells as TSV" })
   end
@@ -1581,9 +1792,16 @@ end
 
 function M.enable(buf)
   buf = buf or vim.api.nvim_get_current_buf()
+  if buf_enabled[buf] then
+    return
+  end
   buf_enabled[buf] = true
   apply_buf_maps(buf)
   attach_live_align(buf)
+  apply_conceal_off(buf)
+  if config.preview_style == "unicode" then
+    restyle_all_tables(buf, "unicode", { undojoin = false })
+  end
   update_status(buf)
   M.refresh_highlights(buf)
   notify(i18n.t("enabled"))
@@ -1591,11 +1809,20 @@ end
 
 function M.disable(buf)
   buf = buf or vim.api.nvim_get_current_buf()
+  if not buf_enabled[buf] then
+    return
+  end
+  -- 先还原 GFM ASCII（强制 style=gfm）
+  if config.preview_style == "unicode" then
+    restyle_all_tables(buf, "gfm", { undojoin = false })
+  end
   buf_enabled[buf] = false
   buf_vblock[buf] = nil
+  write_restore_unicode[buf] = nil
   detach_live_align(buf)
   clear_buf_maps(buf)
   clear_highlights(buf)
+  restore_conceal(buf)
   update_status(buf)
   notify(i18n.t("disabled"))
 end
@@ -1700,10 +1927,48 @@ function M.setup(user)
     callback = function(ev)
       detach_live_align(ev.buf)
       clear_highlights(ev.buf)
+      restore_conceal(ev.buf)
       buf_enabled[ev.buf] = nil
       aligning[ev.buf] = nil
       buf_vblock[ev.buf] = nil
       hl_timers[ev.buf] = nil
+      write_restore_unicode[ev.buf] = nil
+    end,
+  })
+  -- 保存时写 GFM，保存后若仍开启则恢复 unicode 预览（不进 undo、不脏 buffer）
+  vim.api.nvim_create_autocmd("BufWritePre", {
+    group = aug,
+    callback = function(ev)
+      local b = ev.buf
+      if not buf_enabled[b] or config.preview_style ~= "unicode" then
+        return
+      end
+      restyle_all_tables(b, "gfm", { no_undo = true })
+      write_restore_unicode[b] = true
+    end,
+  })
+  vim.api.nvim_create_autocmd("BufWritePost", {
+    group = aug,
+    callback = function(ev)
+      local b = ev.buf
+      if not write_restore_unicode[b] then
+        return
+      end
+      write_restore_unicode[b] = nil
+      if buf_enabled[b] and config.preview_style == "unicode" then
+        restyle_all_tables(b, "unicode", { no_undo = true })
+        M.refresh_highlights(b)
+        vim.bo[b].modified = false
+      end
+    end,
+  })
+  -- 新窗口显示已开启 buffer 时关掉 conceal
+  vim.api.nvim_create_autocmd("BufWinEnter", {
+    group = aug,
+    callback = function(ev)
+      if buf_enabled[ev.buf] then
+        apply_conceal_off(ev.buf)
+      end
     end,
   })
   -- 进入 normal 时清块选状态并恢复 virtualedit（apply 重绘期间跳过）

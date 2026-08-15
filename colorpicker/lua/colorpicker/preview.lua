@@ -1,4 +1,4 @@
----@mod colorpicker.preview 文件内 CSS 颜色左侧预览色块（可点击打开取色器）
+---@mod colorpicker.preview 文件内 CSS 色码铺色（可点击 # 打开取色器）
 local M = {}
 local hlpool = require("colorpicker.hlpool")
 
@@ -25,13 +25,9 @@ local mouse_keys_applied = false
 ---@param g integer
 ---@param b integer
 ---@return string
-local function swatch_hl(r, g, b)
-  return hlpool.solid(prev_pool, r, g, b)
+local function token_hl(r, g, b)
+  return hlpool.contrast(prev_pool, r, g, b)
 end
-
----预览色块文本（两格满宽块 + 后跟空格，与色码分开）
-local SWATCH_TEXT = "██"
-local SWATCH_DISP = 2 -- 显示宽度
 
 ---@param buf integer
 ---@return boolean
@@ -136,16 +132,13 @@ local function paint_buf(buf)
           local pr = math.floor(r * aa + 255 * (1 - aa) + 0.5)
           local pg = math.floor(g * aa + 255 * (1 - aa) + 0.5)
           local pb = math.floor(b * aa + 255 * (1 - aa) + 0.5)
-          local hl = swatch_hl(pr, pg, pb)
+          -- 色码本身铺色，不插入 ██，避免撑开行内代码 / 打断正文
+          local hl = token_hl(pr, pg, pb)
           pcall(vim.api.nvim_buf_set_extmark, buf, NS, lnum0, c.from, {
-            virt_text = {
-              { SWATCH_TEXT, hl },
-              { " ", "Normal" },
-            },
-            virt_text_pos = "inline",
-            hl_mode = "combine",
-            priority = 90,
-            right_gravity = false,
+            end_col = c.to,
+            hl_group = hl,
+            hl_mode = "replace",
+            priority = 110,
           })
           row_list[#row_list + 1] = {
             from = c.from,
@@ -156,7 +149,6 @@ local function paint_buf(buf)
             b = b,
             a = aa,
             row = lnum1,
-            swatch_w = SWATCH_DISP + 1,
           }
         end
       end
@@ -213,7 +205,7 @@ function M.schedule_refresh(buf)
 end
 
 ---命中测试：仅当鼠标点在 hex 色码的 `#` 字符上时触发
----（inline virt_text 色块难以稳定点中；点 `#` 可靠且不会误伤后续 hex 数字）
+---（点 `#` 可靠且不会误伤后续 hex 数字 / 行内代码反引号）
 ---@param mouse table
 ---@return table|nil hit
 function M.hit_test(mouse)
@@ -296,7 +288,7 @@ local function on_buffer_left_release()
     return
   end
 
-  -- 仅预览色块 ██；点色码文字不打开
+  -- 仅点 hex 的 # 打开；点色码数字不打开
   local hit = M.hit_test(mouse)
   if not hit then
     return
@@ -322,7 +314,7 @@ local function ensure_mouse_maps(buf)
   pcall(vim.keymap.del, "n", "<2-LeftMouse>", { buffer = buf })
   -- 只用 LeftRelease：保留默认 LeftMouse/LeftDrag → visual 选区
   pcall(vim.keymap.set, "n", "<LeftRelease>", on_buffer_left_release, vim.tbl_extend("force", o, {
-    desc = "colorpicker: click color swatch (release)",
+    desc = "colorpicker: click hex # (release)",
   }))
   -- visual 下松开不打开取色器
   pcall(vim.keymap.set, "x", "<LeftRelease>", function() end, vim.tbl_extend("force", o, {

@@ -15,10 +15,10 @@ Pure Lua parse + read-only preview buffer; code highlighting, TOC, tables, image
 |------|-------------|
 | Single / side | `:MdView` source ⇄ preview; `:MdSideView` paired view + scroll sync / `_` cursor mark |
 | Style | Headings (**bold + distinct H1–H6 colors**, optional auto numbers), bold, italic, `` code ``, strike, `==mark==` (preview + **editor yellow + conceal `==`**), links |
-| Lists / quotes / HR / tables | GFM tables; dynamic columns; images in cells; escaped `\|` |
-| Code blocks | Border, language, line numbers, gray bg, fold after 10 lines, **`c` / `yc` / [Copy]**, TS→syntax→plain |
+| Lists / quotes / HR / tables | GFM tables; column width by content (may be narrower than window); images in cells; escaped `\|` |
+| Code blocks | Border, language, line numbers, gray bg, fold after 10 lines (**Enter** anywhere in block / **mouse** on fold line only; incremental), **`c` / `yc` / [Copy]**, TS→syntax→plain |
 | TOC | Top of preview; `t` in preview / **`<leader>toc`** in editor (configurable) opens TOC float |
-| Links | Preview/editor Enter or Ctrl+LeftMouse; `#heading` / `#1. heading` anchors; md → target preview; `Ctrl-o` back |
+| Links | Blue + underline in preview; Enter / Ctrl+LeftMouse; `#heading` / `#1. heading` anchors; md → target preview; `Ctrl-o` back (no extmark `url` required on Neovim 0.9) |
 | Images | Block chars in preview; `gi`/Enter float; **editor** Enter/Ctrl-click on `![](…)`; `gh` page HD; `o` system open |
 | HTML | `<details>` / `<summary>`, `<img>`, `<font color/style>` (color / bold / italic; preview + editor) |
 | Layout | Soft-wrap to preview width; reflow on resize |
@@ -250,7 +250,8 @@ With side open, switching to another **markdown** buffer in the same tab follows
 | `q` | Close preview / back to source |
 | `r` | Refresh preview |
 | (auto) | Reload source + re-render when the md file changes **on disk** and the buffer is not modified (`watch_external`) |
-| `<CR>` | TOC / code fold / details / image / **md link → target preview** |
+| `<CR>` | TOC / code fold (anywhere in block) / details / image / **md link → target preview** |
+| Mouse | Code fold only on the **gray fold line** (body click does not toggle) |
 | `gi` | Image float |
 | `gh` | Temporary in-page HD (cleared on scroll / focus / resize) |
 | `o` | System-open image |
@@ -272,7 +273,7 @@ Works without opening preview (auto-mapped on `markdown` buffers once the plugin
 | `Ctrl`+LeftMouse | Same |
 | `<C-o>` | Jump back (Vim jumplist; in-doc anchors and external md) |
 | `<CR>` elsewhere | Default Vim behavior |
-| (auto) | **Non-cursor lines**: show `![alt](url)` as **`🖼 name`** (empty alt → `image`; full syntax on the cursor line). Disable with `source_image_conceal = false` |
+| (auto) | **Non-cursor lines**: show `![alt](url)` as **`🖼 name`** (empty alt → `image`; full syntax on the cursor line). Disable with `source_image_conceal = false`. Task-list **`[ ]` / `[x]`** stay visible (not treated as shortcut-link brackets). |
 | **`"+p`** / **`"+P`** | **Smart paste** (recommended): clipboard image → `images/yyyyMMddHHmmss.png` + `![image](images/...)`; otherwise normal text paste |
 | **`Ctrl-Shift-v`** / **`Shift-Insert`** | Same (Shift-Insert also in insert mode) |
 | `:MdViewPasteImage` | Image-only paste (notify if clipboard has no image) |

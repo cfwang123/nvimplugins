@@ -4,6 +4,104 @@ All notable changes to this repository are documented in this file.
 
 ---
 
+## 2026-08-15
+
+### English
+
+#### mdview
+
+- Code block expand/collapse is **incremental** (patch that block only; no full re-parse/re-render).
+- **Enter** still toggles fold anywhere in the code block; **mouse** only on the gray fold line (`⋯ N more · <CR> expand` / `⋯ <CR> collapse`).
+
+### 中文
+
+#### mdview
+
+- 代码块展开/收起改为**增量刷新**（只 patch 该块，不再整文件 parse + render）。
+- **Enter** 在代码块内任意位置仍可切换折叠；**鼠标**仅点底部灰字行（`⋯ N more · <CR> expand` / `⋯ <CR> collapse`）才切换。
+
+---
+
+## 2026-08-13
+
+### English
+
+#### colorpicker
+
+- In-buffer preview no longer inserts **`██`** (it split markdown inline code and looked like a stain). CSS tokens are now **painted with that color as background** and black/white text by luminance. Click `#` to edit is unchanged.
+
+#### mdview
+
+- Editor: task-list **`[ ]` / `[x]`** are no longer concealed. mdview sets `conceallevel=2` for `==` / images; treesitter then hid checkbox brackets as shortcut-link delimiters.
+
+### 中文
+
+#### colorpicker
+
+- 文件内预览不再插入 **`██`**（会撑开 Markdown 行内代码，看起来像色块污渍）。改为给色码**铺该色底**，字色按亮度黑/白。单击 `#` 打开取色器不变。
+
+#### mdview
+
+- 编辑区：任务列表 **`[ ]` / `[x]`** 不再被 conceal。mdview 为 `==` / 图片打开 `conceallevel=2` 后，treesitter 把复选框方括号当成 shortcut link 藏掉了。
+
+---
+
+## 2026-08-12
+
+### English
+
+#### bookmarks
+
+- Keys scope: default global maps are only `<leader>bo`. `A` / `D` (and other panel actions) are **buffer-local** in the bookmarks sidebar so edit windows keep Neovim defaults (`A` append EOL, `D` delete to EOL).
+- Optional global add keys via setup: `keys_add_file` / `keys_add_dir` (default `false`). Or use `:BookmarksAddFile` / `:BookmarksAddDir`.
+
+#### mdview
+
+- Fix: on **Neovim 0.9**, link highlights were dropped because extmark option `url` (0.10+) made the whole `set_extmark` fail under `pcall`. Links now keep **blue text + blue underline** (`fg`/`sp`); `url` is only set on 0.10+.
+- Link color follows theme markdown-link groups when available, else GitHub-like blue on light bg / bright blue on dark bg (avoids pink/red underlines from theme `guisp`).
+- Links strip optional destination title / `<angled>` path; missing local targets notify `link target not found`.
+
+#### tablemode
+
+- Fix: typing `|` on an empty line **below a complete table** no longer expands into a header/separator (or bottom border). It now inserts a **new empty data row** with the correct column count.
+- Separator expansion (`||` / pipe-only after the first header row) still works when the table has **one data row and no header separator yet**.
+
+### 中文
+
+#### bookmarks
+
+- 快捷键范围：默认全局仅 `<leader>bo`；`A` / `D` 等操作键仅在收藏夹窗口内生效（buffer-local），文件编辑等窗口恢复 Neovim 默认行为。
+- 如需全局添加快捷键，可在 setup 设置 `keys_add_file` / `keys_add_dir`（默认 `false`）；或使用命令 `:BookmarksAddFile` / `:BookmarksAddDir`。
+
+#### mdview
+
+- 修复：**Neovim 0.9** 下链接高亮全部丢失——extmark 的 `url` 仅 0.10+ 支持，写入后整次 `set_extmark` 在 `pcall` 中失败。现为**蓝字 + 蓝色下划线**（`fg`/`sp`）；`url` 仅在 0.10+ 设置。
+- 链接色优先跟主题 markdown 链接组；否则浅色底用 GitHub 蓝、深色底用亮蓝（避免主题 `guisp` 变成红/粉下划线）。
+- 链接目标去掉可选 title / `<尖括号>`；本地路径不存在时提示 `链接目标不存在`。
+
+#### tablemode
+
+- 修复：在**已完整表格下方**空行输入 `|` 时，不再误展开成表头分隔线/底线；改为按列数追加**空数据行**。
+- 从零画表时，表头下一行的 `|` / `||` 在「仅一行数据且尚无分隔线」时仍会展开为分隔行。
+
+---
+
+## 2026-08-02
+
+### English
+
+#### mdview
+
+- Tables use **content-sized column widths** when they fit: no longer stretch the last column to fill the preview window. Wide tables still compress into the available width.
+
+### 中文
+
+#### mdview
+
+- 表格在能放下时**按内容定宽**，不再把余量塞进最后一列以撑满预览窗；内容过宽时仍压缩进可用宽度。
+
+---
+
 ## 2026-07-28
 
 ### English

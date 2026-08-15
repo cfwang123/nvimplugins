@@ -62,4 +62,4 @@ vim.api.nvim_create_user_command("ColorPickerPreview", function()
     prev.refresh(0)
     vim.notify("colorpicker: preview refreshed", vim.log.levels.INFO)
   end
-end, { desc = "colorpicker: refresh in-buffer color swatches" })
+end, { desc = "colorpicker: refresh in-buffer color highlights" })

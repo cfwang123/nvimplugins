@@ -83,6 +83,7 @@ function M.reset(pool)
 end
 
 ---为 RGB 取一个组名，并 set_hl 为该颜色（fg=bg）
+---用于浮窗色块格子；文件内预览请用 contrast（色码需可读）
 ---@param pool HlPool
 ---@param r number
 ---@param g number
@@ -122,6 +123,50 @@ function M.solid(pool, r, g, b)
   local name = pool.prefix .. idx
   set_hl(name, { fg = "#" .. hex, bg = "#" .. hex })
   pool.cache[hex] = name
+  return name
+end
+
+---文件内预览：底色=该色，字色按亮度黑/白，色码保持可读
+---@param pool HlPool
+---@param r number
+---@param g number
+---@param b number
+---@return string hl_group
+function M.contrast(pool, r, g, b)
+  M.ensure_inited(pool)
+  r, g, b = clamp_rgb(r, g, b)
+
+  if pool.next >= pool.size then
+    r, g, b = quantize(r, g, b, 16)
+  end
+  if pool.next >= pool.size then
+    r, g, b = quantize(r, g, b, 32)
+  end
+
+  local hex = string.format("%02x%02x%02x", r, g, b)
+  local key = hex .. "_c"
+  local cached = pool.cache[key]
+  if cached then
+    return cached
+  end
+
+  local idx
+  if pool.next < pool.size then
+    pool.next = pool.next + 1
+    idx = pool.next
+  else
+    idx = (r * 73856093 + g * 19349663 + b * 83492791) % pool.size
+    if idx < 0 then
+      idx = -idx
+    end
+    idx = idx + 1
+  end
+
+  local lum = 0.299 * r + 0.587 * g + 0.114 * b
+  local fg = lum > 160 and "000000" or "ffffff"
+  local name = pool.prefix .. idx
+  set_hl(name, { fg = "#" .. fg, bg = "#" .. hex })
+  pool.cache[key] = name
   return name
 end
 

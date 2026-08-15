@@ -882,7 +882,7 @@ local function prepare_cell(raw, cell_w, align, cfg, ctx, ncol, table_w)
 end
 
 ---动态分配列宽：
---- 1) 所需总宽 ≤ 可用：按 need 分配，余量给最后一列
+--- 1) 所需总宽 ≤ 可用：严格按 need（表宽 = 内容实际需要，可小于窗口）
 --- 2) 否则从短到长：若 need ≤ 当前均分份额则按需给满（避免 "drawbuf" 被挤成 6）
 --- 3) 仍放不下的长列按比例分剩余宽度
 ---@param need number[]
@@ -902,12 +902,8 @@ local function allocate_table_widths(need, avail)
     sum_need = sum_need + ideal[c]
   end
 
-  -- 全部放得下：按需，余量给末列
+  -- 全部放得下：按内容实际需要，不撑满窗口
   if sum_need <= avail then
-    local leftover = avail - sum_need
-    if leftover > 0 then
-      ideal[ncol] = ideal[ncol] + leftover
-    end
     return ideal
   end
 
@@ -1340,7 +1336,7 @@ function M._render_code(ctx, b)
     { col = 0, end_col = #bot, hl = "MdViewCodeBorder" },
   }))
 
-  -- 整块 hit：复制 / 任意位置回车折叠
+  -- 整块 hit：供 c/yc 复制定位（折叠仅 code_fold 灰字行）
   ctx.hits[#ctx.hits + 1] = {
     line = top_pl,
     line_end = #ctx.lines,
@@ -1350,6 +1346,7 @@ function M._render_code(ctx, b)
     total_lines = total,
     foldable = fold_n > 0 and total > fold_n,
     lang = lang,
+    source_end = b.source_end or b.source_start,
   }
 end
 
@@ -1621,6 +1618,334 @@ function M.namespace()
   return NS
 end
 
+---仅渲染一个代码块为片段（行号从 1 / extmark 行从 0 起）
+---@param b table { lines, lang, source_start, source_end }
+---@param opts? { cfg?: table, width?: number, expanded_codes?: table }
+---@return table fragment { lines, extmarks, source_map, rev_map, hits }
+function M.render_code_fragment(b, opts)
+  highlight.ensure()
+  opts = opts or {}
+  local cfg = opts.cfg or require("mdview.config").get()
+  local width = opts.width or 80
+  if width < 20 then
+    width = 20
+  end
+  local ctx = {
+    cfg = cfg,
+    width = width,
+    lines = {},
+    extmarks = {},
+    source_map = {},
+    rev_map = {},
+    hits = {},
+    expanded_codes = opts.expanded_codes or {},
+    expanded_details = {},
+    last_source = b.source_start or 1,
+  }
+  M._render_code(ctx, b)
+  return {
+    lines = ctx.lines,
+    extmarks = ctx.extmarks,
+    source_map = ctx.source_map,
+    rev_map = ctx.rev_map,
+    hits = ctx.hits,
+  }
+end
+
+local function copy_shallow(t)
+  local c = {}
+  for k, v in pairs(t) do
+    c[k] = v
+  end
+  return c
+end
+
+---按 delta 平移「预览行号」键表（col_align 等）
+---@param map table|nil
+---@param start_1 number
+---@param end_1 number
+---@param delta number
+---@return table
+local function shift_preview_keyed(map, start_1, end_1, delta)
+  local out = {}
+  for pl, v in pairs(map or {}) do
+    if type(pl) == "number" then
+      if pl < start_1 then
+        out[pl] = v
+      elseif pl > end_1 then
+        out[pl + delta] = v
+      end
+    end
+  end
+  return out
+end
+
+---增量替换 result 中某个代码块（不 parse、不重渲其它块）
+---@param result table RenderResult
+---@param opts { block_id: number, lines: string[], lang?: string, source_end?: number, expanded: boolean, cfg?: table, width?: number }
+---@return table|nil info { start_line, old_end, new_end, delta } 失败返回 nil
+function M.patch_code_block(result, opts)
+  if not result or not opts or not opts.block_id then
+    return nil
+  end
+  local block_id = opts.block_id
+  local start_line, old_end
+  local lines = opts.lines
+  local lang = opts.lang
+  local source_end = opts.source_end
+  for _, h in ipairs(result.hits or {}) do
+    if h.kind == "code_block" and h.block_id == block_id then
+      start_line = h.line
+      old_end = h.line_end or h.line
+      lines = lines or h.lines
+      lang = lang or h.lang
+      source_end = source_end or h.source_end
+      break
+    end
+  end
+  if not start_line or not old_end or not lines then
+    return nil
+  end
+  source_end = source_end or (block_id + #lines + 1)
+
+  local expanded_codes = {}
+  expanded_codes[block_id] = opts.expanded and true or false
+  local frag = M.render_code_fragment({
+    type = "code",
+    lines = lines,
+    lang = lang or "text",
+    source_start = block_id,
+    source_end = source_end,
+  }, {
+    cfg = opts.cfg,
+    width = opts.width,
+    expanded_codes = expanded_codes,
+  })
+  local new_n = #frag.lines
+  if new_n == 0 then
+    return nil
+  end
+  local old_n = old_end - start_line + 1
+  local delta = new_n - old_n
+  local base = start_line - 1 -- 加到片段 1-based 行上
+
+  -- lines
+  local new_lines = {}
+  for i = 1, start_line - 1 do
+    new_lines[i] = result.lines[i]
+  end
+  for i = 1, new_n do
+    new_lines[start_line + i - 1] = frag.lines[i]
+  end
+  local dest = start_line + new_n
+  for i = old_end + 1, #(result.lines or {}) do
+    new_lines[dest] = result.lines[i]
+    dest = dest + 1
+  end
+  result.lines = new_lines
+
+  -- source_map
+  local sm = {}
+  for pl, src in pairs(result.source_map or {}) do
+    if pl < start_line then
+      sm[pl] = src
+    elseif pl > old_end then
+      sm[pl + delta] = src
+    end
+  end
+  for pl, src in pairs(frag.source_map or {}) do
+    sm[base + pl] = src
+  end
+  result.source_map = sm
+
+  -- rev_map：去掉落在旧块内的，后续行平移，再合并片段
+  local rev = {}
+  for src, pl in pairs(result.rev_map or {}) do
+    if pl < start_line then
+      rev[src] = pl
+    elseif pl > old_end then
+      rev[src] = pl + delta
+    end
+  end
+  for src, pl in pairs(frag.rev_map or {}) do
+    rev[src] = base + pl
+  end
+  result.rev_map = rev
+
+  -- heading_preview（值是预览行）
+  local hp = {}
+  for src, pl in pairs(result.heading_preview or {}) do
+    if pl < start_line then
+      hp[src] = pl
+    elseif pl > old_end then
+      hp[src] = pl + delta
+    end
+  end
+  result.heading_preview = hp
+
+  -- col_align（键是预览行）
+  result.col_align = shift_preview_keyed(result.col_align, start_line, old_end, delta)
+
+  -- block_ranges
+  for _, br in ipairs(result.block_ranges or {}) do
+    local ps = br.preview_start or 0
+    local pe = br.preview_end or ps
+    if pe < start_line then
+      -- 之前
+    elseif ps > old_end then
+      br.preview_start = ps + delta
+      br.preview_end = pe + delta
+    elseif ps == start_line or (br.source_start == block_id) then
+      br.preview_start = start_line
+      br.preview_end = start_line + new_n - 1
+    elseif pe >= start_line and ps <= old_end then
+      -- 与块相交的其它 range：按边界钳制平移
+      if ps >= start_line then
+        br.preview_start = start_line
+      end
+      br.preview_end = start_line + new_n - 1
+    end
+  end
+
+  -- extmarks
+  local start_0 = start_line - 1
+  local old_end_0 = old_end - 1
+  local ems = {}
+  for _, em in ipairs(result.extmarks or {}) do
+    local ln = em.line or 0
+    if ln < start_0 then
+      ems[#ems + 1] = em
+    elseif ln > old_end_0 then
+      local c = copy_shallow(em)
+      c.line = ln + delta
+      ems[#ems + 1] = c
+    end
+  end
+  for _, em in ipairs(frag.extmarks or {}) do
+    local c = copy_shallow(em)
+    c.line = (em.line or 0) + start_0
+    ems[#ems + 1] = c
+  end
+  result.extmarks = ems
+
+  -- hits
+  local hits = {}
+  for _, h in ipairs(result.hits or {}) do
+    local a = h.line or 0
+    local b = h.line_end or a
+    if a >= start_line and a <= old_end then
+      -- 旧代码块 hits 丢弃
+    else
+      local c = h
+      local need = false
+      if a > old_end then
+        c = copy_shallow(h)
+        c.line = a + delta
+        if h.line_end then
+          c.line_end = h.line_end + delta
+        end
+        need = true
+      end
+      local pt = (need and c.preview_target) or h.preview_target
+      if pt and pt > old_end then
+        if not need then
+          c = copy_shallow(h)
+          need = true
+        end
+        c.preview_target = pt + delta
+      end
+      hits[#hits + 1] = c
+    end
+  end
+  for _, h in ipairs(frag.hits or {}) do
+    local c = copy_shallow(h)
+    c.line = (h.line or 1) + base
+    if h.line_end then
+      c.line_end = h.line_end + base
+    end
+    hits[#hits + 1] = c
+  end
+  result.hits = hits
+
+  local new_end = start_line + new_n - 1
+  return {
+    start_line = start_line,
+    old_end = old_end,
+    new_end = new_end,
+    delta = delta,
+  }
+end
+
+-- extmark.url 仅 Neovim 0.10+；0.9 传入会导致整次 set_extmark 失败（含 hl_group）
+local has_extmark_url = vim.fn.has("nvim-0.10") == 1
+
+---@param buf number
+---@param result table
+---@param em table
+local function set_one_extmark(buf, result, em)
+  local line_count = #(result.lines or {})
+  local eopts = {}
+  if em.hl then
+    eopts.hl_group = em.hl
+    eopts.end_col = em.end_col
+    if em.hl == "MdViewLink" or em.url then
+      eopts.priority = 120
+    end
+  end
+  if em.line_hl then
+    eopts.line_hl_group = em.line_hl
+    if not eopts.end_col or eopts.end_col == 0 then
+      local line = result.lines[em.line + 1] or ""
+      eopts.end_col = #line
+      eopts.hl_group = eopts.hl_group or "MdViewCodeBg"
+    end
+  end
+  if em.virt_text then
+    eopts.virt_text = em.virt_text
+    eopts.virt_text_pos = em.virt_text_pos or "eol"
+  end
+  if has_extmark_url and em.url and em.url ~= "" then
+    eopts.url = em.url
+  end
+  if em.line >= 0 and em.line < line_count then
+    pcall(vim.api.nvim_buf_set_extmark, buf, NS, em.line, em.col or 0, eopts)
+  end
+end
+
+---局部替换预览 buffer 中的代码块行并只重挂该段 extmark
+---Neovim 会对替换区之后的 extmark 自动平移，故仅清理并写入新块范围。
+---@param buf number
+---@param result table 已 patch 后的 result
+---@param info table { start_line, old_end, new_end, delta }
+function M.apply_range(buf, result, info)
+  if not buf or not vim.api.nvim_buf_is_valid(buf) or not result or not info then
+    return
+  end
+  highlight.ensure()
+  local start_line = info.start_line
+  local old_end = info.old_end
+  local new_end = info.new_end
+  local seg = {}
+  for i = start_line, new_end do
+    seg[#seg + 1] = result.lines[i] or ""
+  end
+  local mod = vim.bo[buf].modifiable
+  vim.bo[buf].modifiable = true
+  -- 0-based exclusive end for old range
+  vim.api.nvim_buf_set_lines(buf, start_line - 1, old_end, false, seg)
+  -- 清掉新块范围内残留 mark，再写入本段 extmark
+  pcall(vim.api.nvim_buf_clear_namespace, buf, NS, start_line - 1, new_end)
+  local s0 = start_line - 1
+  local e0 = new_end - 1
+  for _, em in ipairs(result.extmarks or {}) do
+    local ln = em.line or -1
+    if ln >= s0 and ln <= e0 then
+      set_one_extmark(buf, result, em)
+    end
+  end
+  vim.bo[buf].modifiable = mod
+end
+
 local HELP_NS = vim.api.nvim_create_namespace("mdview_help")
 
 ---顶部/底部快捷键文案（按窗口列数截断/补空）
@@ -1696,31 +2021,8 @@ function M.apply(buf, result, opts)
   vim.api.nvim_buf_set_lines(buf, 0, -1, false, result.lines)
   vim.api.nvim_buf_clear_namespace(buf, NS, 0, -1)
   vim.api.nvim_buf_clear_namespace(buf, HELP_NS, 0, -1)
-  local line_count = #result.lines
   for _, em in ipairs(result.extmarks or {}) do
-    local eopts = {}
-    if em.hl then
-      eopts.hl_group = em.hl
-      eopts.end_col = em.end_col
-    end
-    if em.line_hl then
-      eopts.line_hl_group = em.line_hl
-      if not eopts.end_col or eopts.end_col == 0 then
-        local line = result.lines[em.line + 1] or ""
-        eopts.end_col = #line
-        eopts.hl_group = eopts.hl_group or "MdViewCodeBg"
-      end
-    end
-    if em.virt_text then
-      eopts.virt_text = em.virt_text
-      eopts.virt_text_pos = em.virt_text_pos or "eol"
-    end
-    if em.url and em.url ~= "" then
-      eopts.url = em.url
-    end
-    if em.line >= 0 and em.line < line_count then
-      pcall(vim.api.nvim_buf_set_extmark, buf, NS, em.line, em.col or 0, eopts)
-    end
+    set_one_extmark(buf, result, em)
   end
   vim.bo[buf].modifiable = false
 

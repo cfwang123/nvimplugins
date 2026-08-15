@@ -15,10 +15,10 @@
 |------|------|
 | 单窗 / 侧边 | `:MdView` 源⇄预览；`:MdSideView` 对照 + 同步滚动 / 光标 `_` 标记 |
 | 样式 | 标题（**加粗 + H1–H6 层级配色**，可自动序号）、粗体、斜体、`` code ``、删除线、`==mark==`（预览 + **编辑区黄底并隐藏 `==`**）、链接 |
-| 列表 / 引用 / HR / 表 | GFM 表；列宽动态；表内图；单元格 `\|` 转义 |
-| 代码块 | 边框、语言、行号、灰底、默认 10 行折叠、**`c` / `yc` / [Copy]**、TS→syntax→单色 |
+| 列表 / 引用 / HR / 表 | GFM 表；列宽按内容（可小于窗口）；表内图；单元格 `\|` 转义 |
+| 代码块 | 边框、语言、行号、灰底、默认 10 行折叠（**Enter 块内任意处** / **鼠标仅底灰字行**；增量刷新）、**`c` / `yc` / [Copy]**、TS→syntax→单色 |
 | TOC | 预览顶目录；预览内 `t` / 编辑窗 **`<leader>toc`**（可配）打开目录 float |
-| 链接 | 预览/编辑窗 Enter 或 Ctrl+左键；`#标题` / `#1. 标题` 锚点；md 文件→目标预览；`Ctrl-o` 返回 |
+| 链接 | 预览内蓝字+下划线；预览/编辑窗 Enter 或 Ctrl+左键；`#标题` / `#1. 标题` 锚点；md 文件→目标预览；`Ctrl-o` 返回（Neovim 0.9 不依赖 extmark `url`） |
 | 图片 | 预览内色块渲染；预览 `gi`/Enter float；**编辑窗**在 `![](…)` 上 Enter/Ctrl+左键预览；`gh` 页内高清；`o` 系统打开 |
 | HTML | `<details>` / `<summary>`、`<img>`、`<font color/style>`（色 / **bold** / *italic*，预览 + 编辑区） |
 | 排版 | 按预览宽度软折行，变宽自动重排 |
@@ -257,7 +257,8 @@ python -c "from PIL import Image; print('Pillow OK')"
 | `q` | 关闭预览 / 单窗回源 |
 | `r` | 刷新预览 |
 | （自动） | 源 md **被外部程序改写**且 buffer 无未保存修改时自动 reload 并重绘（`watch_external`） |
-| `<CR>` | TOC / 代码折叠 / details / 图片 / **md 链接→目标预览** |
+| `<CR>` | TOC / 代码折叠（块内任意处） / details / 图片 / **md 链接→目标预览** |
+| 鼠标 | 代码折叠仅点**底部灰字行**（点正文不切换） |
 | `gi` | 图片 float 大图 |
 | `gh` | 当前页临时高清（滚动 / 焦点切换 / 改窗大小清除） |
 | `o` | 系统打开图片 |
@@ -279,7 +280,7 @@ python -c "from PIL import Image; print('Pillow OK')"
 | `Ctrl`+鼠标左键 | 同上 |
 | `<C-o>` | 跳转后返回（Vim jumplist；文内锚点与外部 md 均适用） |
 | 非图片/链接处的 `<CR>` | 保持 Vim 默认行为 |
-| （自动） | **非光标行**将 `![alt](url)` 折叠显示为 **`🖼 name`**（`alt` 为空时 name=`image`；光标行显示完整源码）。`source_image_conceal = false` 可关 |
+| （自动） | **非光标行**将 `![alt](url)` 折叠显示为 **`🖼 name`**（`alt` 为空时 name=`image`；光标行显示完整源码）。`source_image_conceal = false` 可关。任务列表 **`[ ]` / `[x]`** 保持可见（不当成 shortcut link 藏方括号）。 |
 | **`"+p`** / **`"+P`** | **智能粘贴**（推荐）：剪贴板有图 → `images/yyyyMMddHHmmss.png` 并插入 `![image](images/...)`；无图则正常粘贴文本 |
 | **`Ctrl-Shift-v`** / **`Shift-Insert`** | 同上（插入模式也可用 Shift-Insert） |
 | `:MdViewPasteImage` | 仅贴图（无图则提示，不插入文本） |

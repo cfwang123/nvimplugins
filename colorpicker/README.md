@@ -2,7 +2,7 @@
 
 **English** | [中文](README.zh.md)
 
-Terminal **HSV color picker** float: SV plane + H/S/V/A sliders (truecolor). On confirm, **inserts or replaces** a CSS color. In-buffer **`██`** swatches; **click the `#` of a hex color** to open the picker.
+Terminal **HSV color picker** float: SV plane + H/S/V/A sliders (truecolor). On confirm, **inserts or replaces** a CSS color. In-buffer, each CSS token is **painted with that color** (contrast fg); **click the `#` of a hex color** to open the picker.
 
 ## Requirements
 
@@ -45,7 +45,7 @@ Steps align to `plane_w` / `plane_h` / `bar_w`; values snap to grid.
 
 ### In-buffer preview
 
-- **`██`** left of each CSS color (display only; **no** background on the code text)  
+- Each CSS token (`#rrggbb` / `rgb()` / `hsl()`) gets **that color as background**, with black or white text for contrast — no extra `██` inserted (keeps inline code / wrapping intact)  
 - **Click hex `#`** (on mouse release) → open picker bound to replace  
 - Clicking hex digits or `rgb(...)` text does **not** open the picker  
 - Does **not** block mouse-drag visual selection  
@@ -58,7 +58,7 @@ Steps align to `plane_w` / `plane_h` / `bar_w`; values snap to grid.
 | **`:ColorPicker`** `[format]` | Open; optional `hex` / `rgb` / `rgba` / `hsl` / `hsla` / `hex_alpha` |
 | **`:Colorpicker`** | Alias |
 | **`:ColorPickerClose`** | Close float |
-| **`:ColorPickerPreview`** | Refresh `██` swatches |
+| **`:ColorPickerPreview`** | Refresh in-buffer color highlights |
 
 ## Default keys
 
@@ -101,7 +101,7 @@ require("colorpicker").setup({
   parse_under_cursor = true,
   replace_under_cursor = true,
   yank_also = false,
-  preview = true,              -- in-buffer ██
+  preview = true,              -- paint CSS tokens with their color
   preview_auto = true,
   preview_max_lines = 4000,
   preview_filetypes = nil,     -- e.g. { "css", "html" }; nil = all

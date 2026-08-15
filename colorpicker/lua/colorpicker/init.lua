@@ -22,7 +22,7 @@ local M = {}
 ---@field parse_under_cursor boolean 打开时尝试解析光标处颜色
 ---@field replace_under_cursor boolean 光标在颜色代码上时完成则替换（非插入）
 ---@field yank_also boolean Enter 插入时同时写入剪贴板
----@field preview boolean 在 buffer 中颜色代码左侧显示可点击色块
+---@field preview boolean 在 buffer 中给色码铺该色底（对比字色）
 ---@field preview_auto boolean 自动为普通 buffer 启用预览
 ---@field preview_max_lines integer 超过此行数仅扫描可见区域
 ---@field preview_filetypes string[]|nil 限制文件类型；nil 表示不限（排除特殊 buftype）
@@ -1763,7 +1763,7 @@ function M.setup(user)
     i18n.setup("auto")
   end
   apply_keys()
-  -- buffer 内颜色预览色块
+  -- buffer 内色码铺色
   pcall(function()
     require("colorpicker.preview").setup(config)
   end)

@@ -80,6 +80,7 @@ local function load_bundle()
     "tablemode",
     "calendar",
     "colorpicker",
+    "bookmarks",
   }
 
   local enable = vim.g.nvimplugins_enable

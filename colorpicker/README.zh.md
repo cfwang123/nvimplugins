@@ -2,7 +2,7 @@
 
 [English](README.md) | **中文**
 
-终端 **HSV 取色浮窗**：SV 平面 + H/S/V/A 滑条（真彩色）；确认后**插入**或**替换** CSS 颜色。文件内为每个色码显示 **`██`** 预览；**单击 hex 的 `#`** 可打开取色器。
+终端 **HSV 取色浮窗**：SV 平面 + H/S/V/A 滑条（真彩色）；确认后**插入**或**替换** CSS 颜色。文件内给每个色码**铺上该色底**（自动黑/白字）；**单击 hex 的 `#`** 可打开取色器。
 
 ## 依赖
 
@@ -45,7 +45,7 @@ Plug '/path/to/nvimplugins/colorpicker'
 
 ### 文件内预览
 
-- 每个 CSS 颜色左侧 **`██`**（仅展示，色码文字**无背景**）  
+- 每个 CSS 色码（`#rrggbb` / `rgb()` / `hsl()`）**直接铺该色底**，字色按亮度黑或白——不插入 **`██`**，不撑开行内代码、不打断折行  
 - **单击 hex 的 `#`**（松开鼠标）→ 打开取色器并绑定替换  
 - 点 `#` 后的数字或 `rgb(...)` 等 → **不弹窗**  
 - **不拦截**鼠标拖动 visual 选文字  
@@ -58,7 +58,7 @@ Plug '/path/to/nvimplugins/colorpicker'
 | **`:ColorPicker`** `[format]` | 打开；可选 `hex` / `rgb` / `rgba` / `hsl` / `hsla` / `hex_alpha` |
 | **`:Colorpicker`** | 别名 |
 | **`:ColorPickerClose`** | 关闭浮窗 |
-| **`:ColorPickerPreview`** | 刷新 `██` 预览 |
+| **`:ColorPickerPreview`** | 刷新文件内色码铺色 |
 
 ## 默认快捷键
 
@@ -101,7 +101,7 @@ require("colorpicker").setup({
   parse_under_cursor = true,
   replace_under_cursor = true,
   yank_also = false,
-  preview = true,              -- 文件内 ██
+  preview = true,              -- 文件内给色码铺色
   preview_auto = true,
   preview_max_lines = 4000,
   preview_filetypes = nil,     -- 如 { "css", "html" }；nil=不限

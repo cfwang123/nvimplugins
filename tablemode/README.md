@@ -2,7 +2,7 @@
 
 **English** | [中文](README.zh.md)
 
-A **Markdown / GFM table mode** inspired by [vim-table-mode](https://github.com/dhruvasagar/vim-table-mode): live-align on `|`, Tableize from CSV, cell motions, insert/delete columns.
+A **Markdown / GFM table mode** inspired by [vim-table-mode](https://github.com/dhruvasagar/vim-table-mode): live align, cell motions, block select & TSV yank. While mode is on, tables render as **mdview-style Unicode boxes**; leaving mode or saving restores standard `| --- |` ASCII.
 
 > Module name is **`tablemode`** so it never shadows Lua’s built-in `table` library.
 
@@ -26,26 +26,52 @@ Plug '/path/to/nvimplugins/tablemode'
 
 ## Quick start
 
-1. **`<leader>tm`** or **`:TableModeToggle`**  
-2. In insert mode type:
+1. Write a GFM table (or start with `|`), then **`<leader>tm`** / **`:TableModeToggle`**.  
+2. **With mode on**, the table becomes an editable mdview-style box:
+
+```text
+┌──────────────────┬──────────────────────────┬────────────┐
+│ name             │ address                  │ phone      │
+├──────────────────┼──────────────────────────┼────────────┤
+│ John Adams       │ 1600 Pennsylvania Avenue │ 0123456789 │
+│ Sherlock Holmes  │ 221B Baker Street        │ 0987654321 │
+└──────────────────┴──────────────────────────┴────────────┘
+```
+
+3. Typing in a cell **live-realigns** the table (debounced, default ~60ms); one more pass on InsertLeave.  
+4. Toggle **`<leader>tm`** again to leave: restore GFM ASCII and clear highlights.
+
+```text
+| name             | address                  | phone      |
+| ---------------- | ------------------------ | ---------- |
+| John Adams       | 1600 Pennsylvania Avenue | 0123456789 |
+| Sherlock Holmes  | 221B Baker Street        | 0987654321 |
+```
+
+5. Manual realign: **`<leader>tr`** / **`:TableModeRealign`**.
+
+### Draw a table from scratch (insert)
 
 ```text
 | name | address | phone |
 ||
 ```
 
-`||` on the second line expands to a header separator; further `|` keystrokes realign the table:
+`||` on the second line expands to a header separator; further `|` keystrokes realign. With `preview_style = "unicode"`, `|` inserts `│`.
 
-```text
-| name            | address                  | phone      |
-|-----------------|--------------------------|------------|
-| John Adams      | 1600 Pennsylvania Avenue | 0123456789 |
-| Sherlock Holmes | 221B Baker Street        | 0987654321 |
-```
+## Unicode preview ↔ GFM restore
 
-3. While typing inside a cell, the table **live-realigns** (debounced, default ~60ms); one more pass on InsertLeave.  
-4. While mode is on, **header rows** get a background and **borders** (`|` / separator lines) are colored.  
-5. Toggle off with **`<leader>tm`**. Manual realign: **`<leader>tr`** / **`:TableModeRealign`**.
+| When | Behavior |
+|------|----------|
+| **Enable tablemode** | Buffer tables → Unicode boxes (`┌─┬─┐` / `│` / `├─┼─┤` / `└─┴─┘`) |
+| **Edit / realign** | Always reformat in the current style (boxes by default) |
+| **Disable tablemode** | Boxes → standard GFM `\| --- \|` |
+| **`:w` save** | Convert to GFM for disk; if mode stays on, restore box preview after write |
+
+- On disk you always get **standard Markdown tables** (alignment `:---` / `:---:` / `---:` is preserved).  
+- Alignment is stored in the mid-border cells and written back on restore.  
+- Set `preview_style = "gfm"` to keep ASCII while mode is on.  
+- Default `disable_conceal = true`: while on, `conceallevel=0` so hidden `**bold**` markers do not shift pipes; restored on exit.
 
 ## Commands
 
@@ -63,39 +89,34 @@ Plug '/path/to/nvimplugins/tablemode'
 |-----|--------|
 | **`<leader>tm`** | Toggle table mode |
 | **`<leader>tr`** | Realign |
-| **`<leader>tt`** | Tableize (line / visual) |
-| **`<leader>T`** | Tableize with delimiter prompt |
-| **`<leader>tdd`** | Delete row(s) (`[count]`) |
-| **`<leader>tdc`** | Delete column(s) |
-| **`<leader>tic`** | Insert column after cursor |
-| **`<leader>tiC`** | Insert column before cursor |
+
+Tableize / delete-insert row-col keys are **off by default**; set `keys_*` in `setup` if you want them.
 
 ### While mode is on (buffer-local)
 
 | Key | Action |
 |-----|--------|
-| **`|`** (insert) | Insert bar + realign; bare `||` → separator row |
-| **`Tab` / `Shift-Tab`** | Next / previous cell (skip separators; Tab on last cell appends a row) |
-| **`←` `→` `↑` `↓` / `hjkl` (normal)** | One cell at a time; **at edge, further press exits** the table (default motion) |
-| **`Ctrl-v` (or `Ctrl-q`)** | **Cell block select**: enters with at least the **current cell** selected |
-| **`hjkl` / arrows in block select** | Expand by **one column / row** of cells (skips separator rows) |
-| **`y` / `Ctrl-c` after selection** | Yank as **Excel-style TSV** (tab-separated, strips `\|`) |
+| **`|`** (insert) | Insert bar + realign (writes `│` in unicode preview); after header, bare `||` → separator/mid border; **below a complete table**, `|` appends an empty data row |
+| **`Tab` / `Shift-Tab`** | Next / previous cell (skip frames & seps; Tab on last cell appends a row) |
+| **`←` `→` `↑` `↓` / `hjkl` (normal)** | One cell at a time; **at edge, further press exits** the table |
+| **`Ctrl-v` (or `Ctrl-q`)** | **Cell block select**: at least the **current cell** |
+| **`hjkl` / arrows in block select** | Expand by **one column / row** of cells |
+| **`gy` (visual)** | Yank **Excel-style TSV** (tabs, strips bars); plain **`y`** is unchanged |
 | **`]|` / `[|`** | Next / previous cell (wraps across rows) |
 | **`}|` / `{|`** | Cell below / above |
 | **`i|` / `a|`** | Cell text objects |
 
 ### Block yank example
 
-`Ctrl-v` a cell rectangle inside the table, then `y`:
+`Ctrl-v` a cell rectangle, then `gy`:
 
 ```text
-| name            | address                  | phone      |
-|-----------------|--------------------------|------------|
-| John Adams      | 1600 Pennsylvania Avenue | 0123456789 |
-| Sherlock Holmes | 221B Baker Street        | 0987654321 |
+│ name            │ address                  │ phone      │
+│ John Adams      │ 1600 Pennsylvania Avenue │ 0123456789 │
+│ Sherlock Holmes │ 221B Baker Street        │ 0987654321 │
 ```
 
-Clipboard (tabs between columns — paste into Excel):
+Clipboard (tabs — paste into Excel):
 
 ```text
 John Adams	1600 Pennsylvania Avenue	0123456789
@@ -104,13 +125,15 @@ Sherlock Holmes	221B Baker Street	0987654321
 
 ## Alignment
 
-Use `:` in the separator row (GFM style):
+`:` in the GFM separator (kept after exit):
 
 ```text
 | left | center | right |
 |:-----|:------:|------:|
 | a    | b      |     c |
 ```
+
+Unicode mid-borders carry the same alignment markers while mode is on.
 
 ## Statusline
 
@@ -142,12 +165,12 @@ require("tablemode").setup({
   ui_lang = "auto",
   keys_toggle = "<leader>tm",
   keys_realign = "<leader>tr",
-  keys_tableize = "<leader>tt",
-  keys_tableize_op = "<leader>T",
-  keys_delete_row = "<leader>tdd",
-  keys_delete_col = "<leader>tdc",
-  keys_insert_col_after = "<leader>tic",
-  keys_insert_col_before = "<leader>tiC",
+  keys_tableize = false,           -- e.g. "<leader>tt"
+  keys_tableize_op = false,        -- e.g. "<leader>T"
+  keys_delete_row = false,         -- e.g. "<leader>tdd"
+  keys_delete_col = false,         -- e.g. "<leader>tdc"
+  keys_insert_col_after = false,   -- e.g. "<leader>tic"
+  keys_insert_col_before = false,  -- e.g. "<leader>tiC"
   map_motions = true,
   map_text_objects = true,
   map_tab = true,          -- Tab / Shift-Tab between cells
@@ -155,37 +178,62 @@ require("tablemode").setup({
   tab_insert_row = true,   -- Tab on last cell appends empty row
   map_arrows = true,       -- arrows by cell; edge exits table
   map_hjkl = true,         -- same for hjkl
-  map_vblock = true,       -- Ctrl-v cell block; visual hjkl expand; y → TSV
+  map_vblock = true,       -- Ctrl-v cell block; visual hjkl expand; gy → TSV
   highlight = true,        -- header bg + border colors while mode is on
   hl_header = "TableModeHeader",
   hl_border = "TableModeBorder",
   highlight_ms = 80,
+  preview_style = "unicode", -- mdview boxes while on; "gfm" keeps | --- |
+  disable_conceal = true,  -- conceallevel=0 while on (avoid ** misalignment)
 })
 ```
 
-Set any key to `false` to disable it.
+Set any `keys_*` to `false` to disable it.
 
 ### Highlight groups
 
 | Group | Role | Default |
 |-------|------|---------|
-| **`TableModeHeader`** | Header **cell text** background only (not spaces / `\|`) | pale blue bg `#6b8fb5` |
-| **`TableModeBorder`** | Borders: `\|` and separator `-` `:` `=` `+` | blue fg + **bold** |
+| **`TableModeHeader`** | Header **cell text** background only (not padding / bars) | very light blue bg `#e3f0fb` |
+| **`TableModeBorder`** | Bars: `\|` `-` `:` `=` `+` and Unicode `─` `│` `┌┐└┘├┤┬┴┼` | blue fg + **bold** |
 
-Override with `hi TableModeHeader ...` / `hi TableModeBorder ...` (`default` links — your definitions win).
+Override with `hi TableModeHeader ...` / `hi TableModeBorder ...`.
+
+### ReST style
+
+```lua
+require("tablemode").setup({
+  corner = "|",
+  corner_corner = "+",
+  header_fillchar = "=",
+  smart_syntax = true, -- also auto for filetype=rst
+  preview_style = "gfm", -- usually no unicode boxes for ReST
+})
+```
+
+### Disable box preview
+
+```lua
+require("tablemode").setup({
+  preview_style = "gfm", -- keep | --- | while mode is on
+})
+```
 
 ## vs vim-table-mode
 
 | Topic | This plugin |
 |-------|-------------|
 | Implementation | Pure Lua |
+| Look while on | **Unicode boxes** by default (optional); restore GFM on exit |
 | Spreadsheet formulas | **Not implemented** |
 | yes/no cell highlights | **Not implemented** |
 | Default corners | GFM `\|` (not `+`) |
+| TSV yank | Visual **`gy`** (plain `y` unchanged) |
 | Module name | `tablemode` |
 
 ## Notes
 
-- A table is a run of consecutive lines containing `|`.
-- Column width uses `strdisplaywidth` (CJK-friendly).
-- Works well with **mdview**: edit in the source buffer, preview rendered GFM tables.
+- A table is a run of consecutive lines containing `|` or Unicode box characters.  
+- Column width uses `strdisplaywidth` (CJK-friendly).  
+- Works well with **mdview**: edit in the source buffer, preview rendered GFM.  
+- On save, the buffer briefly becomes GFM for the write, then restores boxes if mode is still on (`modified` cleared after restore).

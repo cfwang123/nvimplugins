@@ -227,6 +227,60 @@ local function set_image_conceal(buf, row0, c0, c1, alt)
   })
 end
 
+---treesitter 把 `[ ]` / `[x]` 当成 shortcut_link，conceallevel≥2 时方括号被藏掉
+---（TODO 复选框看不见）。补上 link_text 判断，任务列表保持原样。
+local function patch_checkbox_shortcut_conceal()
+  if vim.g.mdview_cb_query_patched then
+    return
+  end
+  vim.g.mdview_cb_query_patched = true
+  if type(vim.treesitter) ~= "table" or type(vim.treesitter.query) ~= "table" then
+    return
+  end
+  if type(vim.treesitter.query.set) ~= "function" then
+    return
+  end
+  local files = vim.api.nvim_get_runtime_file("queries/markdown_inline/highlights.scm", true)
+  if not files or #files == 0 then
+    return
+  end
+  local ok_read, lines = pcall(vim.fn.readfile, files[1])
+  if not ok_read or type(lines) ~= "table" then
+    return
+  end
+  local src = table.concat(lines, "\n")
+  local repl = [[(shortcut_link
+  (link_text) @_mdview_cb
+  [
+    "["
+    "]"
+  ] @markup.link
+  (#not-match? @_mdview_cb "^[ xX]$")
+  (#set! conceal ""))]]
+  local patched, n = src:gsub(
+    '%(shortcut_link%s*%[%s*"%["%s*"%]"%s*%]%s*@markup%.link%s*%(#set!%s+conceal%s+""%)%)',
+    repl,
+    1
+  )
+  if n < 1 then
+    return
+  end
+  if not pcall(vim.treesitter.query.set, "markdown_inline", "highlights", patched) then
+    return
+  end
+  for _, b in ipairs(vim.api.nvim_list_bufs()) do
+    if vim.api.nvim_buf_is_loaded(b) then
+      local ft = vim.bo[b].filetype
+      if ft == "markdown" or ft == "md" or ft == "pandoc" then
+        pcall(function()
+          vim.treesitter.stop(b)
+          vim.treesitter.start(b)
+        end)
+      end
+    end
+  end
+end
+
 ---刷新 buffer 内 ==mark== / <font> / 图片链接 高亮与隐藏
 ---@param buf integer
 function M.refresh(buf)
@@ -333,6 +387,9 @@ function M.attach(buf)
   end
   vim.b[buf].mdview_source_mark_attached = true
 
+  -- 先打补丁再开 conceallevel，否则 `[ ]` 会被当成 shortcut_link 藏掉
+  patch_checkbox_shortcut_conceal()
+
   ---保证窗口 conceallevel≥2，否则 extmark conceal 不生效
   local function ensure_conceal_win()
     for _, w in ipairs(vim.api.nvim_list_wins()) do
@@ -376,6 +433,7 @@ end
 
 ---全局 FileType / 已有 buffer 安装
 function M.ensure_au()
+  patch_checkbox_shortcut_conceal()
   if not au_installed then
     au_installed = true
     local g = vim.api.nvim_create_augroup("mdview_source_mark_global", { clear = true })
