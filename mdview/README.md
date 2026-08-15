@@ -17,6 +17,7 @@ Pure Lua parse + read-only preview buffer; code highlighting, TOC, tables, image
 | Style | Headings (**bold + distinct H1–H6 colors**, optional auto numbers), bold, italic, `` code ``, strike, `==mark==` (preview + **editor yellow + conceal `==`**), links |
 | Lists / quotes / HR / tables | GFM tables; column width by content (may be narrower than window); images in cells; escaped `\|` |
 | Code blocks | Border, language, line numbers, gray bg, fold after 10 lines (**Enter** anywhere in block / **mouse** on fold line only; incremental), **`c` / `yc` / [Copy]**, TS→syntax→plain |
+| Incremental preview | Edits re-render **dirty AST segments** only (paragraph / table / code / …); `<details>` fold + `L` UI strings also skip full re-render |
 | TOC | Top of preview; `t` in preview / **`<leader>toc`** in editor (configurable) opens TOC float |
 | Links | Blue + underline in preview; Enter / Ctrl+LeftMouse; `#heading` / `#1. heading` anchors; md → target preview; `Ctrl-o` back (no extmark `url` required on Neovim 0.9) |
 | Images | Block chars in preview; `gi`/Enter float; **editor** Enter/Ctrl-click on `![](…)`; `gh` page HD; `o` system open |
@@ -248,7 +249,7 @@ With side open, switching to another **markdown** buffer in the same tab follows
 | Key | Action |
 |-----|--------|
 | `q` | Close preview / back to source |
-| `r` | Refresh preview |
+| `r` | Force full refresh preview |
 | (auto) | Reload source + re-render when the md file changes **on disk** and the buffer is not modified (`watch_external`) |
 | `<CR>` | TOC / code fold (anywhere in block) / details / image / **md link → target preview** |
 | Mouse | Code fold only on the **gray fold line** (body click does not toggle) |

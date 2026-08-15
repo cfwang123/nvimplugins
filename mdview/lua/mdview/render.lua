@@ -1582,7 +1582,22 @@ function M.render(blocks, opts)
     end
   end
 
-  render_blocks(ctx, blocks)
+  -- 按顶层 AST 段渲染并记录预览行范围（供按段增量）
+  local fps = opts.fingerprints
+  ctx.segments = {}
+  for i, b in ipairs(blocks or {}) do
+    local ps = #ctx.lines + 1
+    render_blocks(ctx, { b })
+    ctx.segments[#ctx.segments + 1] = {
+      index = i,
+      type = b.type,
+      source_start = b.source_start,
+      source_end = b.source_end,
+      preview_start = ps,
+      preview_end = #ctx.lines,
+      fingerprint = fps and fps[i] or nil,
+    }
+  end
 
   -- TOC hits：跳到正文标题预览行（heading_preview / rev_map）
   if ctx._toc_entries then
@@ -1611,6 +1626,9 @@ function M.render(blocks, opts)
     col_align = ctx.col_align,
     block_ranges = ctx.block_ranges,
     hits = ctx.hits,
+    segments = ctx.segments,
+    body_start = ctx.segments[1] and ctx.segments[1].preview_start or (#ctx.lines + 1),
+    has_key_hint = cfg.show_key_hint ~= false,
   }
 end
 
@@ -1618,40 +1636,15 @@ function M.namespace()
   return NS
 end
 
+---为 blocks 写入 auto_number（增量渲染前须对整棵 AST 调用）
+function M.assign_heading_numbers(blocks)
+  assign_heading_numbers(blocks)
+end
+
 ---仅渲染一个代码块为片段（行号从 1 / extmark 行从 0 起）
 ---@param b table { lines, lang, source_start, source_end }
 ---@param opts? { cfg?: table, width?: number, expanded_codes?: table }
 ---@return table fragment { lines, extmarks, source_map, rev_map, hits }
-function M.render_code_fragment(b, opts)
-  highlight.ensure()
-  opts = opts or {}
-  local cfg = opts.cfg or require("mdview.config").get()
-  local width = opts.width or 80
-  if width < 20 then
-    width = 20
-  end
-  local ctx = {
-    cfg = cfg,
-    width = width,
-    lines = {},
-    extmarks = {},
-    source_map = {},
-    rev_map = {},
-    hits = {},
-    expanded_codes = opts.expanded_codes or {},
-    expanded_details = {},
-    last_source = b.source_start or 1,
-  }
-  M._render_code(ctx, b)
-  return {
-    lines = ctx.lines,
-    extmarks = ctx.extmarks,
-    source_map = ctx.source_map,
-    rev_map = ctx.rev_map,
-    hits = ctx.hits,
-  }
-end
-
 local function copy_shallow(t)
   local c = {}
   for k, v in pairs(t) do
@@ -1660,219 +1653,29 @@ local function copy_shallow(t)
   return c
 end
 
----按 delta 平移「预览行号」键表（col_align 等）
----@param map table|nil
----@param start_1 number
----@param end_1 number
----@param delta number
----@return table
-local function shift_preview_keyed(map, start_1, end_1, delta)
-  local out = {}
-  for pl, v in pairs(map or {}) do
-    if type(pl) == "number" then
-      if pl < start_1 then
-        out[pl] = v
-      elseif pl > end_1 then
-        out[pl + delta] = v
-      end
-    end
+local function new_render_ctx(opts)
+  opts = opts or {}
+  local cfg = opts.cfg or require("mdview.config").get()
+  local width = opts.width or 80
+  if width < 20 then
+    width = 20
   end
-  return out
-end
-
----增量替换 result 中某个代码块（不 parse、不重渲其它块）
----@param result table RenderResult
----@param opts { block_id: number, lines: string[], lang?: string, source_end?: number, expanded: boolean, cfg?: table, width?: number }
----@return table|nil info { start_line, old_end, new_end, delta } 失败返回 nil
-function M.patch_code_block(result, opts)
-  if not result or not opts or not opts.block_id then
-    return nil
-  end
-  local block_id = opts.block_id
-  local start_line, old_end
-  local lines = opts.lines
-  local lang = opts.lang
-  local source_end = opts.source_end
-  for _, h in ipairs(result.hits or {}) do
-    if h.kind == "code_block" and h.block_id == block_id then
-      start_line = h.line
-      old_end = h.line_end or h.line
-      lines = lines or h.lines
-      lang = lang or h.lang
-      source_end = source_end or h.source_end
-      break
-    end
-  end
-  if not start_line or not old_end or not lines then
-    return nil
-  end
-  source_end = source_end or (block_id + #lines + 1)
-
-  local expanded_codes = {}
-  expanded_codes[block_id] = opts.expanded and true or false
-  local frag = M.render_code_fragment({
-    type = "code",
-    lines = lines,
-    lang = lang or "text",
-    source_start = block_id,
-    source_end = source_end,
-  }, {
-    cfg = opts.cfg,
-    width = opts.width,
-    expanded_codes = expanded_codes,
-  })
-  local new_n = #frag.lines
-  if new_n == 0 then
-    return nil
-  end
-  local old_n = old_end - start_line + 1
-  local delta = new_n - old_n
-  local base = start_line - 1 -- 加到片段 1-based 行上
-
-  -- lines
-  local new_lines = {}
-  for i = 1, start_line - 1 do
-    new_lines[i] = result.lines[i]
-  end
-  for i = 1, new_n do
-    new_lines[start_line + i - 1] = frag.lines[i]
-  end
-  local dest = start_line + new_n
-  for i = old_end + 1, #(result.lines or {}) do
-    new_lines[dest] = result.lines[i]
-    dest = dest + 1
-  end
-  result.lines = new_lines
-
-  -- source_map
-  local sm = {}
-  for pl, src in pairs(result.source_map or {}) do
-    if pl < start_line then
-      sm[pl] = src
-    elseif pl > old_end then
-      sm[pl + delta] = src
-    end
-  end
-  for pl, src in pairs(frag.source_map or {}) do
-    sm[base + pl] = src
-  end
-  result.source_map = sm
-
-  -- rev_map：去掉落在旧块内的，后续行平移，再合并片段
-  local rev = {}
-  for src, pl in pairs(result.rev_map or {}) do
-    if pl < start_line then
-      rev[src] = pl
-    elseif pl > old_end then
-      rev[src] = pl + delta
-    end
-  end
-  for src, pl in pairs(frag.rev_map or {}) do
-    rev[src] = base + pl
-  end
-  result.rev_map = rev
-
-  -- heading_preview（值是预览行）
-  local hp = {}
-  for src, pl in pairs(result.heading_preview or {}) do
-    if pl < start_line then
-      hp[src] = pl
-    elseif pl > old_end then
-      hp[src] = pl + delta
-    end
-  end
-  result.heading_preview = hp
-
-  -- col_align（键是预览行）
-  result.col_align = shift_preview_keyed(result.col_align, start_line, old_end, delta)
-
-  -- block_ranges
-  for _, br in ipairs(result.block_ranges or {}) do
-    local ps = br.preview_start or 0
-    local pe = br.preview_end or ps
-    if pe < start_line then
-      -- 之前
-    elseif ps > old_end then
-      br.preview_start = ps + delta
-      br.preview_end = pe + delta
-    elseif ps == start_line or (br.source_start == block_id) then
-      br.preview_start = start_line
-      br.preview_end = start_line + new_n - 1
-    elseif pe >= start_line and ps <= old_end then
-      -- 与块相交的其它 range：按边界钳制平移
-      if ps >= start_line then
-        br.preview_start = start_line
-      end
-      br.preview_end = start_line + new_n - 1
-    end
-  end
-
-  -- extmarks
-  local start_0 = start_line - 1
-  local old_end_0 = old_end - 1
-  local ems = {}
-  for _, em in ipairs(result.extmarks or {}) do
-    local ln = em.line or 0
-    if ln < start_0 then
-      ems[#ems + 1] = em
-    elseif ln > old_end_0 then
-      local c = copy_shallow(em)
-      c.line = ln + delta
-      ems[#ems + 1] = c
-    end
-  end
-  for _, em in ipairs(frag.extmarks or {}) do
-    local c = copy_shallow(em)
-    c.line = (em.line or 0) + start_0
-    ems[#ems + 1] = c
-  end
-  result.extmarks = ems
-
-  -- hits
-  local hits = {}
-  for _, h in ipairs(result.hits or {}) do
-    local a = h.line or 0
-    local b = h.line_end or a
-    if a >= start_line and a <= old_end then
-      -- 旧代码块 hits 丢弃
-    else
-      local c = h
-      local need = false
-      if a > old_end then
-        c = copy_shallow(h)
-        c.line = a + delta
-        if h.line_end then
-          c.line_end = h.line_end + delta
-        end
-        need = true
-      end
-      local pt = (need and c.preview_target) or h.preview_target
-      if pt and pt > old_end then
-        if not need then
-          c = copy_shallow(h)
-          need = true
-        end
-        c.preview_target = pt + delta
-      end
-      hits[#hits + 1] = c
-    end
-  end
-  for _, h in ipairs(frag.hits or {}) do
-    local c = copy_shallow(h)
-    c.line = (h.line or 1) + base
-    if h.line_end then
-      c.line_end = h.line_end + base
-    end
-    hits[#hits + 1] = c
-  end
-  result.hits = hits
-
-  local new_end = start_line + new_n - 1
   return {
-    start_line = start_line,
-    old_end = old_end,
-    new_end = new_end,
-    delta = delta,
+    cfg = cfg,
+    width = width,
+    lines = {},
+    extmarks = {},
+    source_map = {},
+    rev_map = {},
+    heading_preview = {},
+    col_align = {},
+    block_ranges = {},
+    hits = {},
+    expanded_codes = opts.expanded_codes or {},
+    expanded_details = opts.expanded_details or {},
+    md_path = opts.md_path,
+    image_count = 0,
+    last_source = 1,
   }
 end
 
@@ -1912,11 +1715,493 @@ local function set_one_extmark(buf, result, em)
   end
 end
 
----局部替换预览 buffer 中的代码块行并只重挂该段 extmark
----Neovim 会对替换区之后的 extmark 自动平移，故仅清理并写入新块范围。
----@param buf number
----@param result table 已 patch 后的 result
----@param info table { start_line, old_end, new_end, delta }
+function M.render_code_fragment(b, opts)
+  highlight.ensure()
+  local ctx = new_render_ctx(opts)
+  ctx.last_source = b.source_start or 1
+  M._render_code(ctx, b)
+  return {
+    lines = ctx.lines,
+    extmarks = ctx.extmarks,
+    source_map = ctx.source_map,
+    rev_map = ctx.rev_map,
+    hits = ctx.hits,
+    heading_preview = ctx.heading_preview,
+    col_align = ctx.col_align,
+    block_ranges = ctx.block_ranges,
+  }
+end
+
+---渲染若干顶层 block 为片段（标题序号须已由调用方处理）
+---@param blocks table[]
+---@param opts? table
+---@return table fragment
+function M.render_blocks_fragment(blocks, opts)
+  highlight.ensure()
+  opts = opts or {}
+  local ctx = new_render_ctx(opts)
+  local fps = opts.fingerprints
+  local segs = {}
+  for i, b in ipairs(blocks or {}) do
+    local ps = #ctx.lines + 1
+    render_blocks(ctx, { b })
+    segs[#segs + 1] = {
+      index = i,
+      type = b.type,
+      source_start = b.source_start,
+      source_end = b.source_end,
+      preview_start = ps,
+      preview_end = #ctx.lines,
+      fingerprint = fps and fps[i] or nil,
+    }
+  end
+  return {
+    lines = ctx.lines,
+    extmarks = ctx.extmarks,
+    source_map = ctx.source_map,
+    rev_map = ctx.rev_map,
+    hits = ctx.hits,
+    heading_preview = ctx.heading_preview,
+    col_align = ctx.col_align,
+    block_ranges = ctx.block_ranges,
+    segments = segs,
+  }
+end
+
+---按 delta 平移「预览行号」键表（col_align 等）
+local function shift_preview_keyed(map, start_1, end_1, delta)
+  local out = {}
+  for pl, v in pairs(map or {}) do
+    if type(pl) == "number" then
+      if pl < start_1 then
+        out[pl] = v
+      elseif pl > end_1 then
+        out[pl + delta] = v
+      end
+    end
+  end
+  return out
+end
+
+---将 frag 拼入 result 的 [start_line, old_end]（1-based inclusive；可空插入 old_end=start_line-1）
+---@param result table
+---@param start_line number
+---@param old_end number
+---@param frag table
+---@param opts? { replace_segments?: { lo: number, hi: number, list: table[] }, code_block_id?: number }
+---@return table info
+function M.splice_fragment(result, start_line, old_end, frag, opts)
+  opts = opts or {}
+  frag = frag or { lines = {} }
+  local new_n = #(frag.lines or {})
+  local old_n = old_end - start_line + 1
+  if old_n < 0 then
+    old_n = 0
+  end
+  local delta = new_n - old_n
+  local base = start_line - 1
+
+  local new_lines = {}
+  for i = 1, start_line - 1 do
+    new_lines[i] = result.lines[i]
+  end
+  for i = 1, new_n do
+    new_lines[start_line + i - 1] = frag.lines[i]
+  end
+  local dest = start_line + new_n
+  for i = old_end + 1, #(result.lines or {}) do
+    new_lines[dest] = result.lines[i]
+    dest = dest + 1
+  end
+  result.lines = new_lines
+
+  local sm = {}
+  for pl, src in pairs(result.source_map or {}) do
+    if pl < start_line then
+      sm[pl] = src
+    elseif pl > old_end then
+      sm[pl + delta] = src
+    end
+  end
+  for pl, src in pairs(frag.source_map or {}) do
+    sm[base + pl] = src
+  end
+  result.source_map = sm
+
+  local rev = {}
+  for src, pl in pairs(result.rev_map or {}) do
+    if pl < start_line then
+      rev[src] = pl
+    elseif pl > old_end then
+      rev[src] = pl + delta
+    end
+  end
+  for src, pl in pairs(frag.rev_map or {}) do
+    rev[src] = base + pl
+  end
+  result.rev_map = rev
+
+  local hp = {}
+  for src, pl in pairs(result.heading_preview or {}) do
+    if pl < start_line then
+      hp[src] = pl
+    elseif pl > old_end then
+      hp[src] = pl + delta
+    end
+  end
+  for src, pl in pairs(frag.heading_preview or {}) do
+    hp[src] = base + pl
+  end
+  result.heading_preview = hp
+
+  result.col_align = shift_preview_keyed(result.col_align, start_line, old_end, delta)
+  for pl, v in pairs(frag.col_align or {}) do
+    result.col_align[base + pl] = v
+  end
+
+  local brs = {}
+  for _, br in ipairs(result.block_ranges or {}) do
+    local ps = br.preview_start or 0
+    local pe = br.preview_end or ps
+    if pe < start_line then
+      brs[#brs + 1] = br
+    elseif ps > old_end then
+      local c = copy_shallow(br)
+      c.preview_start = ps + delta
+      c.preview_end = pe + delta
+      brs[#brs + 1] = c
+    end
+  end
+  for _, br in ipairs(frag.block_ranges or {}) do
+    local c = copy_shallow(br)
+    c.preview_start = (br.preview_start or 1) + base
+    c.preview_end = (br.preview_end or br.preview_start or 1) + base
+    brs[#brs + 1] = c
+  end
+  result.block_ranges = brs
+
+  local start_0 = start_line - 1
+  local old_end_0 = old_end - 1
+  local ems = {}
+  for _, em in ipairs(result.extmarks or {}) do
+    local ln = em.line or 0
+    if ln < start_0 then
+      ems[#ems + 1] = em
+    elseif ln > old_end_0 then
+      local c = copy_shallow(em)
+      c.line = ln + delta
+      ems[#ems + 1] = c
+    end
+  end
+  for _, em in ipairs(frag.extmarks or {}) do
+    local c = copy_shallow(em)
+    c.line = (em.line or 0) + start_0
+    ems[#ems + 1] = c
+  end
+  result.extmarks = ems
+
+  local hits = {}
+  for _, h in ipairs(result.hits or {}) do
+    local a = h.line or 0
+    if old_n > 0 and a >= start_line and a <= old_end then
+      -- drop
+    else
+      local c = h
+      local need = false
+      if a > old_end then
+        c = copy_shallow(h)
+        c.line = a + delta
+        if h.line_end then
+          c.line_end = h.line_end + delta
+        end
+        need = true
+      end
+      local pt = h.preview_target
+      if pt and pt > old_end then
+        if not need then
+          c = copy_shallow(h)
+        end
+        c.preview_target = pt + delta
+      end
+      hits[#hits + 1] = c
+    end
+  end
+  for _, h in ipairs(frag.hits or {}) do
+    local c = copy_shallow(h)
+    c.line = (h.line or 1) + base
+    if h.line_end then
+      c.line_end = h.line_end + base
+    end
+    hits[#hits + 1] = c
+  end
+  result.hits = hits
+
+  if result.segments then
+    if opts.replace_segments then
+      local lo = opts.replace_segments.lo
+      local hi = opts.replace_segments.hi
+      local list = opts.replace_segments.list or {}
+      local out = {}
+      for i = 1, lo - 1 do
+        out[#out + 1] = result.segments[i]
+      end
+      for _, s in ipairs(list) do
+        local c = copy_shallow(s)
+        c.preview_start = (s.preview_start or 1) + base
+        c.preview_end = (s.preview_end or s.preview_start or 1) + base
+        out[#out + 1] = c
+      end
+      for i = hi + 1, #result.segments do
+        local s = result.segments[i]
+        local c = copy_shallow(s)
+        c.preview_start = (s.preview_start or 0) + delta
+        c.preview_end = (s.preview_end or 0) + delta
+        out[#out + 1] = c
+      end
+      for i, s in ipairs(out) do
+        s.index = i
+      end
+      result.segments = out
+    else
+      for _, s in ipairs(result.segments) do
+        local ps = s.preview_start or 0
+        local pe = s.preview_end or ps
+        if pe < start_line then
+          -- before
+        elseif ps > old_end then
+          s.preview_start = ps + delta
+          s.preview_end = pe + delta
+        elseif opts.code_block_id and s.source_start == opts.code_block_id and s.type == "code" then
+          local trail = pe - old_end
+          if trail < 0 then
+            trail = 0
+          end
+          s.preview_end = start_line + new_n - 1 + trail
+        elseif ps >= start_line and pe <= old_end then
+          s.preview_start = start_line
+          s.preview_end = start_line + new_n - 1
+        elseif pe >= start_line and ps <= old_end then
+          s.preview_end = start_line + new_n - 1
+        end
+      end
+    end
+  end
+
+  if result.segments and result.segments[1] then
+    result.body_start = result.segments[1].preview_start
+  end
+
+  local new_end = start_line + new_n - 1
+  return {
+    start_line = start_line,
+    old_end = old_end,
+    new_end = new_end,
+    delta = delta,
+  }
+end
+
+---增量替换 result 中某个代码块 UI（不含段后空行）
+function M.patch_code_block(result, opts)
+  if not result or not opts or not opts.block_id then
+    return nil
+  end
+  local block_id = opts.block_id
+  local start_line, old_end
+  local lines = opts.lines
+  local lang = opts.lang
+  local source_end = opts.source_end
+  for _, h in ipairs(result.hits or {}) do
+    if h.kind == "code_block" and h.block_id == block_id then
+      start_line = h.line
+      old_end = h.line_end or h.line
+      lines = lines or h.lines
+      lang = lang or h.lang
+      source_end = source_end or h.source_end
+      break
+    end
+  end
+  if not start_line or not old_end or not lines then
+    return nil
+  end
+  source_end = source_end or (block_id + #lines + 1)
+
+  local expanded_codes = {}
+  expanded_codes[block_id] = opts.expanded and true or false
+  local frag = M.render_code_fragment({
+    type = "code",
+    lines = lines,
+    lang = lang or "text",
+    source_start = block_id,
+    source_end = source_end,
+  }, {
+    cfg = opts.cfg,
+    width = opts.width,
+    expanded_codes = expanded_codes,
+  })
+  if #(frag.lines or {}) == 0 then
+    return nil
+  end
+  return M.splice_fragment(result, start_line, old_end, frag, { code_block_id = block_id })
+end
+
+---按段替换正文：旧 segments[lo..hi_old] → frag
+function M.replace_segments(result, lo, hi_old, frag)
+  if not result or not result.segments then
+    return nil
+  end
+  local nseg = #result.segments
+  local start_line
+  local old_end
+  if lo >= 1 and lo <= nseg and hi_old >= lo and hi_old <= nseg then
+    start_line = result.segments[lo].preview_start
+    old_end = result.segments[hi_old].preview_end
+  elseif lo >= 1 and lo <= nseg + 1 and hi_old < lo then
+    if lo <= nseg then
+      start_line = result.segments[lo].preview_start
+    elseif nseg >= 1 then
+      start_line = result.segments[nseg].preview_end + 1
+    else
+      start_line = result.body_start or (#(result.lines or {}) + 1)
+    end
+    old_end = start_line - 1
+  else
+    return nil
+  end
+  local hi = hi_old
+  if hi < lo - 1 then
+    hi = lo - 1
+  end
+  return M.splice_fragment(result, start_line, old_end, frag, {
+    replace_segments = {
+      lo = lo,
+      hi = hi,
+      list = frag.segments or {},
+    },
+  })
+end
+
+---仅刷新界面文案（顶栏 / TOC 标题 / Copy 标签）
+function M.patch_ui_strings(result, width)
+  local changed = {}
+  if not result or not result.lines then
+    return changed
+  end
+  local i18n = require("mdview.i18n")
+  local copy = i18n.t("copy")
+  local contents = i18n.t("contents")
+  width = width or 80
+
+  -- 顶栏可能被截断而不含 "mdview"；用 has_key_hint 或常见快捷键特征识别
+  local line1 = result.lines[1]
+  local is_hint = result.has_key_hint
+    or (line1 and (line1:find("mdview", 1, true)
+      or line1:find("Close(", 1, true)
+      or line1:find("关闭(", 1, true)
+      or line1:find("Refresh(", 1, true)
+      or line1:find("刷新(", 1, true)))
+  if is_hint and line1 then
+    local hint = M.help_line_text(width)
+    if line1 ~= hint then
+      result.lines[1] = hint
+      changed[#changed + 1] = 1
+      local ems = {}
+      for _, em in ipairs(result.extmarks or {}) do
+        if em.line ~= 0 then
+          ems[#ems + 1] = em
+        end
+      end
+      ems[#ems + 1] = {
+        line = 0,
+        col = 0,
+        end_col = #hint,
+        hl = "MdViewKeyHint",
+        line_hl = "MdViewKeyHint",
+      }
+      result.extmarks = ems
+    end
+  end
+
+  for i, line in ipairs(result.lines) do
+    if line == "◆ Contents" or line == "◆ 目录" then
+      if line ~= contents then
+        result.lines[i] = contents
+        changed[#changed + 1] = i
+        local ems = {}
+        for _, em in ipairs(result.extmarks or {}) do
+          if em.line ~= i - 1 then
+            ems[#ems + 1] = em
+          end
+        end
+        ems[#ems + 1] = {
+          line = i - 1,
+          col = 0,
+          end_col = #contents,
+          hl = "MdViewTocTitle",
+        }
+        result.extmarks = ems
+      end
+      break
+    end
+  end
+
+  for _, h in ipairs(result.hits or {}) do
+    if h.kind == "code_copy" and h.line and result.lines[h.line] then
+      local row = h.line
+      local line = result.lines[row]
+      local has_old = line:find("%[Copy%]")
+        or line:find("%[复制%]")
+        or line:find("%[Copied%]")
+        or line:find("%[已复制%]")
+      if has_old and not line:find(copy, 1, true) then
+        local lang = h.lang or "text"
+        local right = lang .. " " .. copy
+        local dash_w = math.max(1, width - 2 - vim.fn.strdisplaywidth(right))
+        local top = "┌" .. string.rep("─", dash_w) .. right .. "┐"
+        local lang_disp = lang
+        while vim.fn.strdisplaywidth(top) > width and #lang_disp > 1 do
+          lang_disp = lang_disp:sub(1, -2)
+          right = lang_disp .. " " .. copy
+          dash_w = math.max(1, width - 2 - vim.fn.strdisplaywidth(right))
+          top = "┌" .. string.rep("─", dash_w) .. right .. "┐"
+        end
+        result.lines[row] = top
+        local dash_bytes = #string.rep("─", dash_w)
+        local lang_byte_start = #"┌" + dash_bytes
+        local lang_byte_end = lang_byte_start + #lang_disp
+        local copy_byte_start = lang_byte_end + 1
+        local copy_byte_end = copy_byte_start + #copy
+        h.col = copy_byte_start
+        h.end_col = copy_byte_end
+        local ems = {}
+        for _, em in ipairs(result.extmarks or {}) do
+          if em.line ~= row - 1 then
+            ems[#ems + 1] = em
+          end
+        end
+        local function add_em(col, end_col, hl)
+          ems[#ems + 1] = {
+            line = row - 1,
+            col = col,
+            end_col = end_col,
+            hl = hl,
+            line_hl = "MdViewCodeBg",
+          }
+        end
+        add_em(0, lang_byte_start, "MdViewCodeBorder")
+        add_em(lang_byte_start, lang_byte_end, "MdViewCodeLang")
+        add_em(lang_byte_end, copy_byte_start, "MdViewCodeBorder")
+        add_em(copy_byte_start, copy_byte_end, "MdViewCodeCopy")
+        add_em(copy_byte_end, #top, "MdViewCodeBorder")
+        result.extmarks = ems
+        changed[#changed + 1] = row
+      end
+    end
+  end
+
+  return changed
+end
+
+---局部替换预览 buffer 行并重挂该段 extmark
 function M.apply_range(buf, result, info)
   if not buf or not vim.api.nvim_buf_is_valid(buf) or not result or not info then
     return
@@ -1926,21 +2211,48 @@ function M.apply_range(buf, result, info)
   local old_end = info.old_end
   local new_end = info.new_end
   local seg = {}
-  for i = start_line, new_end do
-    seg[#seg + 1] = result.lines[i] or ""
+  if new_end >= start_line then
+    for i = start_line, new_end do
+      seg[#seg + 1] = result.lines[i] or ""
+    end
   end
   local mod = vim.bo[buf].modifiable
   vim.bo[buf].modifiable = true
-  -- 0-based exclusive end for old range
+  -- old_end 为 1-based inclusive；纯插入时 old_end = start_line-1 → exclusive end = start_line-1
   vim.api.nvim_buf_set_lines(buf, start_line - 1, old_end, false, seg)
-  -- 清掉新块范围内残留 mark，再写入本段 extmark
-  pcall(vim.api.nvim_buf_clear_namespace, buf, NS, start_line - 1, new_end)
-  local s0 = start_line - 1
-  local e0 = new_end - 1
-  for _, em in ipairs(result.extmarks or {}) do
-    local ln = em.line or -1
-    if ln >= s0 and ln <= e0 then
-      set_one_extmark(buf, result, em)
+  if new_end >= start_line then
+    pcall(vim.api.nvim_buf_clear_namespace, buf, NS, start_line - 1, new_end)
+    local s0 = start_line - 1
+    local e0 = new_end - 1
+    for _, em in ipairs(result.extmarks or {}) do
+      local ln = em.line or -1
+      if ln >= s0 and ln <= e0 then
+        set_one_extmark(buf, result, em)
+      end
+    end
+  end
+  vim.bo[buf].modifiable = mod
+end
+
+---把若干 1-based 行写回 buffer
+function M.apply_line_updates(buf, result, rows)
+  if not buf or not vim.api.nvim_buf_is_valid(buf) or not result or not rows or #rows == 0 then
+    return
+  end
+  highlight.ensure()
+  local mod = vim.bo[buf].modifiable
+  vim.bo[buf].modifiable = true
+  local seen = {}
+  for _, row in ipairs(rows) do
+    if row and not seen[row] and result.lines[row] then
+      seen[row] = true
+      vim.api.nvim_buf_set_lines(buf, row - 1, row, false, { result.lines[row] })
+      pcall(vim.api.nvim_buf_clear_namespace, buf, NS, row - 1, row)
+      for _, em in ipairs(result.extmarks or {}) do
+        if em.line == row - 1 then
+          set_one_extmark(buf, result, em)
+        end
+      end
     end
   end
   vim.bo[buf].modifiable = mod

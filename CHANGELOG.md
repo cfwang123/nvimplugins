@@ -12,6 +12,9 @@ All notable changes to this repository are documented in this file.
 
 - Code block expand/collapse is **incremental** (patch that block only; no full re-parse/re-render).
 - **Enter** still toggles fold anywhere in the code block; **mouse** only on the gray fold line (`⋯ N more · <CR> expand` / `⋯ <CR> collapse`).
+- **Segment-based preview updates**: source edits re-render only dirty top-level AST blocks (paragraph / table / code / list / …); headings still force a full refresh (TOC).
+- **`<details>`** expand/collapse is incremental (same segment patch path).
+- **`L` language toggle** only rewrites UI strings (key hint, TOC title, `[Copy]` labels); no full re-parse.
 
 ### 中文
 
@@ -19,6 +22,9 @@ All notable changes to this repository are documented in this file.
 
 - 代码块展开/收起改为**增量刷新**（只 patch 该块，不再整文件 parse + render）。
 - **Enter** 在代码块内任意位置仍可切换折叠；**鼠标**仅点底部灰字行（`⋯ N more · <CR> expand` / `⋯ <CR> collapse`）才切换。
+- **按段增量预览**：源码编辑只重渲脏的顶层 AST 段（段落 / 表格 / 代码 / 列表等）；标题变更仍全量（牵动 TOC）。
+- **`<details>`** 展开/收起走同一套段 patch。
+- **`L` 切语言**只改文案（顶栏、TOC 标题、`[复制]`），不再整篇 re-parse。
 
 ---
 

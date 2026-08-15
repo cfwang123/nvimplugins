@@ -228,7 +228,419 @@ function M.refresh_all()
   end
 end
 
----切换中/英文界面并重绘
+local function preview_width(st)
+  if st.preview_win and vim.api.nvim_win_is_valid(st.preview_win) then
+    return vim.api.nvim_win_get_width(st.preview_win)
+  end
+  return vim.api.nvim_win_get_width(0)
+end
+
+---顶层 AST 段指纹（类型 + 源行文本；不含展开状态）
+---@param blocks table[]
+---@param src_lines string[]
+---@return string[]
+local function block_fingerprints(blocks, src_lines)
+  local fps = {}
+  for i, b in ipairs(blocks or {}) do
+    local parts = { b.type or "?" }
+    if b.lang then
+      parts[#parts + 1] = b.lang
+    end
+    if b.level then
+      parts[#parts + 1] = tostring(b.level)
+    end
+    local s0 = b.source_start or 1
+    local s1 = b.source_end or s0
+    for ln = s0, s1 do
+      parts[#parts + 1] = src_lines[ln] or ""
+    end
+    fps[i] = table.concat(parts, "\n")
+  end
+  return fps
+end
+
+---前后缀对齐：返回脏区 [lo, hi_old] / [lo, hi_new]（1-based；hi < lo 表示该侧为空）
+local function diff_fingerprints(fps_old, fps_new)
+  local n_old, n_new = #fps_old, #fps_new
+  local lo = 1
+  while lo <= n_old and lo <= n_new and fps_old[lo] == fps_new[lo] do
+    lo = lo + 1
+  end
+  local hi_old, hi_new = n_old, n_new
+  while hi_old >= lo and hi_new >= lo and fps_old[hi_old] == fps_new[hi_new] do
+    hi_old = hi_old - 1
+    hi_new = hi_new - 1
+  end
+  return lo, hi_old, hi_new
+end
+
+---按指纹迁移代码/details 展开状态（源行号漂移时）
+local function remap_expanded_state(old_blocks, new_blocks, fps_old, fps_new, expanded_codes, expanded_details)
+  local code_by_fp, det_by_fp = {}, {}
+  for i, b in ipairs(old_blocks or {}) do
+    local fp = fps_old[i]
+    if b.type == "code" and expanded_codes[b.source_start] then
+      code_by_fp[fp] = true
+    end
+    if b.type == "details" and expanded_details[b.source_start] ~= nil then
+      det_by_fp[fp] = expanded_details[b.source_start]
+    end
+  end
+  local new_codes, new_dets = {}, {}
+  for i, b in ipairs(new_blocks or {}) do
+    local fp = fps_new[i]
+    if b.type == "code" then
+      if code_by_fp[fp] or expanded_codes[b.source_start] then
+        new_codes[b.source_start] = true
+      end
+    elseif b.type == "details" then
+      if det_by_fp[fp] ~= nil then
+        new_dets[b.source_start] = det_by_fp[fp]
+      elseif expanded_details[b.source_start] ~= nil then
+        new_dets[b.source_start] = expanded_details[b.source_start]
+      end
+    end
+  end
+  return new_codes, new_dets
+end
+
+---内容未变、仅源行号漂移：更新映射，不改预览行
+local function remap_source_positions(result, old_blocks, new_blocks)
+  local n = #new_blocks
+  if #old_blocks ~= n or not result then
+    return
+  end
+  local function map_src(src)
+    if not src then
+      return src
+    end
+    for i = 1, n do
+      local ob, nb = old_blocks[i], new_blocks[i]
+      local os0 = ob.source_start or 0
+      local os1 = ob.source_end or os0
+      if src >= os0 and src <= os1 then
+        return src + ((nb.source_start or 0) - os0)
+      end
+    end
+    return src
+  end
+  local sm = {}
+  for pl, src in pairs(result.source_map or {}) do
+    sm[pl] = map_src(src)
+  end
+  result.source_map = sm
+  local rev = {}
+  for pl, src in pairs(sm) do
+    if not rev[src] or pl < rev[src] then
+      rev[src] = pl
+    end
+  end
+  result.rev_map = rev
+  local hp = {}
+  for src, pl in pairs(result.heading_preview or {}) do
+    hp[map_src(src)] = pl
+  end
+  result.heading_preview = hp
+  for _, h in ipairs(result.hits or {}) do
+    if h.block_id then
+      h.block_id = map_src(h.block_id)
+    end
+    if h.source_start then
+      h.source_start = map_src(h.source_start)
+    end
+    if h.source_end then
+      h.source_end = map_src(h.source_end)
+    end
+  end
+  for _, br in ipairs(result.block_ranges or {}) do
+    if br.source_start then
+      br.source_start = map_src(br.source_start)
+    end
+    if br.source_end then
+      br.source_end = map_src(br.source_end)
+    end
+  end
+  for i, seg in ipairs(result.segments or {}) do
+    local nb = new_blocks[i]
+    if nb then
+      seg.source_start = nb.source_start
+      seg.source_end = nb.source_end
+      seg.type = nb.type
+    end
+  end
+end
+
+local function apply_headings_meta(st, blocks, result)
+  st.headings = anchor.collect_headings(blocks, result.rev_map)
+  for _, h in ipairs(st.headings) do
+    h.preview_line = (result.heading_preview and result.heading_preview[h.source_start])
+      or result.rev_map[h.source_start]
+      or h.preview_line
+  end
+end
+
+local function after_render_chrome(st)
+  pcall(function()
+    require("mdview.graphics").clear_buf(st.preview_buf)
+  end)
+  attach_maps(st.preview_buf)
+  if st.preview_win and vim.api.nvim_win_is_valid(st.preview_win) then
+    pcall(function()
+      vim.wo[st.preview_win].wrap = false
+      vim.wo[st.preview_win].sidescrolloff = 0
+      vim.wo[st.preview_win].list = false
+    end)
+  end
+end
+
+local MAX_DIRTY_SEGMENTS = 10
+
+---按段增量；成功返回 true
+local function try_segment_render(st, src_lines, blocks, fps, cols, cfg)
+  local result = st.result
+  local old_blocks = st.blocks
+  local old_fps = st.fingerprints
+  if not result or not result.segments or not old_blocks or not old_fps then
+    return false
+  end
+  if st._last_preview_w and st._last_preview_w ~= cols then
+    return false
+  end
+
+  local new_codes, new_dets = remap_expanded_state(
+    old_blocks,
+    blocks,
+    old_fps,
+    fps,
+    st.expanded_codes or {},
+    st.expanded_details or {}
+  )
+  st.expanded_codes = new_codes
+  st.expanded_details = new_dets
+
+  local lo, hi_old, hi_new = diff_fingerprints(old_fps, fps)
+  local n_old, n_new = #old_fps, #fps
+
+  -- 指纹全同：可能仅空行导致后续 source 行号漂移
+  if lo > n_old and n_old == n_new then
+    remap_source_positions(result, old_blocks, blocks)
+    st.blocks = blocks
+    st.fingerprints = fps
+    st.result = result
+    apply_headings_meta(st, blocks, result)
+    return true
+  end
+
+  local dirty_old = hi_old >= lo and (hi_old - lo + 1) or 0
+  local dirty_new = hi_new >= lo and (hi_new - lo + 1) or 0
+  if dirty_old > MAX_DIRTY_SEGMENTS or dirty_new > MAX_DIRTY_SEGMENTS then
+    return false
+  end
+  -- 几乎整篇：走全量更简单
+  if dirty_old >= n_old and dirty_new >= n_new and n_new > 4 then
+    return false
+  end
+  -- 标题变化会牵动 TOC / 自动序号 → 全量
+  for i = lo, hi_old do
+    if old_blocks[i] and old_blocks[i].type == "heading" then
+      return false
+    end
+  end
+  for i = lo, hi_new do
+    if blocks[i] and blocks[i].type == "heading" then
+      return false
+    end
+  end
+
+  render.assign_heading_numbers(blocks)
+  local slice, slice_fps = {}, {}
+  for i = lo, hi_new do
+    slice[#slice + 1] = blocks[i]
+    slice_fps[#slice_fps + 1] = fps[i]
+  end
+  local md_path = vim.api.nvim_buf_get_name(st.source_buf)
+  local frag = render.render_blocks_fragment(slice, {
+    cfg = cfg,
+    width = cols,
+    expanded_codes = st.expanded_codes,
+    expanded_details = st.expanded_details,
+    md_path = md_path,
+    fingerprints = slice_fps,
+  })
+  local info = render.replace_segments(result, lo, hi_old, frag)
+  if not info then
+    return false
+  end
+  -- 未变前缀/后缀段的 source 也可能因上方插入而漂移
+  if lo > 1 then
+    -- 前缀 source 应与 new 一致
+    for i = 1, lo - 1 do
+      local seg = result.segments[i]
+      local nb = blocks[i]
+      if seg and nb then
+        local d = (nb.source_start or 0) - (seg.source_start or 0)
+        if d ~= 0 then
+          for pl = seg.preview_start, seg.preview_end do
+            if result.source_map[pl] then
+              result.source_map[pl] = result.source_map[pl] + d
+            end
+          end
+          seg.source_start = nb.source_start
+          seg.source_end = nb.source_end
+        else
+          seg.source_start = nb.source_start
+          seg.source_end = nb.source_end
+        end
+      end
+    end
+  end
+  local suffix_from = lo + #slice
+  for i = suffix_from, #blocks do
+    local seg = result.segments[i]
+    local nb = blocks[i]
+    if seg and nb then
+      local d = (nb.source_start or 0) - (seg.source_start or 0)
+      if d ~= 0 then
+        for pl = seg.preview_start, seg.preview_end do
+          if result.source_map[pl] then
+            result.source_map[pl] = result.source_map[pl] + d
+          end
+        end
+      end
+      seg.source_start = nb.source_start
+      seg.source_end = nb.source_end
+      seg.fingerprint = fps[i]
+      seg.type = nb.type
+    end
+  end
+  -- 重建 rev_map（source_map 已更新）
+  local rev = {}
+  for pl, src in pairs(result.source_map or {}) do
+    if not rev[src] or pl < rev[src] then
+      rev[src] = pl
+    end
+  end
+  result.rev_map = rev
+
+  render.apply_range(st.preview_buf, result, info)
+  st.result = result
+  st.blocks = blocks
+  st.fingerprints = fps
+  st._last_preview_w = cols
+  apply_headings_meta(st, blocks, result)
+  if info.delta ~= 0 then
+    pcall(function()
+      require("mdview.graphics").clear_buf(st.preview_buf)
+    end)
+  end
+  return true
+end
+
+---@param st table
+---@param opts? { force_full?: boolean }
+local function do_render(st, opts)
+  opts = opts or {}
+  if not vim.api.nvim_buf_is_valid(st.source_buf) then
+    return
+  end
+  if not st.preview_buf or not vim.api.nvim_buf_is_valid(st.preview_buf) then
+    return
+  end
+  local cfg = config.get()
+  local cols = preview_width(st)
+  local src_lines = vim.api.nvim_buf_get_lines(st.source_buf, 0, -1, false)
+  local blocks = parse.parse_lines(src_lines, cfg, 0, 0)
+  local fps = block_fingerprints(blocks, src_lines)
+  local md_path = vim.api.nvim_buf_get_name(st.source_buf)
+
+  if not opts.force_full then
+    local ok_inc = false
+    pcall(function()
+      ok_inc = try_segment_render(st, src_lines, blocks, fps, cols, cfg)
+    end)
+    if ok_inc then
+      return
+    end
+  end
+
+  local result = render.render(blocks, {
+    cfg = cfg,
+    width = cols,
+    expanded_codes = st.expanded_codes,
+    expanded_details = st.expanded_details,
+    md_path = md_path,
+    fingerprints = fps,
+  })
+  st.result = result
+  st.blocks = blocks
+  st.fingerprints = fps
+  apply_headings_meta(st, blocks, result)
+  render.apply(st.preview_buf, result, {
+    show_help = false,
+    cols = cols,
+  })
+  st._last_preview_w = cols
+  after_render_chrome(st)
+end
+
+---仅刷新某预览的中英文文案（不 parse）
+local function patch_lang_for_state(st)
+  if not st or not st.result or not st.preview_buf or not vim.api.nvim_buf_is_valid(st.preview_buf) then
+    return false
+  end
+  local cols = preview_width(st)
+  local rows = render.patch_ui_strings(st.result, cols)
+  render.apply_line_updates(st.preview_buf, st.result, rows)
+  return true
+end
+
+---details 折叠增量（只重渲该段）
+---@param st table
+---@param block_id number
+---@return boolean
+local function try_patch_details(st, block_id)
+  if not st.result or not st.result.segments or not st.blocks or not block_id then
+    return false
+  end
+  local idx, block
+  for i, b in ipairs(st.blocks) do
+    if b.type == "details" and b.source_start == block_id then
+      idx = i
+      block = b
+      break
+    end
+  end
+  if not idx or not block then
+    return false
+  end
+  local cfg = config.get()
+  local cols = preview_width(st)
+  local md_path = vim.api.nvim_buf_get_name(st.source_buf)
+  render.assign_heading_numbers(st.blocks)
+  local fp = st.fingerprints and st.fingerprints[idx]
+  local frag = render.render_blocks_fragment({ block }, {
+    cfg = cfg,
+    width = cols,
+    expanded_codes = st.expanded_codes,
+    expanded_details = st.expanded_details,
+    md_path = md_path,
+    fingerprints = fp and { fp } or nil,
+  })
+  local info = render.replace_segments(st.result, idx, idx, frag)
+  if not info then
+    return false
+  end
+  render.apply_range(st.preview_buf, st.result, info)
+  apply_headings_meta(st, st.blocks, st.result)
+  if info.delta ~= 0 then
+    pcall(function()
+      require("mdview.graphics").clear_buf(st.preview_buf)
+    end)
+  end
+  return true
+end
+
+---切换中/英文界面：只改文案，不全量 re-render
 function M.toggle_ui_lang()
   local i18n = require("mdview.i18n")
   local next_lang = i18n.toggle()
@@ -238,74 +650,32 @@ function M.toggle_ui_lang()
   else
     vim.notify(i18n.t("lang_to_zh"), vim.log.levels.INFO)
   end
-  -- 帮助浮层若开着，关了再用新语言重开
   local help = require("mdview.help")
   local help_was = help.is_open()
   if help_was then
     help.close_float()
   end
-  M.refresh_all()
+  for _, st in pairs(states) do
+    if st and st.source_buf and vim.api.nvim_buf_is_valid(st.source_buf) then
+      if not patch_lang_for_state(st) then
+        pcall(function()
+          M.refresh(st.source_buf)
+        end)
+      end
+    end
+  end
+  for _, sess in pairs(tab_sessions) do
+    if sess and sess.source_buf and vim.api.nvim_buf_is_valid(sess.source_buf) then
+      local st = get_state(sess.source_buf)
+      if st and not patch_lang_for_state(st) then
+        pcall(function()
+          M.refresh(sess.source_buf)
+        end)
+      end
+    end
+  end
   if help_was then
     help.open_float()
-  end
-end
-
-local function preview_width(st)
-  if st.preview_win and vim.api.nvim_win_is_valid(st.preview_win) then
-    return vim.api.nvim_win_get_width(st.preview_win)
-  end
-  return vim.api.nvim_win_get_width(0)
-end
-
-local function do_render(st)
-  if not vim.api.nvim_buf_is_valid(st.source_buf) then
-    return
-  end
-  if not st.preview_buf or not vim.api.nvim_buf_is_valid(st.preview_buf) then
-    return
-  end
-  local cfg = config.get()
-  local cols = preview_width(st)
-  local blocks = parse.parse_buf(st.source_buf, cfg)
-  local md_path = vim.api.nvim_buf_get_name(st.source_buf)
-  local result = render.render(blocks, {
-    cfg = cfg,
-    width = cols,
-    expanded_codes = st.expanded_codes,
-    expanded_details = st.expanded_details,
-    md_path = md_path,
-  })
-  st.result = result
-  st.blocks = blocks
-  st.headings = anchor.collect_headings(blocks, result.rev_map)
-  -- 正文标题预览行（勿用 TOC 占位的映射）
-  for _, h in ipairs(st.headings) do
-    h.preview_line = (result.heading_preview and result.heading_preview[h.source_start])
-      or result.rev_map[h.source_start]
-      or h.preview_line
-  end
-  -- 帮助改为 ? float，不再在底部占行
-  render.apply(st.preview_buf, result, {
-    show_help = false,
-    cols = cols,
-  })
-  st._last_preview_w = cols
-
-  -- 预览内只用 █ 缩略；高清仅 float / 手动 gh
-  pcall(function()
-    require("mdview.graphics").clear_buf(st.preview_buf)
-  end)
-
-  -- 刷新键位（预览 buffer 复用时也能挂上新快捷键如 gh）
-  attach_maps(st.preview_buf)
-
-  -- 禁止水平滚动（内容已按 cols 软折行）
-  if st.preview_win and vim.api.nvim_win_is_valid(st.preview_win) then
-    pcall(function()
-      vim.wo[st.preview_win].wrap = false
-      vim.wo[st.preview_win].sidescrolloff = 0
-      vim.wo[st.preview_win].list = false
-    end)
   end
 end
 
@@ -318,7 +688,7 @@ function M.refresh(source_buf)
   if not st then
     return
   end
-  do_render(st)
+  do_render(st, { force_full = true })
   if st.mode == "side" then
     sync.sync_from_source(st)
   end
@@ -2076,7 +2446,9 @@ function M._activate_hit(st, hit, row)
       cur = hit.expanded
     end
     st.expanded_details[hit.block_id] = not cur
-    do_render(st)
+    if not try_patch_details(st, hit.block_id) then
+      do_render(st, { force_full = true })
+    end
   elseif hit.kind == "image" then
     image_mod.open_preview(hit.path, config.get())
   elseif hit.kind == "image_inline" then
