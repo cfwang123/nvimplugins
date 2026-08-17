@@ -193,6 +193,8 @@ local function find_images_on_line(text)
 end
 
 ---图片链接隐藏显示：🖼 name（alt 空 → image）
+---注意：不可在同一 extmark 上同时 `conceal=""` + `virt_text`——
+---部分 Neovim 版本会把原文藏掉却不画 virt_text，非光标行变成空白。
 ---@param buf integer
 ---@param row0 integer
 ---@param c0 integer
@@ -212,19 +214,47 @@ local function set_image_conceal(buf, row0, c0, c1, alt)
     name = "image"
   end
   local label = "🖼 " .. name
-  -- 整段 ![…](…) conceal；virt_text 显示为 🖼 name
-  -- 默认 concealcursor 为空 → 光标行不隐藏，符合「非光标行」
-  -- inline 需 0.10+；0.9 用 overlay（配合 conceal 即可）
-  local pos = (vim.fn.has("nvim-0.10") == 1) and "inline" or "overlay"
-  pcall(vim.api.nvim_buf_set_extmark, buf, NS, row0, c0, {
+
+  -- 1) 零宽起点 mark：只挂替换文案（与 conceal 拆开，避免「藏光不显」）
+  -- 默认 concealcursor 为空 → 光标行仍显示原文；virt_text_hide 避免光标行叠字
+  local vt = {
+    virt_text = { { label, "MdViewImage" } },
+    virt_text_pos = "inline",
+    priority = 120,
+    hl_mode = "combine",
+    right_gravity = false,
+  }
+  if vim.fn.has("nvim-0.10") == 1 then
+    vt.virt_text_hide = true
+  else
+    -- 0.9：inline 可能不可用，用 overlay 盖在起点
+    vt.virt_text_pos = "overlay"
+  end
+  local ok_vt = pcall(vim.api.nvim_buf_set_extmark, buf, NS, row0, c0, vt)
+  if not ok_vt then
+    pcall(vim.api.nvim_buf_set_extmark, buf, NS, row0, c0, {
+      virt_text = { { label, "MdViewImage" } },
+      virt_text_pos = "overlay",
+      priority = 120,
+      hl_mode = "combine",
+    })
+  end
+
+  -- 2) 隐藏整段 ![…](…)
+  local ok_c = pcall(vim.api.nvim_buf_set_extmark, buf, NS, row0, c0, {
     end_col = c1,
     conceal = "",
-    virt_text = { { label, "MdViewImage" } },
-    virt_text_pos = pos,
-    virt_text_hide = true, -- 光标在该行时不叠 virt_text，避免与原文叠字
-    priority = 115,
+    priority = 110,
     hl_mode = "combine",
   })
+  -- 极端回退：至少用单字符 conceal，避免整行空白
+  if not ok_c then
+    pcall(vim.api.nvim_buf_set_extmark, buf, NS, row0, c0, {
+      end_col = c1,
+      conceal = "🖼",
+      priority = 110,
+    })
+  end
 end
 
 ---treesitter 把 `[ ]` / `[x]` 当成 shortcut_link，conceallevel≥2 时方括号被藏掉

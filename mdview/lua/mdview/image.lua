@@ -71,15 +71,142 @@ local function file_exists(path)
   return path and vim.fn.filereadable(path) == 1
 end
 
-local function python_cmd(cfg)
-  local py = (cfg.image and cfg.image.python) or "python"
+---最近一次缩略失败原因（供预览占位文案，避免一律写成 Pillow）
+--- "no_python" | "no_pillow" | "no_script" | "backend_none" | "decode" | "parse" | "exec" | nil
+M.last_thumb_err = nil
+
+---缓存：已验证带 Pillow 的 python 路径
+local py_resolved = {
+  key = nil, ---@type string|nil
+  cmd = nil, ---@type string|nil
+  has_pillow = nil, ---@type boolean|nil
+}
+
+local function py_candidates(cfg)
+  local cands = {}
+  local seen = {}
+  local function add(p)
+    if type(p) ~= "string" or p == "" or seen[p] then
+      return
+    end
+    seen[p] = true
+    cands[#cands + 1] = p
+  end
+  add(cfg and cfg.image and cfg.image.python)
+  add(vim.g.python3_host_prog)
+  add("python")
+  add("python3")
+  -- Windows 上 PATH 里可能有多个 python；补常见绝对路径探测太慢，靠 executable 顺序即可
+  return cands
+end
+
+local function is_runnable_py(py)
+  if not py or py == "" then
+    return false
+  end
   if vim.fn.executable(py) == 1 then
-    return py
+    return true
   end
-  if vim.fn.executable("python3") == 1 then
-    return "python3"
+  -- 完整路径有时 executable=0
+  if py:find("[/\\]") and vim.fn.filereadable(py) == 1 then
+    return true
   end
-  return nil
+  return false
+end
+
+---探测 py 是否能 import Pillow（带缓存）
+---@param py string
+---@return boolean
+local function py_has_pillow(py)
+  local ok, out = pcall(vim.fn.systemlist, {
+    py,
+    "-X",
+    "utf8",
+    "-c",
+    "from PIL import Image; print('ok')",
+  })
+  if not ok or type(out) ~= "table" then
+    return false
+  end
+  if vim.v.shell_error ~= 0 then
+    return false
+  end
+  for _, line in ipairs(out) do
+    if tostring(line):match("ok") then
+      return true
+    end
+  end
+  return false
+end
+
+---选择 python：优先配置 / host_prog，且尽量带 Pillow
+---@param cfg table|nil
+---@return string|nil py
+---@return boolean|nil has_pillow
+local function python_cmd(cfg)
+  local key = table.concat({
+    tostring(cfg and cfg.image and cfg.image.python or ""),
+    tostring(vim.g.python3_host_prog or ""),
+  }, "\0")
+  if py_resolved.key == key and py_resolved.cmd then
+    return py_resolved.cmd, py_resolved.has_pillow
+  end
+
+  local first = nil
+  local with_pillow = nil
+  for _, py in ipairs(py_candidates(cfg)) do
+    if is_runnable_py(py) then
+      first = first or py
+      if py_has_pillow(py) then
+        with_pillow = py
+        break
+      end
+    end
+  end
+
+  local chosen = with_pillow or first
+  py_resolved.key = key
+  py_resolved.cmd = chosen
+  py_resolved.has_pillow = with_pillow ~= nil
+  return chosen, py_resolved.has_pillow
+end
+
+---缩略失败时的用户可读短文案（预览占位）
+---@param cfg table|nil
+---@param max_imgs number|nil 已达上限时传入
+---@return string
+function M.thumb_fail_hint(cfg, max_imgs)
+  if type(max_imgs) == "number" and max_imgs > 0 then
+    return string.format("[thumb skipped: max_images=%d · <CR> open float]", max_imgs)
+  end
+  local err = M.last_thumb_err
+  if err == "backend_none" then
+    return "[thumb off · <CR> open float]"
+  end
+  if err == "no_python" then
+    return "[thumb: no python · <CR> open float]"
+  end
+  if err == "no_pillow" then
+    return "[thumb: pip install Pillow · <CR> open float]"
+  end
+  if err == "no_script" then
+    return "[thumb: thumb.py missing · <CR> open float]"
+  end
+  if err == "decode" then
+    return "[thumb: decode failed · <CR> open float]"
+  end
+  if err == "parse" or err == "exec" then
+    return "[thumb: render failed · <CR> open float]"
+  end
+  -- 未跑过 render 时再探测一次
+  local py, has = python_cmd(cfg)
+  if not py then
+    return "[thumb: no python · <CR> open float]"
+  end
+  if has == false then
+    return "[thumb: pip install Pillow · <CR> open float]"
+  end
+  return "[thumb unavailable · <CR> open float]"
 end
 
 local function strip_cr(s)
@@ -457,16 +584,26 @@ function M.render_thumb(abs_path, full_w, max_h, cfg)
     }
   end
 
-  -- 字符画仅 Python+Pillow（scripts/thumb.py），不再依赖 chafa
+  -- 字符画：Python+Pillow（scripts/thumb.py）
   local backend = (cfg.image and cfg.image.backend) or "python"
   if backend == "none" then
+    M.last_thumb_err = "backend_none"
     return nil
   end
 
-  local py = python_cmd(cfg)
+  local py, has_pillow = python_cmd(cfg)
   local script = plugin_root() .. "/scripts/thumb.py"
   script = vim.fn.fnamemodify(script, ":p")
-  if not py or vim.fn.filereadable(script) ~= 1 then
+  if not py then
+    M.last_thumb_err = "no_python"
+    return nil
+  end
+  if has_pillow == false then
+    M.last_thumb_err = "no_pillow"
+    return nil
+  end
+  if vim.fn.filereadable(script) ~= 1 then
+    M.last_thumb_err = "no_script"
     return nil
   end
   local cmd = {
@@ -484,30 +621,45 @@ function M.render_thumb(abs_path, full_w, max_h, cfg)
     glyph,
   }
   local ok, out = pcall(vim.fn.systemlist, cmd)
-  if ok and type(out) == "table" then
-    local parsed = parse_thumb_protocol(out)
-    if parsed then
-      reapply_mark_colors(parsed.marks)
-      local result = {
-        lines = parsed.lines,
-        marks = parsed.marks,
-        width = parsed.width,
-        height = parsed.height,
-        glyph = parsed.glyph or glyph,
-      }
-      thumb_cache[ckey] = result
-      -- 简单限量
-      local n = 0
-      for _ in pairs(thumb_cache) do
-        n = n + 1
-      end
-      if n > 40 then
-        thumb_cache = { [ckey] = result }
-      end
-      return result
+  if not ok then
+    M.last_thumb_err = "exec"
+    return nil
+  end
+  if type(out) ~= "table" or vim.v.shell_error ~= 0 then
+    -- stderr 可能混在 out 里（systemlist 只收 stdout）；看 magic / no Pillow
+    local joined = table.concat(normalize_out(out), "\n")
+    if joined:find("no Pillow") or joined:find("Pillow") then
+      M.last_thumb_err = "no_pillow"
+      py_resolved.has_pillow = false
+    else
+      M.last_thumb_err = "decode"
     end
+    return nil
+  end
+  local parsed = parse_thumb_protocol(out)
+  if parsed then
+    reapply_mark_colors(parsed.marks)
+    local result = {
+      lines = parsed.lines,
+      marks = parsed.marks,
+      width = parsed.width,
+      height = parsed.height,
+      glyph = parsed.glyph or glyph,
+    }
+    thumb_cache[ckey] = result
+    -- 简单限量
+    local n = 0
+    for _ in pairs(thumb_cache) do
+      n = n + 1
+    end
+    if n > 80 then
+      thumb_cache = { [ckey] = result }
+    end
+    M.last_thumb_err = nil
+    return result
   end
 
+  M.last_thumb_err = "parse"
   return nil
 end
 

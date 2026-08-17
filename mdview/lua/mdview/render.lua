@@ -426,6 +426,52 @@ local function assign_heading_numbers(blocks)
   walk(blocks)
 end
 
+---计算标题是否可折叠、以及被收起标题「罩住」的块（按 source_start）
+---@param blocks table[]
+---@param collapsed table|nil source_start -> true
+---@return table foldable source_start -> true
+---@return table hidden source_start -> true
+function M.compute_heading_fold(blocks, collapsed)
+  collapsed = collapsed or {}
+  local foldable, hidden = {}, {}
+  for i, b in ipairs(blocks or {}) do
+    if b.type == "heading" then
+      local level = b.level or 1
+      local has = false
+      for j = i + 1, #blocks do
+        local bj = blocks[j]
+        if bj.type == "heading" and (bj.level or 1) <= level then
+          break
+        end
+        has = true
+        break
+      end
+      foldable[b.source_start] = has
+    end
+  end
+  local i = 1
+  local n = #(blocks or {})
+  while i <= n do
+    local b = blocks[i]
+    if b.type == "heading" and collapsed[b.source_start] and foldable[b.source_start] then
+      local level = b.level or 1
+      local j = i + 1
+      while j <= n do
+        local bj = blocks[j]
+        if bj.type == "heading" and (bj.level or 1) <= level then
+          break
+        end
+        hidden[bj.source_start] = true
+        j = j + 1
+      end
+      i = j
+    else
+      i = i + 1
+    end
+  end
+  return foldable, hidden
+end
+
 local function render_blocks(ctx, blocks)
 
   local cfg = ctx.cfg
@@ -457,11 +503,29 @@ local function render_blocks(ctx, blocks)
           r.end_col = r.end_col + off
         end
       end
+      -- 标题折叠标记（有下级内容时可收起）；仅小三角可点/Enter
+      local foldable = ctx.heading_foldable and ctx.heading_foldable[b.source_start]
+      local collapsed = ctx.collapsed_headings and ctx.collapsed_headings[b.source_start]
+      local marker = ""
+      local tri = ""
+      if cfg.heading_fold ~= false and foldable then
+        tri = collapsed and "▸" or "▼"
+        marker = tri .. " "
+        text = marker .. text
+        prefix = marker .. prefix
+        local off = #marker
+        for _, r in ipairs(ranges) do
+          r.col = r.col + off
+          r.end_col = r.end_col + off
+        end
+      end
       local hl = "MdViewH" .. tostring(math.min(6, b.level or 1))
       -- 整行标题：MdViewH* 已含 bold + 层级色（勿再叠 MdViewBold，会盖掉颜色）
-      local pl = emit_line(ctx, text, b.source_start, {
-        { col = 0, end_col = #text, hl = hl },
-      }, { force_rev_map = true })
+      local er = { { col = 0, end_col = #text, hl = hl } }
+      if tri ~= "" then
+        er[#er + 1] = { col = 0, end_col = #tri, hl = "MdViewHeadingFold" }
+      end
+      local pl = emit_line(ctx, text, b.source_start, er, { force_rev_map = true })
       for _, r in ipairs(ranges) do
         ctx.extmarks[#ctx.extmarks + 1] = {
           line = pl - 1,
@@ -482,6 +546,19 @@ local function render_blocks(ctx, blocks)
       b._preview_line = pl
       ctx.heading_preview = ctx.heading_preview or {}
       ctx.heading_preview[b.source_start] = pl
+      if tri ~= "" then
+        -- 仅小三角列范围命中（不含后随空格与标题正文）
+        ctx.hits[#ctx.hits + 1] = {
+          line = pl,
+          kind = "heading_fold",
+          col = 0,
+          end_col = #tri,
+          block_id = b.source_start,
+          level = b.level or 1,
+          collapsed = collapsed and true or false,
+          foldable = true,
+        }
+      end
       end_block(ctx, meta)
       emit_line(ctx, "", b.source_end)
 
@@ -817,7 +894,10 @@ local function prepare_cell(raw, cell_w, align, cfg, ctx, ncol, table_w)
   if max_h == nil then
     max_h = 0
   end
-  local max_imgs = (cfg.image and cfg.image.max_images) or 20
+  local max_imgs = cfg.image and cfg.image.max_images
+  if max_imgs == nil then
+    max_imgs = 0 -- 0=不限制
+  end
   local mode = cfg.image and cfg.image.mode or "thumb"
 
   for _, im in ipairs(images) do
@@ -831,7 +911,8 @@ local function prepare_cell(raw, cell_w, align, cfg, ctx, ncol, table_w)
     else
       ctx.image_count = (ctx.image_count or 0) + 1
       local thumb = nil
-      if mode == "thumb" and ctx.image_count <= max_imgs then
+      local under_cap = max_imgs <= 0 or ctx.image_count <= max_imgs
+      if mode == "thumb" and under_cap then
         thumb = image_mod.render_thumb(abs, img_w, max_h, cfg)
       end
       if thumb and thumb.lines then
@@ -1367,9 +1448,13 @@ function M._render_image(ctx, b)
   })
 
   ctx.image_count = (ctx.image_count or 0) + 1
-  local max_imgs = (cfg.image and cfg.image.max_images) or 20
+  local max_imgs = cfg.image and cfg.image.max_images
+  if max_imgs == nil then
+    max_imgs = 0 -- 0=不限制
+  end
+  local under_cap = max_imgs <= 0 or ctx.image_count <= max_imgs
   local thumb = nil
-  if mode == "thumb" and abs and ctx.image_count <= max_imgs then
+  if mode == "thumb" and abs and under_cap then
     -- 宽受 max_width 限制（默认 60 列）；高按比例。max_height 为上限（nil/0 不限制）
     local max_h = cfg.image and cfg.image.max_height
     if max_h == nil then
@@ -1429,7 +1514,9 @@ function M._render_image(ctx, b)
       { col = pad, end_col = pad + #msg, hl = "MdViewImage" },
     })
   else
-    local msg = "  [thumb: pip install Pillow · <CR> open float]"
+    -- 超 max_images 或 thumb 失败：给出真实原因（勿一律写 Pillow）
+    local cap = (not under_cap and max_imgs > 0) and max_imgs or nil
+    local msg = "  " .. image_mod.thumb_fail_hint(cfg, cap)
     local cmsg, pad = pad_center(msg, line_w)
     emit_line(ctx, cmsg, b.source_start, {
       { col = pad, end_col = pad + #msg, hl = "MdViewImage" },
@@ -1516,6 +1603,12 @@ function M.render(blocks, opts)
     width = 20
   end
 
+  local collapsed_headings = opts.collapsed_headings or {}
+  local heading_foldable, heading_hidden = M.compute_heading_fold(blocks, collapsed_headings)
+  if cfg.heading_fold == false then
+    heading_foldable, heading_hidden = {}, {}
+  end
+
   local ctx = {
     cfg = cfg,
     width = width,
@@ -1529,6 +1622,8 @@ function M.render(blocks, opts)
     hits = {},
     expanded_codes = opts.expanded_codes or {},
     expanded_details = opts.expanded_details or {},
+    collapsed_headings = collapsed_headings,
+    heading_foldable = heading_foldable,
     md_path = opts.md_path,
     image_count = 0,
     last_source = 1,
@@ -1582,12 +1677,16 @@ function M.render(blocks, opts)
     end
   end
 
-  -- 按顶层 AST 段渲染并记录预览行范围（供按段增量）
+  -- 按顶层 AST 段渲染并记录预览行范围（供按段增量；收起的标题下内容为空段）
   local fps = opts.fingerprints
   ctx.segments = {}
   for i, b in ipairs(blocks or {}) do
     local ps = #ctx.lines + 1
-    render_blocks(ctx, { b })
+    if heading_hidden[b.source_start] then
+      -- 被上级标题收起：不输出行，保留空 segment 占位
+    else
+      render_blocks(ctx, { b })
+    end
     ctx.segments[#ctx.segments + 1] = {
       index = i,
       type = b.type,
@@ -1596,6 +1695,7 @@ function M.render(blocks, opts)
       preview_start = ps,
       preview_end = #ctx.lines,
       fingerprint = fps and fps[i] or nil,
+      hidden = heading_hidden[b.source_start] and true or false,
     }
   end
 
@@ -1673,6 +1773,8 @@ local function new_render_ctx(opts)
     hits = {},
     expanded_codes = opts.expanded_codes or {},
     expanded_details = opts.expanded_details or {},
+    collapsed_headings = opts.collapsed_headings or {},
+    heading_foldable = opts.heading_foldable or {},
     md_path = opts.md_path,
     image_count = 0,
     last_source = 1,
@@ -1741,10 +1843,15 @@ function M.render_blocks_fragment(blocks, opts)
   opts = opts or {}
   local ctx = new_render_ctx(opts)
   local fps = opts.fingerprints
+  local hidden = opts.heading_hidden or {}
   local segs = {}
   for i, b in ipairs(blocks or {}) do
     local ps = #ctx.lines + 1
-    render_blocks(ctx, { b })
+    if hidden[b.source_start] then
+      -- 收起区间内：空段
+    else
+      render_blocks(ctx, { b })
+    end
     segs[#segs + 1] = {
       index = i,
       type = b.type,
@@ -1753,6 +1860,7 @@ function M.render_blocks_fragment(blocks, opts)
       preview_start = ps,
       preview_end = #ctx.lines,
       fingerprint = fps and fps[i] or nil,
+      hidden = hidden[b.source_start] and true or false,
     }
   end
   return {

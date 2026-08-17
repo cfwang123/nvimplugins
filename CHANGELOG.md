@@ -4,6 +4,26 @@ All notable changes to this repository are documented in this file.
 
 ---
 
+## 2026-08-17
+
+### English
+
+#### mdview
+
+- **Fix**: preview window no longer inherits source `source_fold` Vim fold options. After `:MdView` / `:MdSideView`, image block-character thumbs (and other multi-line blocks) were collapsed into a single fold line like `🖼 … … (N lines)`. Preview now forces `foldenable=false` / `foldmethod=manual`; returning to source restores `source_fold`.
+- **Fix**: preview thumbs past `image.max_images` wrongly showed `[thumb: pip install Pillow]` even when Pillow worked and **float** still opened the image. Default `max_images` is now **`0` (unlimited)**; over-limit / real failures show accurate hints (`max_images=N` / `no python` / Pillow / decode…). Python discovery prefers `image.python` → `python3_host_prog` → PATH, and picks an interpreter that has Pillow.
+- **Fix**: editor `![alt](url)` conceal could leave a **blank** non-cursor line (same extmark with `conceal=""` + `virt_text` hid the source but drew no `🖼 name` on some Neovim builds). Split into two extmarks: show `🖼 image` (empty alt) / `🖼 {alt}`, then conceal the raw syntax.
+
+### 中文
+
+#### mdview
+
+- **修复**：预览窗不再继承源码 `source_fold` 的 Vim 折叠选项。`:MdView` / `:MdSideView` 后，图片 █ 缩略（及其他多行块）会被收成一行 `🖼 … … (N 行)`。预览现强制 `foldenable=false` / `foldmethod=manual`；回到源码时恢复 `source_fold`。
+- **修复**：超过 `image.max_images` 后预览误提示 `[thumb: pip install Pillow]`（Pillow 其实可用，且 **float 仍能看图**）。默认 `max_images` 改为 **`0`（不限制）**；超限/失败显示真实原因（`max_images=N` / 无 python / 无 Pillow / 解码失败…）。Python 探测顺序：`image.python` → `python3_host_prog` → PATH，并优先选用已装 Pillow 的解释器。
+- **修复**：编辑区 `![alt](url)` 源码 conceal 后非光标行变成**空白**（`conceal` 与 `virt_text` 写在同一 extmark 时部分 Neovim 会藏原文却不画 `🖼 name`）。改为拆成两个 extmark：先画 `🖼 image`（alt 空时）/ `🖼 {alt}`，再 conceal 原文。
+
+---
+
 ## 2026-08-15
 
 ### English
@@ -15,6 +35,11 @@ All notable changes to this repository are documented in this file.
 - **Segment-based preview updates**: source edits re-render only dirty top-level AST blocks (paragraph / table / code / list / …); headings still force a full refresh (TOC).
 - **`<details>`** expand/collapse is incremental (same segment patch path).
 - **`L` language toggle** only rewrites UI strings (key hint, TOC title, `[Copy]` labels); no full re-parse.
+- **Heading fold**: collapse/expand section body under a heading. Only the **`▼`/`▸` triangle** toggles (click or Enter with cursor on the glyph). Nested until next same-or-higher level. Toggle is **incremental** (only that section is re-rendered). TOC jump auto-expands ancestor headings. Config: `heading_fold` (default `true`).
+- Preview keys **`zM`** / **`zR`**: collapse / expand **all** headings (same idea as Vim folds).
+- Preview key **`za`**: toggle the **smallest** fold under the cursor (nested heading / code block / `<details>`).
+- **Source buffer heading folds**: ATX headings (`#`…`######`) use `foldexpr` (skips fenced code). Default open (`foldlevel=99`); `zc`/`zo`/`za`/`zM`/`zR` work. Config: `source_heading_fold` (`nil` = follow `heading_fold`).
+- **Source `<details>` folds**: body under `<summary>` is folded; **collapsed by default** (unless `open` attribute). User `zo` state is remembered across edits. Config: `source_details_fold` (default `true`).
 
 ### 中文
 
@@ -25,6 +50,11 @@ All notable changes to this repository are documented in this file.
 - **按段增量预览**：源码编辑只重渲脏的顶层 AST 段（段落 / 表格 / 代码 / 列表等）；标题变更仍全量（牵动 TOC）。
 - **`<details>`** 展开/收起走同一套段 patch。
 - **`L` 切语言**只改文案（顶栏、TOC 标题、`[复制]`），不再整篇 re-parse。
+- **按标题折叠**：标题前显示 `▼`/`▸`；**仅点小三角**或**光标在小三角上 Enter** 才切换（标题正文不触发）。折叠直到同级或更高级标题；切换为**增量**（只重渲该节）。TOC 跳转会自动展开祖先标题。配置项 `heading_fold`（默认 `true`）。
+- 预览快捷键 **`zM`** / **`zR`**：收起 / 展开**全部**标题（与 Vim fold 习惯一致）。
+- 预览快捷键 **`za`**：切换光标处**最小**折叠块（嵌套标题 / 代码块 / `<details>`）。
+- **源码标题折叠**：ATX 标题（`#`…`######`）用 `foldexpr`（代码围栏内 `#` 不计）。默认展开（`foldlevel=99`）；`zc`/`zo`/`za`/`zM`/`zR` 可用。配置 `source_heading_fold`（`nil`=跟随 `heading_fold`）。
+- **源码 `<details>` 折叠**：`<summary>` 下正文可折叠；**默认收起**（有 `open` 属性则展开）。用户 `zo` 展开状态在编辑后会尽量保留。配置 `source_details_fold`（默认 `true`）。
 
 ---
 

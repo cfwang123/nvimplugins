@@ -42,6 +42,7 @@ local links = {
   MdViewImageBorder = "Comment",
   MdViewDetailsMarker = "Special",
   MdViewDetailsSummary = "Title",
+  MdViewHeadingFold = "Comment", -- 标题 ▸/▼ 折叠标记
   MdViewCursor = "CursorLine",
   MdViewCursorLine = "", -- 源光标对应预览行（更醒目），见 setup
   MdViewCursorMark = "", -- 预览内光标位置标记

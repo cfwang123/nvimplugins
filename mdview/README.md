@@ -18,9 +18,10 @@ Pure Lua parse + read-only preview buffer; code highlighting, TOC, tables, image
 | Lists / quotes / HR / tables | GFM tables; column width by content (may be narrower than window); images in cells; escaped `\|` |
 | Code blocks | Border, language, line numbers, gray bg, fold after 10 lines (**Enter** anywhere in block / **mouse** on fold line only; incremental), **`c` / `yc` / [Copy]**, TS→syntax→plain |
 | Incremental preview | Edits re-render **dirty AST segments** only (paragraph / table / code / …); `<details>` fold + `L` UI strings also skip full re-render |
+| Heading fold | Preview: `▼`/`▸` triangle only. Source: ATX `#` folds (`zc`/`zo`/`zM`/`zR`; `source_heading_fold`) |
 | TOC | Top of preview; `t` in preview / **`<leader>toc`** in editor (configurable) opens TOC float |
 | Links | Blue + underline in preview; Enter / Ctrl+LeftMouse; `#heading` / `#1. heading` anchors; md → target preview; `Ctrl-o` back (no extmark `url` required on Neovim 0.9) |
-| Images | Block chars in preview; `gi`/Enter float; **editor** Enter/Ctrl-click on `![](…)`; `gh` page HD; `o` system open |
+| Images | Block chars in preview (no Vim fold — not collapsed to `… (N lines)`); `gi`/Enter float; **editor** Enter/Ctrl-click on `![](…)`; `gh` page HD; `o` system open |
 | HTML | `<details>` / `<summary>`, `<img>`, `<font color/style>` (color / bold / italic; preview + editor) |
 | Layout | Soft-wrap to preview width; reflow on resize |
 
@@ -167,6 +168,9 @@ require("mdview").setup({
   split_direction = "right",
   width = 0.45,
   heading_conceal = true,
+  heading_fold = true,         -- preview: collapse section under heading (▼/▸)
+  source_heading_fold = nil,   -- source buffer ATX folds; nil = follow heading_fold
+  source_details_fold = true,  -- source <details> body folds (default collapsed)
   list_bullets = { "●", "○" },
   toc = true,
   toc_min_level = 1,
@@ -186,7 +190,7 @@ require("mdview").setup({
     mode = "thumb",
     max_width = 60,            -- max thumb columns; 0/nil = full preview width
     max_height = 0,
-    max_images = 20,
+    max_images = 0,            -- 0=unlimited block thumbs; >0 = only first N in preview
     backend = "auto",
     python = "python",
     open_with = "float",
@@ -251,8 +255,11 @@ With side open, switching to another **markdown** buffer in the same tab follows
 | `q` | Close preview / back to source |
 | `r` | Force full refresh preview |
 | (auto) | Reload source + re-render when the md file changes **on disk** and the buffer is not modified (`watch_external`) |
-| `<CR>` | TOC / code fold (anywhere in block) / details / image / **md link → target preview** |
-| Mouse | Code fold only on the **gray fold line** (body click does not toggle) |
+| `<CR>` | TOC / **heading fold** / code fold (anywhere in block) / details / image / **md link → target preview** |
+| Mouse | Heading fold only on **`▼`/`▸`**; code fold only on the **gray fold line** |
+| `za` | Toggle **smallest** fold under cursor (heading / code / details) |
+| `zM` | Collapse **all** headings |
+| `zR` | Expand **all** headings |
 | `gi` | Image float |
 | `gh` | Temporary in-page HD (cleared on scroll / focus / resize) |
 | `o` | System-open image |
@@ -274,6 +281,8 @@ Works without opening preview (auto-mapped on `markdown` buffers once the plugin
 | `Ctrl`+LeftMouse | Same |
 | `<C-o>` | Jump back (Vim jumplist; in-doc anchors and external md) |
 | `<CR>` elsewhere | Default Vim behavior |
+| `zc` / `zo` / `za` | Close / open / toggle folds (**headings** + **`<details>`**) |
+| `zM` / `zR` | Collapse / expand **all** folds |
 | (auto) | **Non-cursor lines**: show `![alt](url)` as **`🖼 name`** (empty alt → `image`; full syntax on the cursor line). Disable with `source_image_conceal = false`. Task-list **`[ ]` / `[x]`** stay visible (not treated as shortcut-link brackets). |
 | **`"+p`** / **`"+P`** | **Smart paste** (recommended): clipboard image → `images/yyyyMMddHHmmss.png` + `![image](images/...)`; otherwise normal text paste |
 | **`Ctrl-Shift-v`** / **`Shift-Insert`** | Same (Shift-Insert also in insert mode) |

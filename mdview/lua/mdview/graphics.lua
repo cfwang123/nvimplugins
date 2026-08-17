@@ -788,7 +788,11 @@ function M.attach_preview(opts)
     return false
   end
 
-  local max_imgs = opts.max_images or 20
+  -- 0/nil = 不限制（仍受下方 regions 数量约束）
+  local max_imgs = opts.max_images
+  if max_imgs == nil or max_imgs <= 0 then
+    max_imgs = math.huge
+  end
   local scale = opts.scale == "fit" and "fit" or "fill"
   local python = opts.python
   local win_w = math.max(4, vim.api.nvim_win_get_width(win))

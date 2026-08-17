@@ -18,9 +18,10 @@
 | 列表 / 引用 / HR / 表 | GFM 表；列宽按内容（可小于窗口）；表内图；单元格 `\|` 转义 |
 | 代码块 | 边框、语言、行号、灰底、默认 10 行折叠（**Enter 块内任意处** / **鼠标仅底灰字行**；增量刷新）、**`c` / `yc` / [Copy]**、TS→syntax→单色 |
 | 增量预览 | 编辑只重渲**脏 AST 段**（段落 / 表 / 代码等）；`<details>` 折叠与 `L` 切语言也走局部更新 |
+| 标题折叠 | 预览：仅小三角 `▼`/`▸`。源码：ATX `#` 折叠（`zc`/`zo`/`zM`/`zR`；`source_heading_fold`） |
 | TOC | 预览顶目录；预览内 `t` / 编辑窗 **`<leader>toc`**（可配）打开目录 float |
 | 链接 | 预览内蓝字+下划线；预览/编辑窗 Enter 或 Ctrl+左键；`#标题` / `#1. 标题` 锚点；md 文件→目标预览；`Ctrl-o` 返回（Neovim 0.9 不依赖 extmark `url`） |
-| 图片 | 预览内色块渲染；预览 `gi`/Enter float；**编辑窗**在 `![](…)` 上 Enter/Ctrl+左键预览；`gh` 页内高清；`o` 系统打开 |
+| 图片 | 预览内色块渲染（不走 Vim fold，避免被收成「… (N 行)」）；预览 `gi`/Enter float；**编辑窗**在 `![](…)` 上 Enter/Ctrl+左键预览；`gh` 页内高清；`o` 系统打开 |
 | HTML | `<details>` / `<summary>`、`<img>`、`<font color/style>`（色 / **bold** / *italic*，预览 + 编辑区） |
 | 排版 | 按预览宽度软折行，变宽自动重排 |
 
@@ -173,6 +174,9 @@ require("mdview").setup({
   split_direction = "right",
   width = 0.45,
   heading_conceal = true,      -- 预览隐藏 ###，保留/生成序号
+  heading_fold = true,         -- 预览：标题节折叠（▼/▸）
+  source_heading_fold = nil,   -- 源码 ATX 折叠；nil=跟随 heading_fold
+  source_details_fold = true,  -- 源码 <details> 正文折叠（默认收起）
   list_bullets = { "●", "○" },
   toc = true,
   toc_min_level = 1,
@@ -192,7 +196,7 @@ require("mdview").setup({
     mode = "thumb",
     max_width = 60,            -- 缩略最大列数（字符宽）；0/nil = 占满预览宽
     max_height = 0,            -- 0 = 高度随宽比例；>0 限制最大行数
-    max_images = 20,
+    max_images = 0,            -- 0=不限制 █ 张数；>0 仅预览前 N 张（float 不受限）
     backend = "python",        -- python+Pillow 字符画；none 关闭
     python = "python",
     open_with = "float",
@@ -258,8 +262,11 @@ python -c "from PIL import Image; print('Pillow OK')"
 | `q` | 关闭预览 / 单窗回源 |
 | `r` | 强制全量刷新预览 |
 | （自动） | 源 md **被外部程序改写**且 buffer 无未保存修改时自动 reload 并重绘（`watch_external`） |
-| `<CR>` | TOC / 代码折叠（块内任意处） / details / 图片 / **md 链接→目标预览** |
-| 鼠标 | 代码折叠仅点**底部灰字行**（点正文不切换） |
+| `<CR>` | TOC / **标题折叠** / 代码折叠（块内任意处） / details / 图片 / **md 链接→目标预览** |
+| 鼠标 | 标题折叠仅点**小三角**；代码折叠仅点**底部灰字行** |
+| `za` | 切换光标处**最小**折叠块（标题 / 代码 / details） |
+| `zM` | **收起全部**标题 |
+| `zR` | **展开全部**标题 |
 | `gi` | 图片 float 大图 |
 | `gh` | 当前页临时高清（滚动 / 焦点切换 / 改窗大小清除） |
 | `o` | 系统打开图片 |
@@ -281,6 +288,8 @@ python -c "from PIL import Image; print('Pillow OK')"
 | `Ctrl`+鼠标左键 | 同上 |
 | `<C-o>` | 跳转后返回（Vim jumplist；文内锚点与外部 md 均适用） |
 | 非图片/链接处的 `<CR>` | 保持 Vim 默认行为 |
+| `zc` / `zo` / `za` | 收起 / 展开 / 切换折叠（**标题** + **`<details>`**） |
+| `zM` / `zR` | 收起 / 展开**全部**折叠 |
 | （自动） | **非光标行**将 `![alt](url)` 折叠显示为 **`🖼 name`**（`alt` 为空时 name=`image`；光标行显示完整源码）。`source_image_conceal = false` 可关。任务列表 **`[ ]` / `[x]`** 保持可见（不当成 shortcut link 藏方括号）。 |
 | **`"+p`** / **`"+P`** | **智能粘贴**（推荐）：剪贴板有图 → `images/yyyyMMddHHmmss.png` 并插入 `![image](images/...)`；无图则正常粘贴文本 |
 | **`Ctrl-Shift-v`** / **`Shift-Insert`** | 同上（插入模式也可用 Shift-Insert） |

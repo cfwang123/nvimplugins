@@ -19,6 +19,16 @@ function M.apply_winopts(win, cfg)
       vim.wo[win][k] = v
     end)
   end
+  -- 预览禁用 Vim 折叠：单窗 :MdView 切换 / 侧栏 vsplit 会继承源码
+  -- source_fold 的 foldmethod/foldtext，把图片 █ 缩略等多行块收成「… (N 行)」。
+  -- 预览内折叠由逻辑实现（标题 ▼/▸、代码 ⋯、details），不用 Vim fold。
+  pcall(function()
+    vim.wo[win].foldenable = false
+    vim.wo[win].foldmethod = "manual"
+    vim.wo[win].foldexpr = "0"
+    vim.wo[win].foldtext = ""
+    vim.wo[win].foldcolumn = "0"
+  end)
 end
 
 ---创建预览 buffer

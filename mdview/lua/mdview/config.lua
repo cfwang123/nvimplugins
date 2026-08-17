@@ -5,7 +5,7 @@ local M = {}
 ---@field mode "thumb"|"placeholder"|"off"
 ---@field max_height number
 ---@field max_width number|nil 预览缩略最大列数（字符宽）；0/nil=不限制（占满预览宽）
----@field max_images number
+---@field max_images number 预览内最多渲多少张 █ 缩略；0=不限制（默认）。超限显示占位，float 仍可用
 ---@field backend "python"|"none" 字符画仅 Python+Pillow（auto/chafa 兼容映射为 python）
 ---@field palette_size number
 ---@field open_with "float"|"edit"|"none"
@@ -102,6 +102,12 @@ local defaults = {
   --- 界面语言："auto"（跟随系统）| "zh" | "en"；L 可切换并记住
   ui_lang = "auto",
   heading_conceal = true,
+  --- 预览内按标题收起/展开下级内容（▸/▼；仅点小三角或光标在三角上 Enter）
+  heading_fold = true,
+  --- 源码 buffer 按 ATX 标题折叠（foldexpr）。nil=跟随 heading_fold；false 关闭
+  source_heading_fold = nil,
+  --- 源码 buffer 折叠 <details> 正文（默认 true；默认收起，有 open 属性则展开）
+  source_details_fold = true,
   list_bullets = { "●", "○" }, -- 第1层 ●，第2层及以后 ○
   table_style = "unicode",
   strikethrough = true,
@@ -126,7 +132,8 @@ local defaults = {
     max_height = 0,
     -- 预览缩略最大列数（字符宽）；0/nil = 不限制（占满预览宽）
     max_width = 60,
-    max_images = 20,
+    -- 0 = 不限制张数（长手册多图）；>0 仅渲前 N 张 █（超限可 <CR> float）
+    max_images = 0,
     backend = "python", -- 字符画：Python+Pillow（thumb.py）；none 关闭
     palette_size = 64,
     thumb_scale = "width_full", -- width_full=在 max_width 内宽优先高自适应；stretch=拉满

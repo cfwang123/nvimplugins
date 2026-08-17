@@ -45,6 +45,7 @@ local function ensure_state(source_buf)
     result = nil,
     expanded_codes = {},
     expanded_details = {},
+    collapsed_headings = {}, ---@type table<number, boolean> source_start -> collapsed
     jump_list = {}, ---@type {preview_line:number, source_line:number}[]
     show_help = nil, -- nil → 跟 config.show_help
     debounce = nil,
@@ -194,6 +195,9 @@ function M.setup(user)
   pcall(function()
     require("mdview.source_mark").ensure_au()
   end)
+  pcall(function()
+    require("mdview.source_fold").ensure_au()
+  end)
   return cfg
 end
 
@@ -206,6 +210,9 @@ function M.ensure_setup()
   M._ensure_source_maps_au()
   pcall(function()
     require("mdview.source_mark").ensure_au()
+  end)
+  pcall(function()
+    require("mdview.source_fold").ensure_au()
   end)
   return cfg
 end
@@ -274,9 +281,9 @@ local function diff_fingerprints(fps_old, fps_new)
   return lo, hi_old, hi_new
 end
 
----按指纹迁移代码/details 展开状态（源行号漂移时）
-local function remap_expanded_state(old_blocks, new_blocks, fps_old, fps_new, expanded_codes, expanded_details)
-  local code_by_fp, det_by_fp = {}, {}
+---按指纹迁移代码/details/标题折叠状态（源行号漂移时）
+local function remap_ui_fold_state(old_blocks, new_blocks, fps_old, fps_new, expanded_codes, expanded_details, collapsed_headings)
+  local code_by_fp, det_by_fp, head_by_fp = {}, {}, {}
   for i, b in ipairs(old_blocks or {}) do
     local fp = fps_old[i]
     if b.type == "code" and expanded_codes[b.source_start] then
@@ -285,8 +292,11 @@ local function remap_expanded_state(old_blocks, new_blocks, fps_old, fps_new, ex
     if b.type == "details" and expanded_details[b.source_start] ~= nil then
       det_by_fp[fp] = expanded_details[b.source_start]
     end
+    if b.type == "heading" and collapsed_headings[b.source_start] then
+      head_by_fp[fp] = true
+    end
   end
-  local new_codes, new_dets = {}, {}
+  local new_codes, new_dets, new_heads = {}, {}, {}
   for i, b in ipairs(new_blocks or {}) do
     local fp = fps_new[i]
     if b.type == "code" then
@@ -299,9 +309,13 @@ local function remap_expanded_state(old_blocks, new_blocks, fps_old, fps_new, ex
       elseif expanded_details[b.source_start] ~= nil then
         new_dets[b.source_start] = expanded_details[b.source_start]
       end
+    elseif b.type == "heading" then
+      if head_by_fp[fp] or collapsed_headings[b.source_start] then
+        new_heads[b.source_start] = true
+      end
     end
   end
-  return new_codes, new_dets
+  return new_codes, new_dets, new_heads
 end
 
 ---内容未变、仅源行号漂移：更新映射，不改预览行
@@ -385,11 +399,8 @@ local function after_render_chrome(st)
   end)
   attach_maps(st.preview_buf)
   if st.preview_win and vim.api.nvim_win_is_valid(st.preview_win) then
-    pcall(function()
-      vim.wo[st.preview_win].wrap = false
-      vim.wo[st.preview_win].sidescrolloff = 0
-      vim.wo[st.preview_win].list = false
-    end)
+    -- 每次渲染后再次关掉 Vim fold（防止继承 source_fold 后把 █ 图收成一行）
+    window.apply_winopts(st.preview_win, config.get())
   end
 end
 
@@ -407,16 +418,18 @@ local function try_segment_render(st, src_lines, blocks, fps, cols, cfg)
     return false
   end
 
-  local new_codes, new_dets = remap_expanded_state(
+  local new_codes, new_dets, new_heads = remap_ui_fold_state(
     old_blocks,
     blocks,
     old_fps,
     fps,
     st.expanded_codes or {},
-    st.expanded_details or {}
+    st.expanded_details or {},
+    st.collapsed_headings or {}
   )
   st.expanded_codes = new_codes
   st.expanded_details = new_dets
+  st.collapsed_headings = new_heads
 
   local lo, hi_old, hi_new = diff_fingerprints(old_fps, fps)
   local n_old, n_new = #old_fps, #fps
@@ -453,6 +466,10 @@ local function try_segment_render(st, src_lines, blocks, fps, cols, cfg)
   end
 
   render.assign_heading_numbers(blocks)
+  local foldable, hidden = render.compute_heading_fold(blocks, st.collapsed_headings)
+  if cfg.heading_fold == false then
+    foldable, hidden = {}, {}
+  end
   local slice, slice_fps = {}, {}
   for i = lo, hi_new do
     slice[#slice + 1] = blocks[i]
@@ -464,6 +481,9 @@ local function try_segment_render(st, src_lines, blocks, fps, cols, cfg)
     width = cols,
     expanded_codes = st.expanded_codes,
     expanded_details = st.expanded_details,
+    collapsed_headings = st.collapsed_headings,
+    heading_foldable = foldable,
+    heading_hidden = hidden,
     md_path = md_path,
     fingerprints = slice_fps,
   })
@@ -568,6 +588,7 @@ local function do_render(st, opts)
     width = cols,
     expanded_codes = st.expanded_codes,
     expanded_details = st.expanded_details,
+    collapsed_headings = st.collapsed_headings,
     md_path = md_path,
     fingerprints = fps,
   })
@@ -591,6 +612,85 @@ local function patch_lang_for_state(st)
   local cols = preview_width(st)
   local rows = render.patch_ui_strings(st.result, cols)
   render.apply_line_updates(st.preview_buf, st.result, rows)
+  return true
+end
+
+---标题折叠增量：只重渲「该标题 + 节内下级块」，其它区域不动
+---@param st table
+---@param block_id number heading source_start
+---@return boolean
+local function try_patch_heading_fold(st, block_id)
+  if not st.result or not st.result.segments or not st.blocks or not block_id then
+    return false
+  end
+  local blocks = st.blocks
+  local idx
+  for i, b in ipairs(blocks) do
+    if b.type == "heading" and b.source_start == block_id then
+      idx = i
+      break
+    end
+  end
+  if not idx then
+    return false
+  end
+  local level = blocks[idx].level or 1
+  local end_idx = #blocks
+  for j = idx + 1, #blocks do
+    local bj = blocks[j]
+    if bj.type == "heading" and (bj.level or 1) <= level then
+      end_idx = j - 1
+      break
+    end
+  end
+  if end_idx < idx or end_idx > #st.result.segments then
+    return false
+  end
+
+  local cfg = config.get()
+  local cols = preview_width(st)
+  local md_path = vim.api.nvim_buf_get_name(st.source_buf)
+  render.assign_heading_numbers(blocks)
+  local foldable, hidden = render.compute_heading_fold(blocks, st.collapsed_headings)
+  if cfg.heading_fold == false then
+    foldable, hidden = {}, {}
+  end
+
+  local slice, slice_fps = {}, {}
+  for i = idx, end_idx do
+    slice[#slice + 1] = blocks[i]
+    slice_fps[#slice_fps + 1] = st.fingerprints and st.fingerprints[i]
+  end
+  local frag = render.render_blocks_fragment(slice, {
+    cfg = cfg,
+    width = cols,
+    expanded_codes = st.expanded_codes,
+    expanded_details = st.expanded_details,
+    collapsed_headings = st.collapsed_headings,
+    heading_foldable = foldable,
+    heading_hidden = hidden,
+    md_path = md_path,
+    fingerprints = slice_fps,
+  })
+  local info = render.replace_segments(st.result, idx, end_idx, frag)
+  if not info then
+    return false
+  end
+  render.apply_range(st.preview_buf, st.result, info)
+  apply_headings_meta(st, blocks, st.result)
+  -- TOC 跳转目标可能落在被替换区内，按最新 heading_preview 校正
+  for _, h in ipairs(st.result.hits or {}) do
+    if h.kind == "toc" and h.source_start then
+      h.preview_target = (st.result.heading_preview and st.result.heading_preview[h.source_start])
+        or (st.result.rev_map and st.result.rev_map[h.source_start])
+        or h.preview_target
+    end
+  end
+  if info.delta ~= 0 then
+    pcall(function()
+      require("mdview.graphics").clear_buf(st.preview_buf)
+    end)
+  end
   return true
 end
 
@@ -618,11 +718,18 @@ local function try_patch_details(st, block_id)
   local md_path = vim.api.nvim_buf_get_name(st.source_buf)
   render.assign_heading_numbers(st.blocks)
   local fp = st.fingerprints and st.fingerprints[idx]
+  local foldable, hidden = render.compute_heading_fold(st.blocks, st.collapsed_headings)
+  if cfg.heading_fold == false then
+    foldable, hidden = {}, {}
+  end
   local frag = render.render_blocks_fragment({ block }, {
     cfg = cfg,
     width = cols,
     expanded_codes = st.expanded_codes,
     expanded_details = st.expanded_details,
+    collapsed_headings = st.collapsed_headings,
+    heading_foldable = foldable,
+    heading_hidden = hidden,
     md_path = md_path,
     fingerprints = fp and { fp } or nil,
   })
@@ -907,7 +1014,7 @@ local function st_from_preview(pbuf)
 end
 
 ---预览 buffer 键位版本：升级插件后靠重绑生效（buffer 常被复用）
-local PREVIEW_MAPS_VER = 5
+local PREVIEW_MAPS_VER = 7
 
 attach_maps = function(preview_buf)
   if not preview_buf or not vim.api.nvim_buf_is_valid(preview_buf) then
@@ -1011,6 +1118,17 @@ attach_maps = function(preview_buf)
   vim.keymap.set("n", "L", function()
     M.toggle_ui_lang()
   end, vim.tbl_extend("force", opts, { desc = "mdview: toggle UI language" }))
+
+  -- 折叠：za 切换当前最小块；zM/zR 全部标题（与 Vim fold 习惯一致）
+  vim.keymap.set("n", "za", with_st(function(st)
+    M.toggle_fold_at_cursor(st)
+  end), vim.tbl_extend("force", opts, { desc = "mdview: toggle fold under cursor" }))
+  vim.keymap.set("n", "zM", with_st(function(st)
+    M.collapse_all_headings(st)
+  end), vim.tbl_extend("force", opts, { desc = "mdview: collapse all headings" }))
+  vim.keymap.set("n", "zR", with_st(function(st)
+    M.expand_all_headings(st)
+  end), vim.tbl_extend("force", opts, { desc = "mdview: expand all headings" }))
 
   local function on_mouse_click()
     -- 立刻用 getmousepos 判定（勿等 schedule 后光标被吸到行尾导致误点链接）
@@ -1389,6 +1507,7 @@ local HIT_PRIORITY = {
   -- 折叠仅底部灰字行；code_block 仅供 c/yc 范围检测
   code_fold = 65,
   code_block = 60,
+  heading_fold = 58, -- 仅小三角列；标题正文不切换
   details = 50,
 }
 
@@ -1621,6 +1740,52 @@ local function push_file_nav(st)
   end
 end
 
+---展开罩住 source_start 的所有收起标题（TOC/跳转用）；有变化返回 true
+---@param st table
+---@param source_start number
+---@return boolean
+local function expand_heading_path(st, source_start)
+  if not st or not st.blocks or not source_start then
+    return false
+  end
+  if config.get().heading_fold == false then
+    return false
+  end
+  st.collapsed_headings = st.collapsed_headings or {}
+  local target_idx
+  for i, b in ipairs(st.blocks) do
+    local s0 = b.source_start or 0
+    local s1 = b.source_end or s0
+    if source_start >= s0 and source_start <= s1 then
+      target_idx = i
+      break
+    end
+  end
+  if not target_idx then
+    return false
+  end
+  local changed = false
+  for i = 1, target_idx do
+    local b = st.blocks[i]
+    if b.type == "heading" and st.collapsed_headings[b.source_start] then
+      local level = b.level or 1
+      local end_j = #st.blocks
+      for j = i + 1, #st.blocks do
+        local bj = st.blocks[j]
+        if bj.type == "heading" and (bj.level or 1) <= level then
+          end_j = j - 1
+          break
+        end
+      end
+      if target_idx > i and target_idx <= end_j then
+        st.collapsed_headings[b.source_start] = nil
+        changed = true
+      end
+    end
+  end
+  return changed
+end
+
 ---源码 + 预览双窗跳到指定源行（TOC / 标题锚点共用）
 ---@param st table
 ---@param source_line number
@@ -1641,6 +1806,12 @@ function M._jump_both(st, source_line, preview_line, record_jump, cols)
 
   local max_src = vim.api.nvim_buf_is_valid(st.source_buf) and vim.api.nvim_buf_line_count(st.source_buf) or 1
   local src = math.max(1, math.min(source_line, max_src))
+
+  -- TOC/锚点跳入被收起的标题节时先展开祖先
+  if expand_heading_path(st, src) then
+    do_render(st, { force_full = true })
+    preview_line = nil -- 映射已变，重新解析
+  end
 
   -- 预览行：显式参数 > heading_preview > rev_map
   local prev_line = preview_line
@@ -2351,6 +2522,108 @@ local function cursor_after_code_fold(st, block_id, rel, prefer_fold)
   pcall(vim.api.nvim_win_set_cursor, win, { target, 0 })
 end
 
+---从预览 buffer 解析 state（供 API / 键位）
+---@param st table|nil
+---@return table|nil
+local function resolve_preview_state(st)
+  if st and (st.preview_buf or st.source_buf or st.blocks) then
+    return st
+  end
+  local src = M._current_source()
+  if src then
+    local s = get_state(src)
+    if s then
+      return s
+    end
+  end
+  local cur = vim.api.nvim_get_current_buf()
+  if window.is_preview_buf(cur) then
+    for _, s in pairs(states) do
+      if s.preview_buf == cur then
+        return s
+      end
+    end
+  end
+  return st
+end
+
+---收起所有可折叠标题
+---@param st table|nil
+function M.collapse_all_headings(st)
+  st = resolve_preview_state(st)
+  if not st or config.get().heading_fold == false then
+    return
+  end
+  if not st.blocks then
+    do_render(st, { force_full = true })
+  end
+  if not st.blocks then
+    return
+  end
+  local foldable = select(1, render.compute_heading_fold(st.blocks, {}))
+  local next_c = {}
+  for _, b in ipairs(st.blocks) do
+    if b.type == "heading" and foldable[b.source_start] then
+      next_c[b.source_start] = true
+    end
+  end
+  st.collapsed_headings = next_c
+  -- 多节同时变化，全量一次即可
+  do_render(st, { force_full = true })
+end
+
+---展开所有标题
+---@param st table|nil
+function M.expand_all_headings(st)
+  st = resolve_preview_state(st)
+  if not st or config.get().heading_fold == false then
+    return
+  end
+  st.collapsed_headings = {}
+  do_render(st, { force_full = true })
+end
+
+---切换标题节折叠（下级内容直至同级/更高级标题）
+---@param st table
+---@param hit table heading_fold
+---@return boolean
+local function toggle_heading_fold(st, hit)
+  local block_id = hit.block_id
+  if not block_id or not hit.foldable then
+    return false
+  end
+  if config.get().heading_fold == false then
+    return false
+  end
+  st.collapsed_headings = st.collapsed_headings or {}
+  if st.collapsed_headings[block_id] then
+    st.collapsed_headings[block_id] = nil
+  else
+    st.collapsed_headings[block_id] = true
+  end
+  -- 只 patch 该标题节；失败再全量
+  if not try_patch_heading_fold(st, block_id) then
+    do_render(st, { force_full = true })
+  end
+  -- 光标回到小三角（行首）
+  if st.result then
+    local pl = st.result.heading_preview and st.result.heading_preview[block_id]
+    if not pl then
+      for _, h in ipairs(st.result.hits or {}) do
+        if h.kind == "heading_fold" and h.block_id == block_id then
+          pl = h.line
+          break
+        end
+      end
+    end
+    if pl then
+      local win = vim.api.nvim_get_current_win()
+      pcall(vim.api.nvim_win_set_cursor, win, { pl, 0 })
+    end
+  end
+  return true
+end
+
 ---切换代码块折叠（增量 patch，不整文件 re-render）；成功返回 true
 ---@param st table
 ---@param hit table code_fold 或 code_block
@@ -2423,6 +2696,166 @@ local function toggle_code_fold(st, hit, cursor_row)
   return true
 end
 
+---预览区某段的可见行范围（1-based inclusive）；空段返回 nil
+---@param seg table|nil
+---@return number|nil a
+---@return number|nil b
+local function segment_visible_range(seg)
+  if not seg then
+    return nil, nil
+  end
+  local a = seg.preview_start or 0
+  local b = seg.preview_end or 0
+  if a < 1 or b < a then
+    return nil, nil
+  end
+  return a, b
+end
+
+---za：切换光标所在「最小」可折叠块（代码 / details / 标题节）
+---@param st table|nil
+---@return boolean
+function M.toggle_fold_at_cursor(st)
+  st = resolve_preview_state(st)
+  if not st or not st.result or not st.blocks then
+    return false
+  end
+  local row = vim.api.nvim_win_get_cursor(0)[1]
+  local cfg = config.get()
+  local fold_n = cfg.code_fold_lines or 10
+  local segs = st.result.segments or {}
+  local candidates = {}
+
+  local function add(kind, block_id, a, b, extra)
+    if not block_id or not a or not b or row < a or row > b then
+      return
+    end
+    candidates[#candidates + 1] = {
+      kind = kind,
+      block_id = block_id,
+      span = b - a,
+      line = a,
+      line_end = b,
+      extra = extra,
+    }
+  end
+
+  -- 1) 顶层 code / details 段
+  for i, b in ipairs(st.blocks) do
+    local a, bspan = segment_visible_range(segs[i])
+    if a and b.type == "code" then
+      local total = b.lines and #b.lines or 0
+      if fold_n > 0 and total > fold_n then
+        add("code", b.source_start, a, bspan, { lines = b.lines, total = total })
+      end
+    elseif a and b.type == "details" then
+      add("details", b.source_start, a, bspan, {
+        expanded_hit = nil,
+      })
+    end
+  end
+
+  -- 2) 标题节（含收起后仅标题行）
+  if cfg.heading_fold ~= false then
+    local foldable = select(1, render.compute_heading_fold(st.blocks, st.collapsed_headings or {}))
+    for i, b in ipairs(st.blocks) do
+      if b.type == "heading" and foldable[b.source_start] then
+        local level = b.level or 1
+        local end_idx = #st.blocks
+        for j = i + 1, #st.blocks do
+          local bj = st.blocks[j]
+          if bj.type == "heading" and (bj.level or 1) <= level then
+            end_idx = j - 1
+            break
+          end
+        end
+        local a0, b0 = segment_visible_range(segs[i])
+        if a0 then
+          local pe = b0
+          for j = i + 1, end_idx do
+            local _, bj = segment_visible_range(segs[j])
+            if bj then
+              pe = math.max(pe, bj)
+            end
+          end
+          add("heading", b.source_start, a0, pe, { foldable = true })
+        end
+      end
+    end
+  end
+
+  if #candidates == 0 then
+    return false
+  end
+  table.sort(candidates, function(x, y)
+    if x.span ~= y.span then
+      return x.span < y.span
+    end
+    -- 同跨度：代码 > details > 标题
+    local pri = { code = 1, details = 2, heading = 3 }
+    return (pri[x.kind] or 9) < (pri[y.kind] or 9)
+  end)
+  local best = candidates[1]
+
+  if best.kind == "code" then
+    local hit = {
+      kind = "code_block",
+      block_id = best.block_id,
+      line = best.line,
+      line_end = best.line_end,
+      lines = best.extra and best.extra.lines,
+      total_lines = best.extra and best.extra.total,
+    }
+    for _, h in ipairs(st.result.hits or {}) do
+      if h.kind == "code_block" and h.block_id == best.block_id then
+        hit = h
+        break
+      end
+    end
+    return toggle_code_fold(st, hit, row)
+  end
+
+  if best.kind == "details" then
+    local block_id = best.block_id
+    local shown
+    if st.expanded_details[block_id] ~= nil then
+      shown = st.expanded_details[block_id] and true or false
+    else
+      local found = false
+      for _, h in ipairs(st.result.hits or {}) do
+        if h.kind == "details" and h.block_id == block_id then
+          shown = h.expanded and true or false
+          found = true
+          break
+        end
+      end
+      if not found then
+        shown = false
+        for _, b in ipairs(st.blocks) do
+          if b.type == "details" and b.source_start == block_id then
+            shown = b.default_open and true or false
+            break
+          end
+        end
+      end
+    end
+    st.expanded_details[block_id] = not shown
+    if not try_patch_details(st, block_id) then
+      do_render(st, { force_full = true })
+    end
+    return true
+  end
+
+  if best.kind == "heading" then
+    return toggle_heading_fold(st, {
+      kind = "heading_fold",
+      block_id = best.block_id,
+      foldable = true,
+    })
+  end
+  return false
+end
+
 ---激活 hit（键盘回车 / 鼠标共用）
 ---@param st table
 ---@param hit table
@@ -2440,6 +2873,8 @@ function M._activate_hit(st, hit, row)
     if not toggle_code_fold(st, hit, row) then
       -- 不可折叠：忽略
     end
+  elseif hit.kind == "heading_fold" then
+    toggle_heading_fold(st, hit)
   elseif hit.kind == "details" then
     local cur = st.expanded_details[hit.block_id]
     if cur == nil then
@@ -2597,11 +3032,16 @@ function M._toggle_page_hd(st)
   end
   local hits = st.result and st.result.hits or {}
 
+  -- max_images：0/nil=页内高清不限张（与预览 █ 默认一致）；>0 封顶
+  local hd_max = imgcfg.max_images
+  if hd_max == nil or hd_max == 0 then
+    hd_max = 200
+  end
   local ok = graphics.attach_preview({
     buf = buf,
     win = win,
     hits = hits,
-    max_images = imgcfg.max_images or 20,
+    max_images = hd_max,
     scale = imgcfg.float_scale == "fit" and "fit" or "fill",
     python = imgcfg.python or "python",
     visible_only = true,
@@ -2738,6 +3178,10 @@ function M._goto_source(st)
     vim.api.nvim_win_set_buf(0, st.source_buf)
     st.mode = nil
     pcall(vim.api.nvim_win_set_cursor, 0, { src, 0 })
+    -- 预览关掉了 fold；回到源码恢复 source_fold
+    pcall(function()
+      require("mdview.source_fold").apply_win(vim.api.nvim_get_current_win(), st.source_buf)
+    end)
   elseif st.mode == "side" then
     if st.source_win and vim.api.nvim_win_is_valid(st.source_win) then
       vim.api.nvim_set_current_win(st.source_win)
@@ -3221,9 +3665,16 @@ function M.toggle_view()
         st.mode = nil
       end
       st.source_win = vim.api.nvim_get_current_win()
+      -- 单窗从预览回到源码：恢复 source_fold（预览曾关掉 foldenable）
+      pcall(function()
+        require("mdview.source_fold").apply_win(st.source_win, src)
+      end)
     else
       if src and vim.api.nvim_buf_is_valid(src) then
         vim.api.nvim_win_set_buf(0, src)
+        pcall(function()
+          require("mdview.source_fold").apply_win(vim.api.nvim_get_current_win(), src)
+        end)
       end
     end
     return
@@ -3292,6 +3743,7 @@ function M.side_open()
       pbuf = window.create_preview_buf(source_buf)
       vim.api.nvim_win_set_buf(pwin, pbuf)
     end
+    window.apply_winopts(pwin, config.get())
     sess = {
       preview_win = pwin,
       preview_buf = pbuf,
